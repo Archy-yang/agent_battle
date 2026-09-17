@@ -24,16 +24,16 @@ const (
 
 // Influence economy (strage_1 §四 数值表 v0.1).
 const (
-	InfluenceStart  = 5.0
-	InfluenceCap    = 5.0
-	InfluenceRegen  = 1.0 // 每 10 回合
-	RegenEvery      = 10
-	CostWhisper     = 0.5 // 轻度建议，可忽略
-	CostGuide       = 1.0 // 明确方向，重新评估
-	CostDeepLink    = 2.0 // 重新评估整个战略
-	CostInform      = 1.0 // 提供玩家推断
-	CostPause       = 3.0 // 紧急暂停，每局一次
-	PredictReward   = 0.5 // 猜对奖励
+	InfluenceStart = 5.0
+	InfluenceCap   = 5.0
+	InfluenceRegen = 1.0 // 每 10 回合
+	RegenEvery     = 10
+	CostWhisper    = 0.5 // 轻度建议，可忽略
+	CostGuide      = 1.0 // 明确方向，重新评估
+	CostDeepLink   = 2.0 // 重新评估整个战略
+	CostInform     = 1.0 // 提供玩家推断
+	CostPause      = 3.0 // 紧急暂停，每局一次
+	PredictReward  = 0.5 // 猜对奖励
 )
 
 // Guidance kinds → costs. 玩家永远发偏好，不发动作。
@@ -90,20 +90,22 @@ type Match struct {
 	PlayerID   engine.EntityID
 	UnknownID  engine.EntityID
 	FragmentID engine.EntityID
+	// MonsterIDs lists the hand-placed monsters (v0.2); empty for mvp.
+	MonsterIDs []engine.EntityID
 
 	Pilot     agent.DecisionMaker
 	PilotName string // "llm" | "scripted"
 
 	Status string
 
-	Explored   map[engine.Vec2]bool
-	Events     []engine.Event
-	Guidance   []Guidance
+	Explored    map[engine.Vec2]bool
+	Events      []engine.Event
+	Guidance    []Guidance
 	Predictions []*Prediction
-	pending    *Prediction
-	QA         []QA
-	Cognition  *agent.Cognition
-	ReviewRes  *Review
+	pending     *Prediction
+	QA          []QA
+	Cognition   *agent.Cognition
+	ReviewRes   *Review
 
 	Influence  float64
 	pausedOnce bool
@@ -118,12 +120,29 @@ type Match struct {
 // New creates a match of scenario/mvp-0.1. The pilot is the LLM agent
 // when AGENTBATTLE_LLM_* is configured; the scripted agent otherwise.
 func New(id string, seed uint64, prof *profile.Store) *Match {
-	pack := scenario.MVP(seed)
-	w, player, unknown, frag := pack.Genesis()
+	return newMatch(id, seed, prof, scenario.MVP(seed))
+}
+
+// NewV02 creates a match of scenario/v02-0.2: a 24×24 field with three
+// hand-placed monsters in addition to the Unknown Agent.
+func NewV02(id string, seed uint64, prof *profile.Store) *Match {
+	return newMatch(id, seed, prof, scenario.V02(seed))
+}
+
+func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) *Match {
+	var w *engine.World
+	var player, unknown, frag engine.EntityID
+	var monsters []engine.EntityID
+	if len(pack.MonsterSpawns) > 0 {
+		w, player, unknown, frag, monsters = pack.GenesisV02()
+	} else {
+		w, player, unknown, frag = pack.Genesis()
+	}
 	m := &Match{
 		ID: id, Seed: seed, PackName: pack.Name,
 		W: w, TurnLimit: pack.TurnLimit, Spawn: pack.PlayerSpawn,
 		PlayerID: player, UnknownID: unknown, FragmentID: frag,
+		MonsterIDs: monsters,
 		Explored:   map[engine.Vec2]bool{},
 		Status:     StatusRunning,
 		Influence:  InfluenceStart,
@@ -148,10 +167,9 @@ func (m *Match) Tick(intents []engine.Intent) {
 	if m.Status != StatusRunning {
 		return
 	}
-	evs := m.W.Advance(map[engine.EntityID][]engine.Intent{
-		m.PlayerID:  intents,
-		m.UnknownID: m.unknownAct(),
-	})
+	acts := m.monstersAct()
+	acts[m.PlayerID] = intents
+	evs := m.W.Advance(acts)
 	m.lastEvs = evs
 	m.lastIntents = intents
 	m.Events = append(m.Events, evs...)
@@ -333,8 +351,8 @@ func (m *Match) buildReview() {
 	if la, ok := m.Pilot.(*agent.LLMAgent); ok {
 		payload := map[string]any{
 			"status": m.Status, "turn": m.W.Tick,
-			"events": tail(m.Events, 60),
-			"guidance": m.Guidance,
+			"events":      tail(m.Events, 60),
+			"guidance":    m.Guidance,
 			"predictions": m.Predictions,
 		}
 		s, lessons := la.Review(payload)
@@ -417,6 +435,117 @@ func (m *Match) unknownAct() []engine.Intent {
 
 func (m *Match) onRing(p engine.Vec2) bool {
 	return p.X == 0 || p.Y == 0 || p.X == m.W.W-1 || p.Y == m.W.H-1
+}
+
+// hostiles lists every hostile entity id (the Unknown Agent + all
+// monsters), in deterministic order.
+func (m *Match) hostiles() []engine.EntityID {
+	ids := make([]engine.EntityID, 0, 1+len(m.MonsterIDs))
+	if m.UnknownID != 0 {
+		ids = append(ids, m.UnknownID)
+	}
+	return append(ids, m.MonsterIDs...)
+}
+
+// monstersAct gathers each hostile entity's intents for one tick: the
+// Unknown Agent keeps its v0.1 behaviour, monsters follow the M3.1
+// Logic-DSL stand-in below. Same seed → same intents.
+func (m *Match) monstersAct() map[engine.EntityID][]engine.Intent {
+	acts := map[engine.EntityID][]engine.Intent{}
+	if a := m.unknownAct(); len(a) > 0 {
+		acts[m.UnknownID] = a
+	}
+	for _, id := range m.MonsterIDs {
+		if a := m.monsterAct(id); len(a) > 0 {
+			acts[id] = a
+		}
+	}
+	return acts
+}
+
+// monsterAct is the v0.2 monster behaviour — a deterministic stand-in
+// for its Logic DSL (world_genesis §5.2 铁律二：敌人走 Agent Protocol).
+// At most one intent per tick:
+//
+//	正交相邻        → 攻击：activate 离火作用于玩家（power 500）
+//	距离 ≤ 4        → 追击：朝玩家方向移动一格（不可穿墙，可入危险区）
+//	距离 > 4        → 游荡：Rng 驱动，原地停留概率 1/3
+//
+// (the 4-cell band closes the spec's 3..4 gap: chase up to and
+// including distance 4, wander strictly beyond).
+func (m *Match) monsterAct(id engine.EntityID) []engine.Intent {
+	mon := m.W.Entities[id]
+	if mon == nil {
+		return nil
+	}
+	p := m.W.Entities[m.PlayerID]
+	if p == nil {
+		return nil
+	}
+	try := func(pos engine.Vec2) bool { // 不可穿墙；危险区可入（Passable）
+		return m.W.InBounds(pos) && m.W.At(pos).Passable && m.W.EntityAt(pos) == nil
+	}
+	// 相邻（Chebyshev ≤ 1 且正交邻接）：攻击
+	if engine.Adjacent(p.Pos, mon.Pos) {
+		if em := mon.FindComponent(engine.CEmitter); em != nil {
+			return []engine.Intent{{Type: "activate", Component: em.ID, Target: p.ID, Power: 500}}
+		}
+	}
+	switch dist := engine.Chebyshev(p.Pos, mon.Pos); {
+	case dist <= 4: // 追击
+		dx, dy := sign2(p.Pos.X-mon.Pos.X), sign2(p.Pos.Y-mon.Pos.Y)
+		for _, cand := range []engine.Vec2{
+			{X: mon.Pos.X + dx, Y: mon.Pos.Y + dy},
+			{X: mon.Pos.X + dx, Y: mon.Pos.Y},
+			{X: mon.Pos.X, Y: mon.Pos.Y + dy},
+		} {
+			if cand != mon.Pos && try(cand) {
+				return []engine.Intent{{Type: "move", To: &cand, Power: 400}}
+			}
+		}
+		return nil // 被地形卡死：本回合驻足
+	default: // 游荡（dist > 4）
+		if m.W.Rng.Intn(3) == 0 { // 原地停留概率 1/3
+			return nil
+		}
+		dirs := [][2]int{{0, -1}, {1, 0}, {0, 1}, {-1, 0}}
+		start := m.W.Rng.Intn(4)
+		for i := 0; i < 4; i++ {
+			d := dirs[(start+i)%4]
+			cand := engine.Vec2{X: mon.Pos.X + d[0], Y: mon.Pos.Y + d[1]}
+			if try(cand) {
+				return []engine.Intent{{Type: "move", To: &cand, Power: 400}}
+			}
+		}
+		return nil
+	}
+}
+
+// InCombat reports whether the player is in a fight this tick: any
+// hostile within Chebyshev 2, or a player/hostile acted upon by an
+// attack, backlash or spill in the most recent tick's events.
+func (m *Match) InCombat() bool {
+	p := m.W.Entities[m.PlayerID]
+	if p != nil {
+		for _, id := range m.hostiles() {
+			if e := m.W.Entities[id]; e != nil && engine.Chebyshev(p.Pos, e.Pos) <= 2 {
+				return true
+			}
+		}
+	}
+	hostile := map[engine.EntityID]bool{m.PlayerID: true, m.UnknownID: true}
+	for _, id := range m.MonsterIDs {
+		hostile[id] = true
+	}
+	for _, ev := range m.lastEvs {
+		switch ev.Type {
+		case "attack", "backlash", "spill":
+			if hostile[ev.Entity] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func rotate(d engine.Vec2) engine.Vec2 {

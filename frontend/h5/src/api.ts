@@ -105,6 +105,52 @@ export interface StateView {
   review: Review | null
 }
 
+// ---- M3.6 追加类型：组件 / 物料 / 移动订单 / 养成档案 ----
+
+// 引擎 ComponentView：本体的一个组件（type/essence 为中文名字符串）
+export interface ComponentView {
+  id: number
+  type: string // 躯壳/储气/灵机/感识/识海/离火/仓廪/清源
+  essence: string // 木/火/土/金/水
+  active: boolean
+}
+
+// SelfView 的 M3.6 扩展（引擎已带 components 字段）
+export interface SelfExt extends SelfView {
+  components?: ComponentView[]
+}
+
+// StateView 的 M3.6 扩展（materials: 本源中文名 → 数量；order: 当前移动订单）
+export interface StateExt extends StateView {
+  materials?: Record<string, number>
+  order?: Vec2 | null
+}
+
+// GET/POST /api/profile —— Agent 养成档案
+export interface ProfileSliders {
+  adventure: number // 0..1 冒险 ↔ 谨慎
+  cooperation: number // 0..1 合作 ↔ 竞争
+  exploration: number // 0..1 探索 ↔ 利用
+}
+
+export interface ProfileLesson {
+  text: string
+  enabled: boolean
+}
+
+export interface Profile {
+  persona: string
+  sliders: ProfileSliders
+  lessons: ProfileLesson[]
+  updated: string
+}
+
+// POST /api/match/{id}/tick 的组装意图
+export interface BlueprintSpec {
+  type: number
+  essence?: number
+}
+
 const ESSENCE_NAMES = ['木', '火', '土', '金', '水'] as const
 
 export const essenceName = (e: number): string => ESSENCE_NAMES[e] ?? '?'

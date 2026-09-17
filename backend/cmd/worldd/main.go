@@ -68,11 +68,16 @@ func main() {
 
 	mux.HandleFunc("POST /api/match", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Seed uint64 `json:"seed"`
+			Seed     uint64 `json:"seed"`
+			Scenario string `json:"scenario"` // "mvp"(默认) | "v02"
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body) // empty body allowed
-		m := reg.Create(body.Seed)
-		log.Printf("created %s (seed=%d, pilot=%s)", m.ID, m.Seed, m.PilotName)
+		m := reg.Create(body.Seed, body.Scenario)
+		if m == nil { // 未知场景名
+			match.WriteErr(w, http.StatusBadRequest, "未知场景 "+body.Scenario)
+			return
+		}
+		log.Printf("created %s (seed=%d, scenario=%s, pilot=%s)", m.ID, m.Seed, m.PackName, m.PilotName)
 		match.WriteJSON(w, http.StatusCreated, m.View())
 	})
 

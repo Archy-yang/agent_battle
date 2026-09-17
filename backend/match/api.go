@@ -14,30 +14,47 @@ import (
 // StateView is the full client-facing state of one match: observation,
 // cognition, economy, logs and the explored fog overlay.
 type StateView struct {
-	ID       string             `json:"id"`
-	Seed     uint64             `json:"seed"`
-	Pack     string             `json:"pack"`
-	Pilot    string             `json:"pilot"`
-	Status   string             `json:"status"`
-	Turn     int64              `json:"turn"`
-	TurnLimit int64             `json:"turn_limit"`
-	Influence float64           `json:"influence"`
+	ID          string              `json:"id"`
+	Seed        uint64              `json:"seed"`
+	Pack        string              `json:"pack"`
+	Pilot       string              `json:"pilot"`
+	Status      string              `json:"status"`
+	Turn        int64               `json:"turn"`
+	TurnLimit   int64               `json:"turn_limit"`
+	Influence   float64             `json:"influence"`
 	Observation *engine.Observation `json:"observation"`
-	Cognition *agent.Cognition  `json:"cognition"`
-	Explored []engine.Vec2      `json:"explored"`
-	Events   []engine.Event     `json:"events"`
-	Guidance []Guidance         `json:"guidance"`
-	Predictions []*Prediction    `json:"predictions"`
-	Pending  *Prediction        `json:"pending"`
-	QA       []QA               `json:"qa"`
-	Review   *Review            `json:"review"`
-	Costs    map[string]float64 `json:"costs"`
+	Cognition   *agent.Cognition    `json:"cognition"`
+	Explored    []engine.Vec2       `json:"explored"`
+	Events      []engine.Event      `json:"events"`
+	Guidance    []Guidance          `json:"guidance"`
+	Predictions []*Prediction       `json:"predictions"`
+	Pending     *Prediction         `json:"pending"`
+	QA          []QA                `json:"qa"`
+	Review      *Review             `json:"review"`
+	Costs       map[string]float64  `json:"costs"`
 	// Materials is the player 物料库 (world_genesis §3.2): essence
 	// 中文名 → units. Empty (not nil) when nothing is stored.
 	Materials map[string]int `json:"materials"`
-	// Order is the player entity's current move order (the To of the
-	// most recent move intent), or null.
+	// Order is the player entity's standing move order (OrderTo), or
+	// null — read straight off the entity, not reconstructed from the
+	// last tick's intents.
 	Order *engine.Vec2 `json:"order"`
+	// InCombat reports whether the player is in a fight this tick
+	// (M3.1 战斗状态).
+	InCombat bool `json:"in_combat"`
+	// Enemies lists the hostile entities inside the player's perception
+	// radius (4 with the sensor on, 1 with it off).
+	Enemies []EnemyView `json:"enemies"`
+}
+
+// EnemyView is one hostile entity as the player perceives it.
+type EnemyView struct {
+	ID        engine.EntityID `json:"id"`
+	Pos       engine.Vec2     `json:"pos"`
+	Distance  int             `json:"distance"`
+	Essence   string          `json:"essence"`
+	Integrity int             `json:"integrity"`
+	Heat      int             `json:"heat"`
 }
 
 // Registry is an in-memory match registry (v0.1 single-process; the
@@ -54,15 +71,31 @@ func NewRegistry(prof *profile.Store) *Registry {
 	return &Registry{matches: map[string]*Match{}, profile: prof}
 }
 
-// Create starts a new match of mvp-0.1. seed 0 → fixed default.
-func (r *Registry) Create(seed uint64) *Match {
+// Create starts a new match. scenarioName selects the pack — "mvp"
+// (default) or "v02"; the variadic keeps old call sites unchanged.
+// An unknown scenario name yields nil (callers turn that into a
+// client-facing error). seed 0 → fixed default.
+func (r *Registry) Create(seed uint64, scenarioName ...string) *Match {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.next++
+	name := ""
+	if len(scenarioName) > 0 {
+		name = scenarioName[0]
+	}
 	if seed == 0 {
 		seed = 20260917
 	}
-	m := New(fmt.Sprintf("m%04d", r.next), seed, r.profile)
+	var m *Match
+	switch name {
+	case "", "mvp":
+		m = New("", seed, r.profile)
+	case "v02":
+		m = NewV02("", seed, r.profile)
+	default: // 未知场景：不落库，交由调用方报错
+		return nil
+	}
+	r.next++
+	m.ID = fmt.Sprintf("m%04d", r.next)
 	m.Explored[m.Spawn] = true
 	r.matches[m.ID] = m
 	return m
@@ -103,11 +136,31 @@ func (m *Match) View() *StateView {
 		materials[e.String()] = n
 	}
 	var order *engine.Vec2
-	for _, in := range m.lastIntents {
-		if in.Type == "move" && in.To != nil {
-			o := *in.To
+	enemies := []EnemyView{}
+	player := m.W.Entities[m.PlayerID]
+	if player != nil {
+		if player.OrderTo != nil { // 持久订单（M3.0）：直接读实体
+			o := *player.OrderTo
 			order = &o
-			break
+		}
+		radius := 1 // 被动感知：自身与邻格
+		if s := player.FindComponent(engine.CSensor); s != nil && s.Active {
+			radius = 4 // 感识开启
+		}
+		for _, id := range m.hostiles() {
+			e := m.W.Entities[id]
+			if e == nil {
+				continue
+			}
+			d := engine.Chebyshev(player.Pos, e.Pos)
+			if d > radius {
+				continue
+			}
+			enemies = append(enemies, EnemyView{
+				ID: id, Pos: e.Pos, Distance: d,
+				Essence:   e.Essence.String(),
+				Integrity: e.Integrity, Heat: e.Heat,
+			})
 		}
 	}
 	return &StateView{
@@ -126,6 +179,8 @@ func (m *Match) View() *StateView {
 		Costs:       costs,
 		Materials:   materials,
 		Order:       order,
+		InCombat:    m.InCombat(),
+		Enemies:     enemies,
 	}
 }
 
