@@ -1,7 +1,7 @@
 // 全局共享状态 + 对局动作：所有视图组件只通过本模块通信，不在 view 里重复 fetch 逻辑。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
-  api, essenceColor, essenceName,
+  api, essenceName,
   type GuidanceKind, type PredictChoice, type StateView, type Vec2,
 } from './api'
 
@@ -27,14 +27,62 @@ export const askError = ref('')
 export const predictBusy = ref(false)
 export const predictError = ref('')
 
-// M3.5 接入：敌人 ≤2 格或本回合有交战事件时为 true，届时外壳自动切到对战页。
-// 当前阶段无战斗系统，恒为 false 的占位钩子。
-export const inCombat = computed(() => false)
+// M3.4 接入：敌人 ≤2 格或本回合有交战事件时为 true（服务端 in_combat 字段），
+// 外壳据此自动切到对战页。
+export const inCombat = computed(() => !!view.value?.in_combat)
+
+// ---- 遭遇自动切换（M3.4）----
+// combatArmed：切页武装位。in_combat 变 true 时只切一次；手动返回地图后，
+// 直到 in_combat 变 false 重置武装，再次变 true 才会再次自动切换。
+export const combatArmed = ref(true)
+// 对战页导航请求计数（watchCombat 命中 +1；「前往对战」按钮 +1）
+export const battleNavRequest = ref(0)
+export const requestBattleNav = () => {
+  battleNavRequest.value++
+}
+
+// 外壳（App.vue）挂载时调用一次：in_combat true → 请求切到对战页。
+export function watchCombat() {
+  watch(inCombat, (c) => {
+    if (c) {
+      if (combatArmed.value) {
+        combatArmed.value = false
+        requestBattleNav()
+      }
+    } else {
+      combatArmed.value = true // 解除遭遇：重新武装
+    }
+  })
+}
 
 // ---------- 地图常量与渲染辅助 ----------
+// 兼容保留：MVP 12×12 场景的尺寸与出生点（新代码请用 mapDims / spawnPos）。
 export const W = 12
 export const H = 12
 export const SPAWN: Vec2 = { x: 1, y: 10 }
+
+// M3.4：地图尺寸由服务端 pack 名推导（StateView 尚未下发 W/H；
+// v0.4 可改为专用字段）。
+export const mapDims = computed(() => {
+  const pack = view.value?.pack ?? ''
+  return pack.includes('v02') ? { w: 24, h: 24 } : { w: 12, h: 12 }
+})
+
+// 出生点：开新局（turn 0）时记下 self 初始位置；中途刷新页面拿不到
+// 服务端 spawn 字段时不渲染 ⌂（mvp 场景回退到 SPAWN 常量）。
+export const spawnPos = ref<Vec2 | null>(null)
+export const spawnCell = computed<Vec2 | null>(() => {
+  const pack = view.value?.pack ?? ''
+  if (spawnPos.value) return spawnPos.value
+  return pack.includes('v02') ? null : SPAWN
+})
+
+function rememberSpawn() {
+  const v = view.value
+  if (!spawnPos.value && v?.observation && v.turn <= 1) {
+    spawnPos.value = { x: v.observation.self.pos.x, y: v.observation.self.pos.y }
+  }
+}
 
 export const exploredSet = computed(() => {
   const s = new Set<string>()
@@ -54,7 +102,9 @@ export const entityAt = (x: number, y: number) =>
 export const selfAt = (x: number, y: number) =>
   view.value?.observation?.self.pos.x === x && view.value!.observation!.self.pos.y === y
 
-// v0.1 地形渲染是客户端先验（旧地图）；正式版应由 Observation 供给。
+// 已废弃（M3.4）：客户端地形先验。地形信息只能来自服务端 explored /
+// observation（Reality ≠ Agent Knowledge），客户端不再自造地形。
+// 保留导出仅为兼容，勿在新代码中使用；v0.4 接入服务端地形记忆后删除。
 export const terrainDanger = (x: number, y: number) => x >= 3 && x <= 7 && y >= 3 && y <= 7
 export const terrainEssence = (x: number, y: number): number => {
   if (terrainDanger(x, y)) return 1 // 火
@@ -63,18 +113,34 @@ export const terrainEssence = (x: number, y: number): number => {
   return 2 // 土
 }
 
+// 迷雾三层（M3.4）：只读 view.explored 与 view.observation.visible。
+// 服务端 explored 目前只有坐标、没有五行色 —— 「已探索未感知」渲染为
+// 中性暗土色，可见格为亮一档的中性色；v0.4 接入服务端地形记忆后
+// （explored 元素带 essence/danger 字段，见 api.ts ExploredCell）恢复五行地形色。
+export const FOG = {
+  unexplored: '#12161d',
+  remembered: '#2a2f37',
+  visible: '#3a424e',
+}
+
 export const cellStyle = (x: number, y: number) => {
   const key = `${x},${y}`
   const explored = exploredSet.value.has(key)
   const visible = visibleSet.value.has(key)
-  const base = explored ? essenceColor(terrainEssence(x, y)) : '#222'
-  return {
-    background: base,
-    opacity: explored ? (visible ? 1 : 0.45) : 1,
-    outline: terrainDanger(x, y) ? '1px solid rgba(255,80,60,.4)' : 'none',
-    outlineOffset: '-2px',
+  if (!explored) {
+    // 未探索：深底色
+    return { background: FOG.unexplored }
   }
+  if (!visible) {
+    // 已探索离开感知：45% 透明度
+    return { background: FOG.remembered, opacity: 0.45 }
+  }
+  // 当前感知内：全亮
+  return { background: FOG.visible }
 }
+
+// 当前移动订单目标（move_to）：地图上用强调金虚线框标注
+export const orderTarget = computed<Vec2 | null>(() => view.value?.order ?? null)
 
 // 无 LLM 认知摘要时的客户端派生回退
 export const derivedCognition = computed(() => {
@@ -131,13 +197,18 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 export async function refresh() {
   if (!view.value) return
   view.value = await api<StateView>(`/api/match/${view.value.id}/state`)
+  rememberSpawn()
 }
 
-export async function newMatch() {
+// 开新对局；scenario 选场景包："mvp"（经典 12×12，默认）| "v02"（大地图 24×24）。
+// 追加可选参数，旧调用 newMatch() 行为不变。
+export async function newMatch(scenario?: 'mvp' | 'v02') {
   busy.value = true
   error.value = ''
   try {
-    view.value = await api<StateView>('/api/match', {})
+    view.value = await api<StateView>('/api/match', scenario ? { scenario } : {})
+    spawnPos.value = null
+    rememberSpawn()
   } catch (e) {
     error.value = errText(e)
   } finally {
@@ -163,6 +234,47 @@ export async function step(auto: boolean) {
     busy.value = false
   }
 }
+
+// ---------- M3.4 点选寻路 ----------
+// 地图页轻提示（点雾 / 不可通行 / 订单反馈），数秒后自动消失。
+export const mapHint = ref('')
+let mapHintTimer: ReturnType<typeof setTimeout> | null = null
+export function flashHint(text: string) {
+  mapHint.value = text
+  if (mapHintTimer) clearTimeout(mapHintTimer)
+  mapHintTimer = setTimeout(() => { mapHint.value = '' }, 3500)
+}
+
+// 点选寻路：一回合推进一步。POST tick {intents:[{type:"move_to",to}]} ——
+// 订单不占意图预算，引擎每 tick 自动走一格；到达发 order_done，被挡发 order_blocked。
+// 服务端无法通行/不可达时回 intent_rejected，从本回合事件里取出来做轻提示。
+export async function sendMoveTo(x: number, y: number) {
+  if (!view.value || busy.value || view.value.status !== 'running') return
+  busy.value = true
+  error.value = ''
+  try {
+    view.value = await api<StateView>(`/api/match/${view.value.id}/tick`, {
+      intents: [{ type: 'move_to', to: { x, y } }],
+    })
+    rememberSpawn()
+    const turn = view.value.turn
+    const recent = (view.value.events ?? []).filter(e => e.tick === turn)
+    const rejected = recent.find(e => e.type === 'intent_rejected')
+    if (rejected) {
+      flashHint(rejected.text) // 如「目标格不可通行 {x,y}」「目标格不可达 {x,y}」
+    } else {
+      flashHint(`移动订单：前往 (${x},${y})`)
+    }
+  } catch (e) {
+    error.value = errText(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+// 待命一回合：POST tick 空意图（原地恢复散热）。与 step(false) 等价，
+// 保留语义化导出供地图页按钮使用。
+export const waitOneTurn = () => step(false)
 
 export async function runToEnd() {
   if (!view.value) return

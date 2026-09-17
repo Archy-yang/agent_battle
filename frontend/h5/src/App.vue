@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import {
   ensureMatch, influenceText, view,
+  watchCombat, battleNavRequest,
 } from './state'
 import MapView from './views/MapView.vue'
 import BattleView from './views/BattleView.vue'
@@ -20,6 +21,12 @@ const PAGES: { key: Page; label: string }[] = [
 
 // 对局初始化放在外壳：外壳不随 Tab 切换卸载，切页返回不丢局。
 onMounted(ensureMatch)
+
+// M3.4 遭遇自动切换：in_combat 变 true 时自动进对战页（只切一次，直到
+// in_combat 变 false 重置武装——见 state.ts watchCombat）；用户手动返回
+// 地图后，再次遭遇会再次切换。battleNavRequest 也被地图页「前往对战」按钮复用。
+watchCombat()
+watch(battleNavRequest, () => { page.value = 'battle' })
 </script>
 
 <template>

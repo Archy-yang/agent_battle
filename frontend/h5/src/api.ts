@@ -103,7 +103,45 @@ export interface StateView {
   pending: Prediction | null
   qa: QAEntry[]
   review: Review | null
+  // ---- M3.4 追加字段（backend/match/api.go StateView 已实现，旧对局下为 undefined） ----
+  // 本回合是否处于遭遇战（外壳据此自动切到对战页）
+  in_combat?: boolean
+  // 感知半径内的敌对实体（EnemyView.essence 是五行中文名字符串，与 SeenEntity 的 number 不同）
+  enemies?: EnemyView[]
+  // 当前移动订单目标格（move_to），无订单为 null
+  order?: Vec2 | null
 }
+
+// M3.4：感知范围内的一名敌对实体（backend EnemyView）。
+export interface EnemyView {
+  id: number
+  pos: Vec2
+  distance: number
+  essence: string // 五行中文名：木/火/土/金/水
+  integrity: number
+  heat: number
+}
+
+// v0.4 计划：explored 元素从纯坐标扩展为带地形记忆的格子
+// （essence/danger/passable 由服务端下发）；在服务端实现前，
+// 前端把"已探索未感知"渲染为中性暗土色，不自造地形。
+export type ExploredCell = Vec2 & {
+  essence?: number
+  danger?: boolean
+  passable?: boolean
+}
+
+// EnemyView.essence（中文名）→ 五行语义色，与 essenceColor 对齐
+const ESSENCE_COLORS_BY_NAME: Record<string, string> = {
+  木: '#57b26a',
+  火: '#e05545',
+  土: '#c9a44a',
+  金: '#b8c0cc',
+  水: '#4a8fd4',
+}
+
+export const essenceColorByName = (name: string): string =>
+  ESSENCE_COLORS_BY_NAME[name] ?? '#b8c0cc'
 
 // ---- M3.6 追加类型：组件 / 物料 / 移动订单 / 养成档案 ----
 

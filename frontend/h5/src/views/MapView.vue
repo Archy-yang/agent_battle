@@ -1,41 +1,147 @@
 <script setup lang="ts">
-// 默认页：地图网格 + 对局控制 + 认知/事件/对话/预测面板（自 App.vue 迁入，功能不变）。
+// M3.4 地图主页：12×12（mvp）/ 24×24（v02）大地图 + 点选寻路 + 迷雾三层。
 // 全部状态与动作来自 ../state，本组件不直接 fetch。
+// 地形不再由客户端先验（terrainDanger/terrainEssence 已废弃）：
+// 迷雾只读 view.explored 与 view.observation.visible；服务端 explored
+// 目前只有坐标没有五行色，"已探索未感知"渲染为中性暗土色，
+// v0.4 接入服务端地形记忆（api.ts ExploredCell）后恢复五行地形色。
+import { computed } from 'vue'
 import {
   TABS, GUIDANCE_OPTIONS, PREDICT_OPTIONS,
-  W, H, SPAWN,
+  mapDims, spawnCell, orderTarget, exploredSet, visibleSet,
   view, busy, error, tab,
   guideKind, guideText, guideError, sendGuidance,
   question, askBusy, askError, ask,
   predictBusy, predictError, predict, pause,
-  newMatch, step, runToEnd,
+  newMatch, step, runToEnd, sendMoveTo, waitOneTurn, flashHint, mapHint,
+  requestBattleNav,
   derivedCognition, costOf, choiceLabel,
-  cellStyle, selfAt, entityAt,
+  cellStyle, selfAt,
 } from '../state'
+import { essenceColor, essenceColorByName } from '../api'
+
+const dims = mapDims
+
+// ---- 格子数据：一次性展开为扁平数组（576 格无压力），模板只做渲染 ----
+interface CellVm {
+  x: number
+  y: number
+  key: string
+  known: boolean // 已探索或当前感知内：可点选下达 move_to
+  isSelf: boolean
+  isSpawn: boolean
+  isOrder: boolean
+  marker: { glyph: string; color?: string } | null
+  style: Record<string, string | number>
+}
+
+const cells = computed<CellVm[]>(() => {
+  const { w, h } = dims.value
+  const order = orderTarget.value
+  const spawn = spawnCell.value
+  const explored = exploredSet.value
+  const visible = visibleSet.value
+
+  // 实体标记：observation.entities（💎 结晶 / ❓ 其他实体）+ view.enemies
+  // （同源补充：怪物标注五行色描边）。按格去重，一格一个标记。
+  const markers = new Map<string, { glyph: string; color?: string }>()
+  for (const e of view.value?.observation?.entities ?? []) {
+    markers.set(`${e.pos.x},${e.pos.y}`, e.kind === 'fragment'
+      ? { glyph: '💎' }
+      : { glyph: '❓', color: essenceColor(e.essence) })
+  }
+  for (const en of view.value?.enemies ?? []) {
+    const k = `${en.pos.x},${en.pos.y}`
+    if (!markers.has(k)) markers.set(k, { glyph: '❓', color: essenceColorByName(en.essence) })
+  }
+
+  const out: CellVm[] = []
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const key = `${x},${y}`
+      const known = explored.has(key) || visible.has(key)
+      out.push({
+        x, y, key,
+        known,
+        isSelf: selfAt(x, y),
+        isSpawn: !!spawn && spawn.x === x && spawn.y === y,
+        isOrder: !!order && order.x === x && order.y === y,
+        marker: markers.get(key) ?? null,
+        style: cellStyle(x, y),
+      })
+    }
+  }
+  return out
+})
+
+// ---- 点选寻路 ----
+function onCell(c: CellVm) {
+  if (!view.value || busy.value) return
+  if (view.value.status !== 'running') {
+    flashHint('对局已结束')
+    return
+  }
+  if (!c.known) {
+    flashHint('未探明的区域')
+    return
+  }
+  sendMoveTo(c.x, c.y) // 服务端判定可通行/可达，拒绝时回显 intent_rejected 文案
+}
 </script>
 
 <template>
   <div class="main">
     <div class="map-wrap">
-      <div class="grid">
-        <div v-for="y in H" :key="y" class="row">
-          <div
-            v-for="x in W" :key="x"
-            class="cell"
-            :style="cellStyle(x - 1, y - 1)"
-          >
-            <span v-if="selfAt(x - 1, y - 1)">🤖</span>
-            <span v-else-if="entityAt(x - 1, y - 1)?.kind === 'fragment'">💎</span>
-            <span v-else-if="entityAt(x - 1, y - 1)">❓</span>
-            <span v-else-if="x - 1 === SPAWN.x && y - 1 === SPAWN.y" class="spawn">⌂</span>
-          </div>
+      <!-- 场景选择 + 当前 pack -->
+      <div class="topbar">
+        <span class="pack" :title="'当前场景包'">{{ view?.pack ?? '未开局' }}</span>
+        <span class="spacer" />
+        <button @click="newMatch('mvp')" :disabled="busy">新对局 · 经典局</button>
+        <button @click="newMatch('v02')" :disabled="busy">新对局 · 大地图局</button>
+      </div>
+
+      <!-- 遭遇战横幅 -->
+      <div v-if="view?.in_combat" class="combat-banner">
+        <span>⚠ 遭遇战中</span>
+        <button class="go-battle" @click="requestBattleNav()">前往对战</button>
+      </div>
+
+      <!-- 地图：24×24 桌面一屏（26px 格），窄屏等比缩放 -->
+      <div
+        class="grid"
+        :style="{ '--cols': String(dims.w), '--cell-px': dims.w > 12 ? '26px' : '34px' }"
+      >
+        <div
+          v-for="c in cells" :key="c.key"
+          class="cell"
+          :class="{ known: c.known, order: c.isOrder }"
+          :style="c.style"
+          @click="onCell(c)"
+        >
+          <span v-if="c.isSelf" class="glyph">🤖</span>
+          <span
+            v-else-if="c.marker"
+            class="glyph"
+            :style="c.marker.color ? { textShadow: '0 0 3px ' + c.marker.color, outline: '1px solid ' + c.marker.color } : undefined"
+          >{{ c.marker.glyph }}</span>
+          <span v-else-if="c.isSpawn" class="glyph spawn">⌂</span>
         </div>
       </div>
+
+      <div class="legend">
+        <span><i class="sw" :style="{ background: '#12161d' }" />未探索</span>
+        <span><i class="sw" :style="{ background: '#2a2f37' }" />已探索（记忆）</span>
+        <span><i class="sw" :style="{ background: '#3a424e' }" />感知内</span>
+        <span><i class="sw sw-order" />移动订单</span>
+        <span class="tip">点击已探索/感知内格子下达移动订单（每回合自动走一格）</span>
+      </div>
+
       <div class="btns">
-        <button @click="newMatch" :disabled="busy">新对局</button>
         <button @click="step(true)" :disabled="busy || view?.status !== 'running'">自动一步</button>
+        <button @click="waitOneTurn" :disabled="busy || view?.status !== 'running'">待命一回合</button>
         <button @click="runToEnd" :disabled="busy || view?.status !== 'running'">自动到结束</button>
       </div>
+      <p v-if="mapHint" class="hint">{{ mapHint }}</p>
       <p v-if="error" class="err">{{ error }}</p>
     </div>
 
@@ -165,25 +271,66 @@ import {
 </template>
 
 <style scoped>
-.main { display: flex; gap: 20px; flex-wrap: wrap; }
-.map-wrap { flex: 0 0 auto; }
-.grid { display: inline-block; border: 1px solid var(--border); font-variant-numeric: tabular-nums; }
-.row { display: flex; }
+.main { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+.map-wrap { flex: 0 1 auto; min-width: 0; }
+.panel { flex: 0 0 320px; width: 320px; }
+
+/* ---- 顶栏：pack + 场景选择 ---- */
+.topbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.pack { font-size: 13px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.spacer { flex: 1; }
+
+/* ---- 遭遇战横幅 ---- */
+.combat-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; margin-bottom: 8px;
+  border: 1px solid #5a3a3a; border-radius: var(--radius);
+  background: #2a1d20; color: var(--fire); font-size: 13px; font-weight: 600;
+}
+.go-battle { padding: 3px 10px; font-size: 12px; }
+
+/* ---- 网格：CSS 变量驱动格距，24×24 桌面 26px 一屏放下；窄屏等比缩放 ---- */
+.grid {
+  --cell: min(var(--cell-px), calc((100vw - 420px) / var(--cols)));
+  display: grid;
+  grid-template-columns: repeat(var(--cols), var(--cell));
+  grid-auto-rows: var(--cell);
+  border: 1px solid var(--border);
+  background: #12161d;
+  user-select: none;
+  touch-action: manipulation;
+}
+@media (max-width: 900px) {
+  /* 窄屏/触屏：面板换行到下方，格子按视口等比缩放 */
+  .grid { --cell: min(var(--cell-px), calc((100vw - 56px) / var(--cols))); }
+}
 .cell {
-  width: 38px; height: 38px;
+  position: relative;
   display: flex; align-items: center; justify-content: center;
-  font-size: 18px; position: relative;
+  cursor: default;
 }
-.cell .spawn { color: var(--water); font-size: 12px; }
+.cell.known { cursor: pointer; }
+.cell.known:hover { outline: 1px solid var(--nav-active); outline-offset: -1px; z-index: 1; }
+/* 移动订单目标格：强调金虚线框 */
+.cell.order { outline: 2px dashed var(--accent); outline-offset: -2px; z-index: 2; }
+.glyph { font-size: calc(var(--cell) * 0.58); line-height: 1; pointer-events: none; }
+.glyph.spawn { color: var(--water); font-size: calc(var(--cell) * 0.5); }
+
+/* ---- 图例 ---- */
+.legend {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  margin-top: 8px; font-size: 11.5px; color: var(--text-dim);
+}
+.legend .sw {
+  display: inline-block; width: 10px; height: 10px;
+  margin-right: 4px; border: 1px solid var(--border); vertical-align: -1px;
+}
+.legend .sw-order { background: transparent; border: 1.5px dashed var(--accent); }
+.legend .tip { flex-basis: 100%; color: #59616d; }
+
 .btns { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-.panel { flex: 1 1 320px; min-width: 300px; }
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
-.tabs button {
-  background: transparent; border: none; border-bottom: 2px solid transparent;
-  border-radius: 0; color: var(--text-dim); padding: 6px 10px;
-}
-.tabs button:hover:not(:disabled) { background: transparent; color: var(--text); }
-.tabs button.active { color: #fff; border-bottom-color: var(--nav-active); }
+.hint { color: var(--accent); font-size: 12.5px; margin: 8px 0 0; }
+
 .panel h2 { font-size: 14px; margin: 18px 0 6px; color: var(--nav-active); }
 .panel h2 small { color: #59616d; font-weight: normal; }
 .review-card {
