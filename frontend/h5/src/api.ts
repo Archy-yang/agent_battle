@@ -1,9 +1,15 @@
 // 与 backend/match/api.go 的 JSON 契约保持一致。
+// v0.4：坐标 {x,y} → {q,r} 一次性硬切（设计 §7 决定 #2），Vec2 删除，
+// 不保留别名。
 
-export interface Vec2 {
-  x: number
-  y: number
+/** 轴向六边形坐标（engine.Hex，pointy-top） */
+export interface Hex {
+  q: number
+  r: number
 }
+
+/** @deprecated 旧方形坐标类型，仅剩 types-battle.ts 的类型引用；新代码一律用 Hex */
+export type Vec2 = Hex
 
 export interface Event {
   tick: number
@@ -13,7 +19,7 @@ export interface Event {
 }
 
 export interface SelfView {
-  pos: Vec2
+  pos: Hex
   essence: number
   integrity: number
   max_integrity: number
@@ -28,7 +34,7 @@ export interface SelfView {
 
 export interface SeenEntity {
   id: number
-  pos: Vec2
+  pos: Hex
   distance: number
   kind: string
   owner: string
@@ -40,7 +46,7 @@ export interface SeenEntity {
 export interface Observation {
   tick: number
   self: SelfView
-  visible: Vec2[]
+  visible: Hex[]
   entities: SeenEntity[]
   events: Event[]
 }
@@ -93,7 +99,7 @@ export interface StateView {
   turn: number
   turn_limit: number
   observation: Observation | null
-  explored: Vec2[]
+  explored: ExploredCell[]
   events: Event[]
   guidance: Guidance[]
   influence: number
@@ -109,13 +115,13 @@ export interface StateView {
   // 感知半径内的敌对实体（EnemyView.essence 是五行中文名字符串，与 SeenEntity 的 number 不同）
   enemies?: EnemyView[]
   // 当前移动订单目标格（move_to），无订单为 null
-  order?: Vec2 | null
+  order?: Hex | null
 }
 
 // M3.4：感知范围内的一名敌对实体（backend EnemyView）。
 export interface EnemyView {
   id: number
-  pos: Vec2
+  pos: Hex
   distance: number
   essence: string // 五行中文名：木/火/土/金/水
   integrity: number
@@ -123,9 +129,9 @@ export interface EnemyView {
 }
 
 // v0.4 计划：explored 元素从纯坐标扩展为带地形记忆的格子
-// （essence/danger/passable 由服务端下发）；在服务端实现前，
-// 前端把"已探索未感知"渲染为中性暗土色，不自造地形。
-export type ExploredCell = Vec2 & {
+// （essence/danger/passable 由服务端下发）；当前服务端只发 {q,r}，
+// 前端把"已探索未感知"渲染为中性暗色，不猜测地形（Reality ≠ Agent Knowledge）。
+export type ExploredCell = Hex & {
   essence?: number
   danger?: boolean
   passable?: boolean
@@ -161,7 +167,7 @@ export interface SelfExt extends SelfView {
 // StateView 的 M3.6 扩展（materials: 本源中文名 → 数量；order: 当前移动订单）
 export interface StateExt extends StateView {
   materials?: Record<string, number>
-  order?: Vec2 | null
+  order?: Hex | null
 }
 
 // GET/POST /api/profile —— Agent 养成档案

@@ -1,92 +1,356 @@
 <script setup lang="ts">
-// M3.4 地图主页：12×12（mvp）/ 24×24（v02）大地图 + 点选寻路 + 迷雾三层。
-// 全部状态与动作来自 ../state，本组件不直接 fetch。
-// 地形不再由客户端先验（terrainDanger/terrainEssence 已废弃）：
-// 迷雾只读 view.explored 与 view.observation.visible；服务端 explored
-// 目前只有坐标没有五行色，"已探索未感知"渲染为中性暗土色，
-// v0.4 接入服务端地形记忆（api.ts ExploredCell）后恢复五行地形色。
-import { computed } from 'vue'
+// v0.4 地图主页：单 <canvas> 无限六边形世界（设计 §4）。
+// pointy-top / axial 坐标（{q,r} 契约），相机 {cx, cy, zoom} 平移缩放，
+// 迷雾三态（未探索 / 已探索离开感知 / 感知内），点选已探索格下达 move_to。
+// 六边形数学全部来自 ../hex 纯函数模块（无 Vue 依赖，Flutter 移植参考）；
+// 数据源只有 ../state（Reality ≠ Agent Knowledge）：未探索格不请求、
+// 不猜测地形；服务端当前只下发坐标，地形五行色在 essence 记忆下发后自动生效。
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   TABS, GUIDANCE_OPTIONS, PREDICT_OPTIONS,
-  mapDims, spawnCell, orderTarget, exploredSet, visibleSet,
+  spawnCell, orderTarget, exploredSet, visibleSet, exploredCellMap,
   view, busy, error, tab,
   guideKind, guideText, guideError, sendGuidance,
   question, askBusy, askError, ask,
   predictBusy, predictError, predict, pause,
   newMatch, step, runToEnd, sendMoveTo, waitOneTurn, flashHint, mapHint,
-  requestBattleNav,
+  requestBattleNav, FOG,
   derivedCognition, costOf, choiceLabel,
-  cellStyle, selfAt,
 } from '../state'
-import { essenceColor, essenceColorByName } from '../api'
+import { essenceColor, essenceColorByName, type Hex } from '../api'
+import {
+  fogOf, hexCorners, hexCenter, hexKey, pickHex, visibleHexes, worldToScreen, zoomAt,
+  type Camera,
+} from '../hex'
 
-const dims = mapDims
+// ---- 常量 ----
+const HEX_SIZE = 28 // 世界像素下的外接圆半径（zoom=1）
+const ACCENT = '#d4a94e' // 与 --accent 一致
+const FIRE = '#e05545' // 与 --fire 一致
+const WATER = '#4a8fd4' // 与 --water 一致
+const SELF_RING = '#9fd0ff'
+const HEX_BORDER = 'rgba(15, 18, 22, 0.55)'
 
-// ---- 格子数据：一次性展开为扁平数组（576 格无压力），模板只做渲染 ----
-interface CellVm {
-  x: number
-  y: number
-  key: string
-  known: boolean // 已探索或当前感知内：可点选下达 move_to
-  isSelf: boolean
-  isSpawn: boolean
-  isOrder: boolean
-  marker: { glyph: string; color?: string } | null
-  style: Record<string, string | number>
-}
+// ---- 相机 / 画布 ----
+const shellRef = ref<HTMLDivElement | null>(null)
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+const cam = ref<Camera>({ cx: 0, cy: 0, zoom: 1 })
+const follow = ref(true) // 相机跟随 Agent；拖拽后解除，双击恢复
+const vp = ref({ width: 640, height: 420 })
+let dirty = true
+const invalidate = () => { dirty = true }
 
-const cells = computed<CellVm[]>(() => {
-  const { w, h } = dims.value
-  const order = orderTarget.value
-  const spawn = spawnCell.value
-  const explored = exploredSet.value
-  const visible = visibleSet.value
+// ---- 数据投影（全部来自 state，本组件不做 fetch） ----
+const selfHex = computed<Hex | null>(() => {
+  const o = view.value?.observation
+  return o ? { q: o.self.pos.q, r: o.self.pos.r } : null
+})
 
-  // 实体标记：observation.entities（💎 结晶 / ❓ 其他实体）+ view.enemies
-  // （同源补充：怪物标注五行色描边）。按格去重，一格一个标记。
-  const markers = new Map<string, { glyph: string; color?: string }>()
+interface MarkerVm { q: number; r: number; glyph: string; color?: string }
+// 实体层：💎 结晶 / ❓ 敌对实体（observation.entities + view.enemies，五行色描边）
+const markers = computed<MarkerVm[]>(() => {
+  const out: MarkerVm[] = []
+  const seen = new Set<string>()
   for (const e of view.value?.observation?.entities ?? []) {
-    markers.set(`${e.pos.x},${e.pos.y}`, e.kind === 'fragment'
-      ? { glyph: '💎' }
-      : { glyph: '❓', color: essenceColor(e.essence) })
+    const k = hexKey(e.pos)
+    if (seen.has(k)) continue
+    seen.add(k)
+    out.push(e.kind === 'fragment'
+      ? { q: e.pos.q, r: e.pos.r, glyph: '💎' }
+      : { q: e.pos.q, r: e.pos.r, glyph: '❓', color: essenceColor(e.essence) })
   }
   for (const en of view.value?.enemies ?? []) {
-    const k = `${en.pos.x},${en.pos.y}`
-    if (!markers.has(k)) markers.set(k, { glyph: '❓', color: essenceColorByName(en.essence) })
-  }
-
-  const out: CellVm[] = []
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const key = `${x},${y}`
-      const known = explored.has(key) || visible.has(key)
-      out.push({
-        x, y, key,
-        known,
-        isSelf: selfAt(x, y),
-        isSpawn: !!spawn && spawn.x === x && spawn.y === y,
-        isOrder: !!order && order.x === x && order.y === y,
-        marker: markers.get(key) ?? null,
-        style: cellStyle(x, y),
-      })
-    }
+    const k = hexKey(en.pos)
+    if (seen.has(k)) continue
+    seen.add(k)
+    out.push({ q: en.pos.q, r: en.pos.r, glyph: '❓', color: essenceColorByName(en.essence) })
   }
   return out
 })
 
-// ---- 点选寻路 ----
-function onCell(c: CellVm) {
-  if (!view.value || busy.value) return
-  if (view.value.status !== 'running') {
+function centerOnSelf() {
+  const h = selfHex.value
+  if (!h) return
+  const p = hexCenter(h, HEX_SIZE)
+  cam.value = { ...cam.value, cx: p.x, cy: p.y }
+  invalidate()
+}
+
+// 换局：恢复跟随并居中；每回合 self 移动且跟随开启时居中
+watch(selfHex, () => { if (follow.value) centerOnSelf() })
+watch(() => view.value?.id, () => { follow.value = true; centerOnSelf() })
+
+// ---- 渲染 ----
+function hexPath(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  ctx.beginPath()
+  const pts = hexCorners(x, y, r)
+  ctx.moveTo(pts[0].x, pts[0].y)
+  for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y)
+  ctx.closePath()
+}
+
+function draw() {
+  const canvas = canvasRef.value
+  const ctx = canvas?.getContext('2d')
+  if (!canvas || !ctx) return
+  const { width, height } = vp.value
+  const c = cam.value
+  const s = HEX_SIZE * c.zoom
+  const r = s * 0.96
+
+  // 未探索 = 深底（不绘制的部分自然露出）
+  ctx.fillStyle = FOG.unexplored
+  ctx.fillRect(0, 0, width, height)
+  if (s < 3) return
+
+  const explored = exploredSet.value
+  const visible = visibleSet.value
+  const cells = exploredCellMap.value
+  const order = orderTarget.value
+  const spawn = spawnCell.value
+
+  // 地形层：只渲染服务端已知格（explored / observation.visible）
+  for (const h of visibleHexes(c, vp.value, HEX_SIZE)) {
+    const fog = fogOf(h, explored, visible)
+    if (fog === 'unexplored') continue
+    const w = hexCenter(h, HEX_SIZE)
+    const p = worldToScreen(w.x, w.y, c, vp.value)
+    hexPath(ctx, p.x, p.y, r)
+    if (fog === 'visible') {
+      // 感知内全亮：服务端下发五行记忆（ExploredCell.essence）时按五行上色，
+      // 否则中性亮灰 —— 客户端不猜测地形
+      const cell = cells.get(hexKey(h))
+      ctx.fillStyle = cell?.essence != null ? essenceColor(cell.essence) : FOG.visible
+      ctx.fill()
+      ctx.strokeStyle = HEX_BORDER
+      ctx.lineWidth = 1
+      ctx.stroke()
+      if (cell?.danger) {
+        // Danger 叠加：火色描边 + 斜线纹理
+        ctx.strokeStyle = FIRE
+        ctx.lineWidth = 2
+        hexPath(ctx, p.x, p.y, r - 1.5)
+        ctx.stroke()
+        ctx.lineWidth = 1.2
+        const half = r * 0.45
+        for (let i = -1; i <= 1; i++) {
+          ctx.beginPath()
+          ctx.moveTo(p.x - half, p.y + i * half * 0.7)
+          ctx.lineTo(p.x + half, p.y + i * half * 0.7 - half * 0.6)
+          ctx.stroke()
+        }
+      }
+    } else {
+      // 已探索离开感知：45% 记忆色
+      ctx.globalAlpha = 0.45
+      ctx.fillStyle = FOG.remembered
+      ctx.fill()
+      ctx.globalAlpha = 1
+      ctx.strokeStyle = HEX_BORDER
+      ctx.lineWidth = 1
+      ctx.stroke()
+    }
+  }
+
+  // 移动订单目标：强调金虚线框
+  if (order) {
+    const w = hexCenter(order, HEX_SIZE)
+    const p = worldToScreen(w.x, w.y, c, vp.value)
+    hexPath(ctx, p.x, p.y, r - 2)
+    ctx.setLineDash([5, 3])
+    ctx.strokeStyle = ACCENT
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  // 实体层
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const glyph = Math.max(9, Math.min(40, s * 1.05))
+  ctx.font = `${glyph}px system-ui, sans-serif`
+  const at = (h: Hex) => {
+    const w = hexCenter(h, HEX_SIZE)
+    return worldToScreen(w.x, w.y, c, vp.value)
+  }
+  if (spawn) {
+    const p = at(spawn)
+    ctx.font = `${glyph * 0.85}px system-ui, sans-serif`
+    ctx.fillStyle = WATER
+    ctx.fillText('⌂', p.x, p.y + glyph * 0.04)
+    ctx.font = `${glyph}px system-ui, sans-serif`
+  }
+  for (const m of markers.value) {
+    const p = at({ q: m.q, r: m.r })
+    if (m.color) { // 敌对实体：五行色描边
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, r * 0.62, 0, Math.PI * 2)
+      ctx.strokeStyle = m.color
+      ctx.lineWidth = 2
+      ctx.stroke()
+    }
+    ctx.fillText(m.glyph, p.x, p.y + glyph * 0.06)
+  }
+  if (selfHex.value) {
+    const p = at(selfHex.value)
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, r * 0.66, 0, Math.PI * 2)
+    ctx.strokeStyle = SELF_RING
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.font = `${glyph * 1.1}px system-ui, sans-serif`
+    ctx.fillText('🤖', p.x, p.y + glyph * 0.06)
+  }
+}
+
+// 脏检查 + rAF：只在相机 / 数据 / 尺寸变化时重绘
+let raf = 0
+function frame() {
+  if (dirty) {
+    dirty = false
+    draw()
+  }
+  raf = requestAnimationFrame(frame)
+}
+
+// ---- 尺寸（devicePixelRatio 适配） ----
+function resize() {
+  const shell = shellRef.value
+  const canvas = canvasRef.value
+  if (!shell || !canvas) return
+  const w = shell.clientWidth
+  const h = shell.clientHeight
+  if (w <= 0 || h <= 0) return
+  const dpr = window.devicePixelRatio || 1
+  vp.value = { width: w, height: h }
+  canvas.width = Math.round(w * dpr)
+  canvas.height = Math.round(h * dpr)
+  canvas.style.width = `${w}px`
+  canvas.style.height = `${h}px`
+  canvas.getContext('2d')?.setTransform(dpr, 0, 0, dpr, 0, 0)
+  invalidate()
+}
+let ro: ResizeObserver | null = null
+
+// ---- 交互：拖拽平移 / 滚轮与双指缩放 / 点击拾取 ----
+const pointers = new Map<number, { x: number; y: number }>()
+let dragMoved = false
+let downX = 0
+let downY = 0
+let pinchPrevDist = 0
+
+const ptPos = (e: PointerEvent) => {
+  const rect = canvasRef.value!.getBoundingClientRect()
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+}
+
+function onPointerDown(e: PointerEvent) {
+  // setPointerCapture 对未激活 pointerId 会抛 NotFoundError（合成事件/个别触屏驱动），
+  // 失败只影响拖拽捕获，不阻断拾取
+  try {
+    canvasRef.value?.setPointerCapture(e.pointerId)
+  } catch { /* ignore */ }
+  const p = ptPos(e)
+  pointers.set(e.pointerId, p)
+  if (pointers.size === 1) {
+    dragMoved = false
+    downX = p.x
+    downY = p.y
+  } else if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()]
+    pinchPrevDist = Math.hypot(a.x - b.x, a.y - b.y)
+  }
+}
+
+function onPointerMove(e: PointerEvent) {
+  const prev = pointers.get(e.pointerId)
+  if (!prev) return
+  const cur = ptPos(e)
+  pointers.set(e.pointerId, cur)
+  if (pointers.size === 1) {
+    if (!dragMoved && Math.hypot(cur.x - downX, cur.y - downY) > 4) {
+      dragMoved = true
+      follow.value = false // 用户拖拽后解除跟随
+    }
+    if (dragMoved) {
+      cam.value = {
+        ...cam.value,
+        cx: cam.value.cx - (cur.x - prev.x) / cam.value.zoom,
+        cy: cam.value.cy - (cur.y - prev.y) / cam.value.zoom,
+      }
+      invalidate()
+    }
+  } else if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()]
+    const d = Math.hypot(a.x - b.x, a.y - b.y)
+    if (pinchPrevDist > 0 && d > 0) {
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+      cam.value = zoomAt(mid.x, mid.y, d / pinchPrevDist, cam.value, vp.value)
+      invalidate()
+    }
+    pinchPrevDist = d
+    if (!dragMoved) {
+      dragMoved = true
+      follow.value = false
+    }
+  }
+}
+
+function onPointerUp(e: PointerEvent) {
+  const had = pointers.delete(e.pointerId)
+  if (canvasRef.value?.hasPointerCapture?.(e.pointerId)) {
+    canvasRef.value.releasePointerCapture(e.pointerId)
+  }
+  if (pointers.size < 2) pinchPrevDist = 0
+  if (had && pointers.size === 0 && !dragMoved) {
+    const p = ptPos(e)
+    onPick(p.x, p.y)
+  }
+}
+
+// 点击拾取 → 已探索格发 move_to；未探索格只提示（信息边界：不向服务端查询）
+function onPick(sx: number, sy: number) {
+  const v = view.value
+  if (!v || busy.value) return
+  if (v.status !== 'running') {
     flashHint('对局已结束')
     return
   }
-  if (!c.known) {
-    flashHint('未探明的区域')
+  const h = pickHex(sx, sy, cam.value, vp.value, HEX_SIZE)
+  const k = hexKey(h)
+  if (!exploredSet.value.has(k) && !visibleSet.value.has(k)) {
+    flashHint(`未探明的区域 (${h.q},${h.r})`)
     return
   }
-  sendMoveTo(c.x, c.y) // 服务端判定可通行/可达，拒绝时回显 intent_rejected 文案
+  sendMoveTo(h.q, h.r) // 服务端判定可通行/可达，拒绝时回显 intent_rejected 文案
 }
+
+function onWheel(e: WheelEvent) {
+  e.preventDefault()
+  const p = ptPos(e)
+  cam.value = zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015), cam.value, vp.value)
+  invalidate()
+}
+
+function onDblClick() {
+  follow.value = true
+  centerOnSelf()
+}
+
+onMounted(() => {
+  ro = new ResizeObserver(resize)
+  ro.observe(shellRef.value!)
+  resize()
+  centerOnSelf()
+  canvasRef.value?.addEventListener('wheel', onWheel, { passive: false })
+  raf = requestAnimationFrame(frame)
+})
+
+onBeforeUnmount(() => {
+  cancelAnimationFrame(raf)
+  ro?.disconnect()
+  canvasRef.value?.removeEventListener('wheel', onWheel)
+})
 </script>
 
 <template>
@@ -98,6 +362,7 @@ function onCell(c: CellVm) {
         <span class="spacer" />
         <button @click="newMatch('mvp')" :disabled="busy">新对局 · 经典局</button>
         <button @click="newMatch('v02')" :disabled="busy">新对局 · 大地图局</button>
+        <button @click="newMatch('v04')" :disabled="busy">新对局 · 无限世界（v0.4）</button>
       </div>
 
       <!-- 遭遇战横幅 -->
@@ -106,34 +371,27 @@ function onCell(c: CellVm) {
         <button class="go-battle" @click="requestBattleNav()">前往对战</button>
       </div>
 
-      <!-- 地图：24×24 桌面一屏（26px 格），窄屏等比缩放 -->
-      <div
-        class="grid"
-        :style="{ '--cols': String(dims.w), '--cell-px': dims.w > 12 ? '26px' : '34px' }"
-      >
-        <div
-          v-for="c in cells" :key="c.key"
-          class="cell"
-          :class="{ known: c.known, order: c.isOrder }"
-          :style="c.style"
-          @click="onCell(c)"
-        >
-          <span v-if="c.isSelf" class="glyph">🤖</span>
-          <span
-            v-else-if="c.marker"
-            class="glyph"
-            :style="c.marker.color ? { textShadow: '0 0 3px ' + c.marker.color, outline: '1px solid ' + c.marker.color } : undefined"
-          >{{ c.marker.glyph }}</span>
-          <span v-else-if="c.isSpawn" class="glyph spawn">⌂</span>
-        </div>
+      <!-- 六边形无限地图：单 canvas，拖拽平移 / 滚轮·双指缩放 / 点选下单 -->
+      <div ref="shellRef" class="canvas-shell">
+        <canvas
+          ref="canvasRef"
+          @pointerdown="onPointerDown"
+          @pointermove="onPointerMove"
+          @pointerup="onPointerUp"
+          @pointercancel="onPointerUp"
+          @dblclick="onDblClick"
+        />
+        <div v-if="!follow" class="follow-badge">已解除跟随 · 双击恢复</div>
       </div>
 
       <div class="legend">
-        <span><i class="sw" :style="{ background: '#12161d' }" />未探索</span>
-        <span><i class="sw" :style="{ background: '#2a2f37' }" />已探索（记忆）</span>
-        <span><i class="sw" :style="{ background: '#3a424e' }" />感知内</span>
+        <span><i class="sw" :style="{ background: FOG.unexplored }" />未探索</span>
+        <span><i class="sw" :style="{ background: FOG.remembered, opacity: 0.45 }" />已探索（记忆）</span>
+        <span><i class="sw" :style="{ background: FOG.visible }" />感知内</span>
         <span><i class="sw sw-order" />移动订单</span>
-        <span class="tip">点击已探索/感知内格子下达移动订单（每回合自动走一格）</span>
+        <span class="tip">
+          拖拽平移 · 滚轮/双指缩放（0.5~2.0） · 点击已探索格下达移动订单（每回合自动走一格） · 双击恢复跟随
+        </span>
       </div>
 
       <div class="btns">
@@ -272,7 +530,7 @@ function onCell(c: CellVm) {
 
 <style scoped>
 .main { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
-.map-wrap { flex: 0 1 auto; min-width: 0; }
+.map-wrap { flex: 1 1 520px; min-width: 0; }
 .panel { flex: 0 0 320px; width: 320px; }
 
 /* ---- 顶栏：pack + 场景选择 ---- */
@@ -289,32 +547,28 @@ function onCell(c: CellVm) {
 }
 .go-battle { padding: 3px 10px; font-size: 12px; }
 
-/* ---- 网格：CSS 变量驱动格距，24×24 桌面 26px 一屏放下；窄屏等比缩放 ---- */
-.grid {
-  --cell: min(var(--cell-px), calc((100vw - 420px) / var(--cols)));
-  display: grid;
-  grid-template-columns: repeat(var(--cols), var(--cell));
-  grid-auto-rows: var(--cell);
+/* ---- 画布容器：单 canvas 无限地图 ---- */
+.canvas-shell {
+  position: relative;
+  height: clamp(360px, 58vh, 620px);
   border: 1px solid var(--border);
   background: #12161d;
+  overflow: hidden;
+}
+.canvas-shell canvas {
+  position: absolute; inset: 0;
+  display: block;
+  cursor: grab;
+  touch-action: none; /* pointer events 接管触屏拖拽/双指 */
   user-select: none;
-  touch-action: manipulation;
 }
-@media (max-width: 900px) {
-  /* 窄屏/触屏：面板换行到下方，格子按视口等比缩放 */
-  .grid { --cell: min(var(--cell-px), calc((100vw - 56px) / var(--cols))); }
+.canvas-shell canvas:active { cursor: grabbing; }
+.follow-badge {
+  position: absolute; right: 10px; bottom: 10px;
+  padding: 3px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: rgba(23, 28, 36, 0.85); color: var(--text-dim); font-size: 12px;
+  pointer-events: none;
 }
-.cell {
-  position: relative;
-  display: flex; align-items: center; justify-content: center;
-  cursor: default;
-}
-.cell.known { cursor: pointer; }
-.cell.known:hover { outline: 1px solid var(--nav-active); outline-offset: -1px; z-index: 1; }
-/* 移动订单目标格：强调金虚线框 */
-.cell.order { outline: 2px dashed var(--accent); outline-offset: -2px; z-index: 2; }
-.glyph { font-size: calc(var(--cell) * 0.58); line-height: 1; pointer-events: none; }
-.glyph.spawn { color: var(--water); font-size: calc(var(--cell) * 0.5); }
 
 /* ---- 图例 ---- */
 .legend {

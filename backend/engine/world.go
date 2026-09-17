@@ -1,5 +1,7 @@
 package engine
 
+import "container/list"
+
 // ComponentType enumerates the v0.1 component set (world_rule §5, §31).
 type ComponentType int
 
@@ -141,8 +143,9 @@ const ChunkSize = 12
 // (design §2.2): 逐块可计算的纯函数，跨块连续，与 chunk 边界无关.
 type TerrainFunc func(seed uint64, q, r int) Cell
 
-// PlainTerrain is the WP1 placeholder terrain: 无限平原，皆土、皆可通行.
-// WP2 replaces it with the four-step generation (design §2.2).
+// PlainTerrain is the engine-level default terrain: 无限平原，皆土、皆
+// 可通行（nil gen 兼容缝）。v0.4 的五行生成见 chunk.go Terrain——由
+// 场景包（scenario.V04）显式接入.
 func PlainTerrain(uint64, int, int) Cell { return Cell{Essence: Earth, Passable: true} }
 
 // Chunk holds ChunkSize×ChunkSize cells laid out flat as an axial
@@ -153,48 +156,90 @@ type Chunk struct {
 	Cells  [ChunkSize * ChunkSize]Cell
 }
 
+// ChunkLRUCapacity is the chunk cache capacity (评审决定 #4：LRU=256 照案
+// 执行)：约 256 × 0.6KB ≈ 150KB，内存无压力 (design §2.1/§2.3).
+const ChunkLRUCapacity = 256
+
 // chunkKey identifies a chunk in the cache.
 type chunkKey struct{ qc, rc int }
 
-// ChunkCache generates and caches terrain chunks on demand
-// (design §2.3). WP1 placeholder: an unbounded map — every (q, r)
-// query returns a cell, cost is one chunk generation on first touch.
-// WP2 swaps the internals for the 256-entry LRU without changing this
-// interface.
+// ChunkCache generates and caches terrain chunks on demand (design
+// §2.3)：命中即晋升的 LRU；淘汰只丢地形——地形是纯函数，重新进入时
+// 按需重算，零成本回放。v0.4 不落盘（持久世界属未来扩展）。
+//
+// At 返回 Cell 值拷贝（WP1 注释挂的账在此结清）：LRU 淘汰随时可能
+// 回收底层 chunk 存储，指针穿越淘汰边界是不安全的，故对外一律传值.
 type ChunkCache struct {
 	seed   uint64
 	gen    TerrainFunc
-	chunks map[chunkKey]*Chunk
+	v04    bool                       // v0.4 五行生成（apron 快路径）
+	chunks map[chunkKey]*list.Element // el.Value = *Chunk
+	order  *list.List                 // front = 最近使用，back = 下一个淘汰
 }
 
 // NewChunkCache creates a cache bound to a seed and a terrain pure
-// function; a nil gen falls back to PlainTerrain.
+// function; a nil gen falls back to PlainTerrain (WP1 兼容缝). v0.4 的
+// 五行生成走 NewWorld / 显式注入 engine.Terrain.
 func NewChunkCache(seed uint64, gen TerrainFunc) *ChunkCache {
 	if gen == nil {
 		gen = PlainTerrain
 	}
-	return &ChunkCache{seed: seed, gen: gen, chunks: map[chunkKey]*Chunk{}}
+	return &ChunkCache{
+		seed:   seed,
+		gen:    gen,
+		chunks: map[chunkKey]*list.Element{},
+		order:  list.New(),
+	}
 }
 
-// At returns a pointer to the cell at (q, r), generating its chunk on
-// first touch. The pointer stays valid while the chunk is cached (WP1
-// never evicts); WP2's LRU must return to value copies at this seam.
-func (c *ChunkCache) At(q, r int) *Cell {
-	qc, rc := floorDiv(q, ChunkSize), floorDiv(r, ChunkSize)
-	key := chunkKey{qc, rc}
-	ch, ok := c.chunks[key]
-	if !ok {
-		ch = &Chunk{QC: qc, RC: rc}
+// At returns a copy of the cell at (q, r), generating its chunk on
+// first touch and evicting the least-recently-used chunk past capacity.
+func (c *ChunkCache) At(q, r int) Cell {
+	key := chunkKey{floorDiv(q, ChunkSize), floorDiv(r, ChunkSize)}
+	if el, ok := c.chunks[key]; ok {
+		c.order.MoveToFront(el)
+		return chunkCellAt(el.Value.(*Chunk), q, r)
+	}
+	ch := c.build(key.qc, key.rc)
+	c.chunks[key] = c.order.PushFront(ch)
+	if len(c.chunks) > ChunkLRUCapacity {
+		if back := c.order.Back(); back != nil {
+			victim := back.Value.(*Chunk)
+			c.order.Remove(back)
+			delete(c.chunks, chunkKey{victim.QC, victim.RC})
+		}
+	}
+	return chunkCellAt(ch, q, r)
+}
+
+// build generates one chunk: v04 → 五行生成（14×14 apron 快路径）；
+// nil gen → 无限平原（WP1 兼容）；注入的 gen 按 (seed, q, r) 逐格
+// 调用（测试地形缝）.
+func (c *ChunkCache) build(qc, rc int) *Chunk {
+	switch {
+	case c.v04:
+		return genChunk(c.seed, qc, rc)
+	case c.gen == nil:
+		ch := &Chunk{QC: qc, RC: rc}
 		for j := 0; j < ChunkSize; j++ {
 			for i := 0; i < ChunkSize; i++ {
-				qq := qc*ChunkSize + i
-				rr := rc*ChunkSize + j
-				ch.Cells[j*ChunkSize+i] = c.gen(c.seed, qq, rr)
+				ch.Cells[j*ChunkSize+i] = PlainTerrain(c.seed, qc*ChunkSize+i, rc*ChunkSize+j)
 			}
 		}
-		c.chunks[key] = ch
+		return ch
+	default:
+		ch := &Chunk{QC: qc, RC: rc}
+		for j := 0; j < ChunkSize; j++ {
+			for i := 0; i < ChunkSize; i++ {
+				ch.Cells[j*ChunkSize+i] = c.gen(c.seed, qc*ChunkSize+i, rc*ChunkSize+j)
+			}
+		}
+		return ch
 	}
-	return &ch.Cells[floorMod(r, ChunkSize)*ChunkSize+floorMod(q, ChunkSize)]
+}
+
+func chunkCellAt(ch *Chunk, q, r int) Cell {
+	return ch.Cells[floorMod(r, ChunkSize)*ChunkSize+floorMod(q, ChunkSize)]
 }
 
 func floorDiv(a, b int) int {
@@ -224,13 +269,17 @@ type World struct {
 	nextID    EntityID
 }
 
-// NewWorld creates an infinite world of plain passable earth
-// (WP1 placeholder terrain).
-func NewWorld(seed uint64) *World { return NewWorldTerrain(seed, nil) }
+// NewWorld creates the v0.4 deterministic infinite world: 逐块五行生成
+// (chunk.go Terrain, design §2.2, apron 快路径) + LRU chunk cache (§2.3).
+func NewWorld(seed uint64) *World {
+	w := NewWorldTerrain(seed, nil)
+	w.Chunks.v04 = true
+	return w
+}
 
-// NewWorldTerrain creates an infinite world generated by gen (nil →
-// PlainTerrain). This is the test seam for terrain-dependent behaviour
-// until WP2's scenario packs provide the real generation.
+// NewWorldTerrain creates an infinite world generated by gen — nil →
+// PlainTerrain（WP1 兼容缝）；非 nil 时按 (seed, q, r) 逐格调用，是
+// 地形相关的注入缝（场景包在此接入 v0.4 五行生成）.
 func NewWorldTerrain(seed uint64, gen TerrainFunc) *World {
 	return &World{
 		Seed:      seed,
@@ -249,9 +298,15 @@ func (w *World) Spawn(e *Entity) *Entity {
 	return e
 }
 
-// At returns the cell at p. 无限世界一切格皆可查询（v0.4 design §1.2）：
-// the query may generate a chunk on demand, never fails.
-func (w *World) At(p Hex) *Cell { return w.Chunks.At(p.Q, p.R) }
+// At returns a pointer to a private copy of the cell at p — the copy
+// shields callers from LRU eviction (WP1 挂账：缓存淘汰下裸指针不安
+// 全，值拷贝语义在 ChunkCache.At 结清). 无限世界一切格皆可查询
+// (v0.4 design §1.2)：the query may generate a chunk on demand,
+// never fails.
+func (w *World) At(p Hex) *Cell {
+	cell := w.Chunks.At(p.Q, p.R)
+	return &cell
+}
 
 // InBounds reports whether p is inside the world. v0.4 无限世界总在界内
 // —— resolveMove 的越界校验语义随之取消；函数保留是给"显式界外"概念

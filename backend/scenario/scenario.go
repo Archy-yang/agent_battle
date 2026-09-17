@@ -259,29 +259,8 @@ func v02Connected(p *Pack) bool {
 	return true
 }
 
-// V04 is 场景包 #3：scenario/infinite-0.4，v0.4 无限世界最小包
-// (design §2.4)。出生 (0,0)；Fragment (8,-4)（出生 HexDist = 8）；Unknown
-// 与三只 Tier-2 怪物沿出生环（HexDist 8）六向分布；物料库沿用 v0.2 配比。
-// WP1 地形为无限平原；WP2 接入逐块五行生成后本包结构不变。
-func V04(seed uint64) *Pack {
-	return &Pack{
-		Name:      "scenario/infinite-0.4",
-		Seed:      seed,
-		TurnLimit: 60,
-		// TerrainFn nil → engine.PlainTerrain：无限平原，皆土可通行.
-		PlayerSpawn:  engine.Hex{Q: 0, R: 0},
-		FragmentPos:  engine.Hex{Q: 8, R: -4},
-		UnknownSpawn: engine.Hex{Q: -8, R: 0}, // 西位：与 Fragment 相背
-		MonsterSpawns: []MonsterSpec{
-			{Essence: engine.Fire, Form: 80, Pos: engine.Hex{Q: 0, R: 8}},   // 东南位
-			{Essence: engine.Metal, Form: 60, Pos: engine.Hex{Q: 0, R: -8}}, // 西北位
-			{Essence: engine.Earth, Form: 70, Pos: engine.Hex{Q: -8, R: 8}}, // 西南位
-		},
-		Materials: map[engine.Essence]int{
-			engine.Earth: 3, engine.Wood: 3, engine.Metal: 2, engine.Water: 2,
-		},
-	}
-}
+// V04（场景包 #3，scenario/infinite-0.4）见 infinite.go——WP2 起接入
+// 逐块五行生成、seed 哈希 Fragment 与 chunk 怪物懒激活.
 
 // Genesis instantiates the world from the pack (world_genesis §3):
 // it returns the world plus the ids of player, unknown agent, fragment

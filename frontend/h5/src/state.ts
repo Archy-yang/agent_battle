@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import {
   api, essenceName,
-  type GuidanceKind, type PredictChoice, type StateView, type Vec2,
+  type ExploredCell, type GuidanceKind, type Hex, type PredictChoice, type StateView,
 } from './api'
 
 // ---------- 状态 ----------
@@ -56,51 +56,70 @@ export function watchCombat() {
 }
 
 // ---------- 地图常量与渲染辅助 ----------
-// 兼容保留：MVP 12×12 场景的尺寸与出生点（新代码请用 mapDims / spawnPos）。
+// v0.4 坐标硬切：{x,y} → {q,r}（设计 §7 决定 #2）。
+// 兼容保留：MVP 场景的出生点（新代码请用 spawnCell）。
 export const W = 12
 export const H = 12
-export const SPAWN: Vec2 = { x: 1, y: 10 }
+export const SPAWN: Hex = { q: 0, r: 10 }
 
-// M3.4：地图尺寸由服务端 pack 名推导（StateView 尚未下发 W/H；
-// v0.4 可改为专用字段）。
-export const mapDims = computed(() => {
+// M3.4：地图尺寸由服务端 pack 名推导。v0.4 无限世界返回 null
+// （渲染不依赖地图尺寸）；StateView 未下发 W/H。
+export const mapDims = computed<{ w: number; h: number } | null>(() => {
   const pack = view.value?.pack ?? ''
-  return pack.includes('v02') ? { w: 24, h: 24 } : { w: 12, h: 12 }
+  if (pack.includes('v02')) return { w: 24, h: 24 }
+  if (pack.includes('v04') || pack.includes('infinite')) return null
+  return { w: 12, h: 12 }
+})
+
+// v0.4 无限世界场景包（scenario/infinite-0.4）
+export const isV04 = computed(() => {
+  const pack = view.value?.pack ?? ''
+  return pack.includes('v04') || pack.includes('infinite')
 })
 
 // 出生点：开新局（turn 0）时记下 self 初始位置；中途刷新页面拿不到
 // 服务端 spawn 字段时不渲染 ⌂（mvp 场景回退到 SPAWN 常量）。
-export const spawnPos = ref<Vec2 | null>(null)
-export const spawnCell = computed<Vec2 | null>(() => {
+export const spawnPos = ref<Hex | null>(null)
+export const spawnCell = computed<Hex | null>(() => {
   const pack = view.value?.pack ?? ''
   if (spawnPos.value) return spawnPos.value
-  return pack.includes('v02') ? null : SPAWN
+  return pack.includes('v02') || pack.includes('infinite') || pack.includes('v04')
+    ? null
+    : SPAWN
 })
 
 function rememberSpawn() {
   const v = view.value
   if (!spawnPos.value && v?.observation && v.turn <= 1) {
-    spawnPos.value = { x: v.observation.self.pos.x, y: v.observation.self.pos.y }
+    spawnPos.value = { q: v.observation.self.pos.q, r: v.observation.self.pos.r }
   }
 }
 
 export const exploredSet = computed(() => {
   const s = new Set<string>()
-  for (const p of view.value?.explored ?? []) s.add(`${p.x},${p.y}`)
+  for (const p of view.value?.explored ?? []) s.add(`${p.q},${p.r}`)
   return s
 })
 
 export const visibleSet = computed(() => {
   const s = new Set<string>()
-  for (const p of view.value?.observation?.visible ?? []) s.add(`${p.x},${p.y}`)
+  for (const p of view.value?.observation?.visible ?? []) s.add(`${p.q},${p.r}`)
   return s
 })
 
-export const entityAt = (x: number, y: number) =>
-  view.value?.observation?.entities?.find(e => e.pos.x === x && e.pos.y === y)
+// 已探索格的地形记忆（v0.4 服务端尚未下发 essence/danger；拿到时地图
+// 直接按五行上色 / 火色描边，客户端绝不自造地形）。
+export const exploredCellMap = computed(() => {
+  const m = new Map<string, ExploredCell>()
+  for (const p of view.value?.explored ?? []) m.set(`${p.q},${p.r}`, p)
+  return m
+})
 
-export const selfAt = (x: number, y: number) =>
-  view.value?.observation?.self.pos.x === x && view.value!.observation!.self.pos.y === y
+export const entityAt = (q: number, r: number) =>
+  view.value?.observation?.entities?.find(e => e.pos.q === q && e.pos.r === r)
+
+export const selfAt = (q: number, r: number) =>
+  view.value?.observation?.self.pos.q === q && view.value!.observation!.self.pos.r === r
 
 // 已废弃（M3.4）：客户端地形先验。地形信息只能来自服务端 explored /
 // observation（Reality ≠ Agent Knowledge），客户端不再自造地形。
@@ -123,8 +142,8 @@ export const FOG = {
   visible: '#3a424e',
 }
 
-export const cellStyle = (x: number, y: number) => {
-  const key = `${x},${y}`
+export const cellStyle = (q: number, r: number) => {
+  const key = `${q},${r}`
   const explored = exploredSet.value.has(key)
   const visible = visibleSet.value.has(key)
   if (!explored) {
@@ -140,7 +159,7 @@ export const cellStyle = (x: number, y: number) => {
 }
 
 // 当前移动订单目标（move_to）：地图上用强调金虚线框标注
-export const orderTarget = computed<Vec2 | null>(() => view.value?.order ?? null)
+export const orderTarget = computed<Hex | null>(() => view.value?.order ?? null)
 
 // 无 LLM 认知摘要时的客户端派生回退
 export const derivedCognition = computed(() => {
@@ -152,7 +171,7 @@ export const derivedCognition = computed(() => {
     ['Goal', (s.carrying ?? []).length ? '携带 Fragment 返回出生点' : '前往危险区取得 Fragment'],
     ['Plan', '直线推进，功率 0.4（阴偏稳）'],
     ['Known', seen.length
-      ? seen.map(e => `${e.kind === 'fragment' ? '结晶' : e.owner === 'unknown' ? '未知体' : e.kind}·${essenceName(e.essence)} @${e.pos.x},${e.pos.y}`).join('；')
+      ? seen.map(e => `${e.kind === 'fragment' ? '结晶' : e.owner === 'unknown' ? '未知体' : e.kind}·${essenceName(e.essence)} @${e.pos.q},${e.pos.r}`).join('；')
       : '感知范围内无其他实体'],
     ['Risk', `热 ${s.heat}/25 · 气 ${s.battery}/${s.max_battery}`],
     ['Suspicions', seen.some(e => e.owner === 'unknown') ? 'Unknown Agent 在附近（火迹明显，虚张声势？）' : '无'],
@@ -200,9 +219,10 @@ export async function refresh() {
   rememberSpawn()
 }
 
-// 开新对局；scenario 选场景包："mvp"（经典 12×12，默认）| "v02"（大地图 24×24）。
+// 开新对局；scenario 选场景包："mvp"（经典 12×12，默认）| "v02"（大地图 24×24）
+// | "v04"（无限六边形世界，scenario/infinite-0.4）。
 // 追加可选参数，旧调用 newMatch() 行为不变。
-export async function newMatch(scenario?: 'mvp' | 'v02') {
+export async function newMatch(scenario?: 'mvp' | 'v02' | 'v04') {
   busy.value = true
   error.value = ''
   try {
@@ -245,25 +265,25 @@ export function flashHint(text: string) {
   mapHintTimer = setTimeout(() => { mapHint.value = '' }, 3500)
 }
 
-// 点选寻路：一回合推进一步。POST tick {intents:[{type:"move_to",to}]} ——
+// 点选寻路：一回合推进一步。POST tick {intents:[{type:"move_to",to:{q,r}}]} ——
 // 订单不占意图预算，引擎每 tick 自动走一格；到达发 order_done，被挡发 order_blocked。
 // 服务端无法通行/不可达时回 intent_rejected，从本回合事件里取出来做轻提示。
-export async function sendMoveTo(x: number, y: number) {
+export async function sendMoveTo(q: number, r: number) {
   if (!view.value || busy.value || view.value.status !== 'running') return
   busy.value = true
   error.value = ''
   try {
     view.value = await api<StateView>(`/api/match/${view.value.id}/tick`, {
-      intents: [{ type: 'move_to', to: { x, y } }],
+      intents: [{ type: 'move_to', to: { q, r } }],
     })
     rememberSpawn()
     const turn = view.value.turn
     const recent = (view.value.events ?? []).filter(e => e.tick === turn)
     const rejected = recent.find(e => e.type === 'intent_rejected')
     if (rejected) {
-      flashHint(rejected.text) // 如「目标格不可通行 {x,y}」「目标格不可达 {x,y}」
+      flashHint(rejected.text) // 如「目标格不可通行 {q,r}」「目标格不可达 {q,r}」
     } else {
-      flashHint(`移动订单：前往 (${x},${y})`)
+      flashHint(`移动订单：前往 (${q},${r})`)
     }
   } catch (e) {
     error.value = errText(e)

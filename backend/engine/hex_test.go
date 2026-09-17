@@ -142,19 +142,20 @@ func TestHexJSON(t *testing.T) {
 	}
 }
 
-// ChunkCache：任意 (q,r)（含负数）查询返回可通行土性格，chunk 复用
-// 同一底层存储（占位实现的行为契约，WP2 替换内部后仍须成立）。
+// ChunkCache：任意 (q,r)（含负数）查询返回可通行土性格（nil gen →
+// 无限平原兼容缝），chunk 复用同一底层存储；WP2 起返回 Cell 值拷贝
+// （LRU 淘汰下裸指针不安全，同一格两次查询的契约由"值相等"表达）。
 func TestChunkCacheAt(t *testing.T) {
 	cc := NewChunkCache(7, nil)
 	for _, h := range []Hex{{0, 0}, {-1, -1}, {13, -25}, {-144, 144}} {
 		c := cc.At(h.Q, h.R)
-		if c == nil || !c.Passable || c.Essence != Earth {
+		if !c.Passable || c.Essence != Earth {
 			t.Errorf("At(%v) = %+v, want passable earth", h, c)
 		}
 	}
-	// 指针稳定性：同一格两次查询指向同一存储
+	// 值拷贝语义：同一格两次查询结果相等（确定性）
 	if cc.At(3, 4) != cc.At(3, 4) {
-		t.Errorf("chunk cache should reuse cell storage")
+		t.Errorf("chunk cache should return identical cells for repeated queries")
 	}
 	// 自定义地形纯函数按 (seed,q,r) 调用
 	called := map[Hex]Cell{}
