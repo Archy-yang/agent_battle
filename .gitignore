@@ -1,0 +1,6 @@
+.DS_Store
+backend/bin/
+backend/*.test
+backend/*.out
+.idea/
+.vscode/
