@@ -52,6 +52,36 @@ func (a *ScriptedAgent) Decide(obs *engine.Observation) []engine.Intent {
 	return nil
 }
 
+// DecideOrder is the WP3 event-driven entry for the scripted pilot
+// (design §3.1 执行层)：它以 move_to 常驻订单说话——引擎逐 tick 自动
+// 步进，两次事件之间零次决策；pilot 只在 EventClassifier 唤醒时被咨询
+// （抵达、受阻升级、心跳……）。在结晶格搬运，携晶回出生点后待命
+// （胜利由对局层判定）。
+func (a *ScriptedAgent) DecideOrder(obs *engine.Observation) []engine.Intent {
+	if obs == nil {
+		return nil
+	}
+	self := obs.Self
+	carrying := len(self.Carrying) > 0
+	if carrying && self.Pos == a.Spawn {
+		return nil // 胜利由对局层判定
+	}
+	if !carrying && self.Pos == a.Target {
+		for _, seen := range obs.Entities {
+			if seen.Kind == "fragment" && seen.Pos == self.Pos {
+				return []engine.Intent{{Type: "transfer", Target: seen.ID}}
+			}
+		}
+		return nil
+	}
+	goal := a.Target
+	if carrying {
+		goal = a.Spawn
+	}
+	to := goal // move_to 订单：引擎按静态地形 BFS 逐 tick 步进，受阻自动等待
+	return []engine.Intent{{Type: "move_to", To: &to}}
+}
+
 // nextStep is a deterministic greedy walk over the six hex directions:
 // candidates ordered by ascending HexDist to the goal (fixed tie order
 // by HexDirs), first passable and unblocked candidate wins. On open

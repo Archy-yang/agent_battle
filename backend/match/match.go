@@ -78,6 +78,10 @@ type Review struct {
 	Lessons []string `json:"lessons"`
 }
 
+// v04PackName selects the v0.4 infinite-world pack: only there does the
+// chunk lazy-activation protocol run (scenario/infinite.go).
+const v04PackName = "scenario/infinite-0.4"
+
 // Match is one session of one scenario pack.
 type Match struct {
 	ID        string
@@ -110,6 +114,21 @@ type Match struct {
 	Influence  float64
 	pausedOnce bool
 	pauseNext  bool
+
+	// activatedChunks 是 v0.4 怪物懒激活的"已激活 chunk 集合"——调用方
+	// 持有的确定性状态（design §2.5：纯函数 + 调用方持状态），进重放
+	// 语义：同 seed + 同 Intent 流 → 同一激活序列。scenario 侧的
+	// PendingSpawns 是纯函数，不持任何跨对局状态.
+	activatedChunks map[[2]int]bool
+
+	// —— v0.4 LLM 介入层 (design §3) ——
+	// cls 的全部去抖状态是确定性字段；TriggerLog 记录每次触发原因，
+	// lastTrigger 是最近一次触发（View.last_trigger），llmCalls 是本局
+	// pilot 决策调用计数（LLM pilot 下即 LLM 调用数，预算口径 ≤50/局）。
+	cls         *EventClassifier
+	TriggerLog  []string
+	lastTrigger string
+	llmCalls    int
 
 	profile     *profile.Store
 	unknownDir  engine.Hex
@@ -146,7 +165,10 @@ func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) 
 		Status:     StatusRunning,
 		Influence:  InfluenceStart,
 		profile:    prof,
+		cls:        NewEventClassifier(),
 		unknownDir: engine.HexDirs[0], // E：六方向固定顺序游荡
+
+		activatedChunks: map[[2]int]bool{}, // v0.4 懒激活：调用方持状态
 	}
 	if cfg := agent.LLMFromEnv(); cfg != nil {
 		p := agent.NewLLM(*cfg)
@@ -169,6 +191,7 @@ func (m *Match) Tick(intents []engine.Intent) {
 	acts := m.monstersAct()
 	acts[m.PlayerID] = intents
 	evs := m.W.Advance(acts)
+	evs = append(evs, m.lazySpawns()...) // v0.4 怪物懒激活进事件流
 	m.lastEvs = evs
 	m.lastIntents = intents
 	m.Events = append(m.Events, evs...)
@@ -182,8 +205,53 @@ func (m *Match) Tick(intents []engine.Intent) {
 	m.checkEnd()
 }
 
-// TickAuto advances one turn using the pilot's decision. Player
-// guidance enters the LLM pilot's context (偏好，不是动作).
+// lazySpawns runs the v0.4 chunk lazy-activation protocol
+// (scenario/infinite.go 文件头【match 接入点】): 在玩家所在 chunk 的 3×3
+// 激活圈内覆盖尚未激活的 chunk，把出怪 chunk 的激活事件（Entity 回填为
+// 新实体 id 后）并入本回合事件流，并把覆盖到的 chunk 键记入
+// activatedChunks（无论是否出怪——"只激活一次"对 chunk 成立）。
+// PendingSpawns 是纯函数，激活判定状态完全由 m.activatedChunks 持有，
+// 懒激活是 (seed, chunk, activated 演化) 的确定结果，重放不受影响
+// (design §2.5)。仅 v0.4 包接线。
+func (m *Match) lazySpawns() []engine.Event {
+	if m.PackName != v04PackName {
+		return nil
+	}
+	p := m.W.Entities[m.PlayerID]
+	if p == nil {
+		return nil
+	}
+	if m.activatedChunks == nil {
+		m.activatedChunks = map[[2]int]bool{}
+	}
+	var evs []engine.Event
+	for _, cs := range scenario.PendingSpawns(m.W, p.Pos, m.activatedChunks) {
+		m.activatedChunks[[2]int{cs.QC, cs.RC}] = true
+		if cs.Spawn == nil {
+			continue // 覆盖到位但该 chunk 无怪
+		}
+		e := m.W.Spawn(cs.Spawn.Entity)
+		ev := cs.Spawn.Event
+		ev.Entity = e.ID // 实体 id 在 Spawn 后才存在
+		evs = append(evs, ev)
+	}
+	return evs
+}
+
+// orderPilot is a pilot that speaks in standing move_to orders (执行层,
+// design §3.1/§3.4 条 1)：引擎逐 tick 自动步进，两次事件之间零次决策；
+// pilot 只在 EventClassifier 唤醒时被咨询。
+type orderPilot interface {
+	agent.DecisionMaker
+	DecideOrder(obs *engine.Observation) []engine.Intent
+}
+
+// TickAuto advances one turn under the v0.4 four-layer event-driven
+// model (design §3)：EventClassifier 判定本 tick 是否值得一次决策。
+//
+// 不触发 → 不调用 pilot，仅推进引擎（执行层订单照走、怪物照动、环境
+// 照常），0 次调用；触发 → 唤醒 pilot，触发原因经 SetTrigger 进入
+// LLM 的触发语境与 user payload（scripted pilot 以 move_to 订单应答）。
 func (m *Match) TickAuto() {
 	if m.Status != StatusRunning {
 		return
@@ -193,20 +261,72 @@ func (m *Match) TickAuto() {
 		m.Tick(nil)
 		return
 	}
-	if la, ok := m.Pilot.(*agent.LLMAgent); ok {
-		notes := make([]agent.GuidanceNote, 0, len(m.Guidance))
-		for _, g := range m.Guidance {
-			notes = append(notes, agent.GuidanceNote{Turn: g.Turn, Kind: g.Kind, Text: g.Text})
-		}
-		la.SetGuidance(notes)
+	trigger := m.classifyTick()
+	if trigger == "" { // 执行层：0 次调用
+		m.Tick(nil)
+		return
 	}
-	obs := m.W.Observe(m.PlayerID, m.lastEvs)
-	m.Tick(m.Pilot.Decide(obs))
+	m.lastTrigger = trigger
+	m.TriggerLog = append(m.TriggerLog, trigger)
+	m.llmCalls++ // 计数口径：本局 pilot 决策调用数（LLM pilot 下即 LLM 调用数）
+
 	if la, ok := m.Pilot.(*agent.LLMAgent); ok {
+		la.SetGuidance(m.guidanceNotes())
+		la.SetTrigger(trigger)
+		obs := m.W.Observe(m.PlayerID, m.lastEvs)
+		m.Tick(la.DecideTriggered(obs))
 		if c := la.LastCognition(); c != nil {
 			m.Cognition = c
 		}
+		return
 	}
+	obs := m.W.Observe(m.PlayerID, m.lastEvs)
+	if op, ok := m.Pilot.(orderPilot); ok {
+		m.Tick(op.DecideOrder(obs))
+		return
+	}
+	m.Tick(m.Pilot.Decide(obs))
+}
+
+// classifyTick feeds the classifier with the facts of the tick just
+// ended (m.lastEvs 是上一回合 Advance 产出、尚未被任何决策消费的事件流).
+func (m *Match) classifyTick() string {
+	return m.cls.Classify(ClassifyInput{
+		Tick:            m.W.Tick,
+		PlayerID:        m.PlayerID,
+		Events:          m.lastEvs,
+		Self:            m.W.Entities[m.PlayerID],
+		VisibleHostiles: m.visibleHostiles(),
+		InCombat:        m.InCombat(),
+	})
+}
+
+// visibleHostiles lists the hostile ids inside the player's current
+// perception radius (被动 1，感识开启 4)，按 hostiles() 固定序。
+func (m *Match) visibleHostiles() []engine.EntityID {
+	p := m.W.Entities[m.PlayerID]
+	if p == nil {
+		return nil
+	}
+	radius := 1
+	if s := p.FindComponent(engine.CSensor); s != nil && s.Active {
+		radius = 4
+	}
+	var out []engine.EntityID
+	for _, id := range m.hostiles() {
+		if e := m.W.Entities[id]; e != nil && engine.HexDist(p.Pos, e.Pos) <= radius {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func (m *Match) guidanceNotes() []agent.GuidanceNote {
+	notes := make([]agent.GuidanceNote, 0, len(m.Guidance))
+	for _, g := range m.Guidance {
+		notes = append(notes, agent.GuidanceNote{Turn: g.Turn, Kind: g.Kind, Text: g.Text})
+	}
+	return notes
 }
 
 // Observe returns the player agent's current perception.
@@ -225,6 +345,7 @@ func (m *Match) AddGuidance(kind, text string) error {
 	}
 	m.Influence -= cost
 	m.Guidance = append(m.Guidance, Guidance{Turn: m.W.Tick, Kind: kind, Text: text})
+	m.cls.ArmGuidance() // Guidance 层：下一 tick 必触发一次（design §3.1）
 	return nil
 }
 
@@ -309,7 +430,7 @@ func (m *Match) classifyIntents() string {
 	}
 	for _, in := range m.lastIntents {
 		switch in.Type {
-		case "move":
+		case "move", "move_to": // WP3：订单也是"移动"的预测口径
 			return "move"
 		case "transfer":
 			return "pickup"

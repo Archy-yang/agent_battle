@@ -145,16 +145,20 @@ func TestV04LazyActivation(t *testing.T) {
 		p := V04(20260918)
 		w, _, _, _, _ := p.Genesis()
 		var seq []string
-		seen := map[[2]int]bool{}
+		activated := map[[2]int]bool{} // 调用方持状态（match.activatedChunks 的对应物）
 		for _, pos := range path {
 			w.Tick++
-			for _, ps := range PendingSpawns(w, pos) {
-				qc, rc := chunkOf(ps.Entity.Pos)
-				key := [2]int{qc, rc}
-				if seen[key] {
-					t.Fatalf("chunk (%d,%d) activated twice", qc, rc)
+			for _, cs := range PendingSpawns(w, pos, activated) {
+				key := [2]int{cs.QC, cs.RC}
+				if activated[key] {
+					t.Fatalf("chunk (%d,%d) covered twice", cs.QC, cs.RC)
 				}
-				seen[key] = true
+				activated[key] = true // 无论是否出怪，该 chunk 只激活一次
+				if cs.Spawn == nil {
+					continue
+				}
+				ps := cs.Spawn
+				qc, rc := cs.QC, cs.RC
 				if ps.Event.Type != "spawn" {
 					t.Errorf("event type = %s, want spawn", ps.Event.Type)
 				}
@@ -162,7 +166,7 @@ func TestV04LazyActivation(t *testing.T) {
 					t.Errorf("event tick = %d, want %d", ps.Event.Tick, w.Tick)
 				}
 				e := ps.Entity
-				if e.Kind != "monster" || e.Essence != v04DominantEssence(w, qc, rc) {
+				if e.Kind != "monster" || e.Essence != v04DominantEssence(p.Seed, qc, rc) {
 					t.Errorf("mob %+v essence mismatch with dominant row", e.Pos)
 				}
 				if e.Integrity < 60 || e.Integrity > 80 || e.Integrity != e.MaxIntegrity {
@@ -175,7 +179,7 @@ func TestV04LazyActivation(t *testing.T) {
 			}
 		}
 		// 回放已完成激活的路径：不得再产出任何怪物
-		if extra := PendingSpawns(w, path[len(path)-1]); len(extra) != 0 {
+		if extra := PendingSpawns(w, path[len(path)-1], activated); len(extra) != 0 {
 			t.Errorf("re-activation produced %d extra spawns", len(extra))
 		}
 		return seq

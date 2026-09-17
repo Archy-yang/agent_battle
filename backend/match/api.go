@@ -45,6 +45,13 @@ type StateView struct {
 	// Enemies lists the hostile entities inside the player's perception
 	// radius (4 with the sensor on, 1 with it off).
 	Enemies []EnemyView `json:"enemies"`
+	// LastTrigger is the most recent LLM trigger reason (design §3.2):
+	// arrive | encounter | resource | threshold:* | heartbeat | combat |
+	// guidance. Empty string = 尚无触发.
+	LastTrigger string `json:"last_trigger"`
+	// LLMCalls is the number of pilot decision invocations this match
+	// (LLM pilot 下即 LLM 调用数). WP3 预算验收口径：一局 ≤ 50.
+	LLMCalls int `json:"llm_calls"`
 }
 
 // EnemyView is one hostile entity as the player perceives it.
@@ -183,6 +190,8 @@ func (m *Match) View() *StateView {
 		Order:       order,
 		InCombat:    m.InCombat(),
 		Enemies:     enemies,
+		LastTrigger: m.lastTrigger,
+		LLMCalls:    m.llmCalls,
 	}
 }
 

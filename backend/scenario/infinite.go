@@ -3,7 +3,6 @@ package scenario
 import (
 	"fmt"
 	"strconv"
-	"sync"
 
 	"agentbattle/backend/engine"
 )
@@ -18,17 +17,24 @@ import (
 // 导行，Form 由 hash 定。怪物在 chunk 首次参与激活圈时懒激活，激活事
 // 件（"spawn"）进事件流（PendingSpawns）。
 //
-// 【match 接入点】match 在每回合推进时调用
+// 【match 接入点】match 持有"已激活 chunk 集合"（确定性状态，进重放
+// 语义），每回合推进时调用
 //
-//	for _, ps := range scenario.PendingSpawns(m.W, player.Pos) {
-//	    e := m.W.Spawn(ps.Entity)
-//	    ev := ps.Event
+//	for _, cs := range scenario.PendingSpawns(m.W, player.Pos, m.activatedChunks) {
+//	    m.activatedChunks[[2]int{cs.QC, cs.RC}] = true
+//	    if cs.Spawn == nil {
+//	        continue // 该 chunk 已覆盖但无怪
+//	    }
+//	    e := m.W.Spawn(cs.Spawn.Entity)
+//	    ev := cs.Spawn.Event
 //	    ev.Entity = e.ID // 实体 id 在 Spawn 后才存在
 //	    evs = append(evs, ev)
 //	}
 //
-// 并把返回的事件并入该回合事件流；懒激活是 (seed, chunk) 的确定结果，
-// 重放不受影响 (design §2.5)。hex 注释标注：本接口由 match 工作包接线。
+// 并把返回的事件并入该回合事件流。PendingSpawns 是纯函数：不修改
+// activated，同一 (world 状态, 玩家位, activated) 重复调用结果逐位一致
+// ——不持任何跨对局状态，World 被 GC 后地址复用也绝无激活状态串局
+// （design §2.5 "纯函数 + 调用方持状态"）。
 
 // V04TurnLimit is the v0.4 turn limit (design §2.4).
 const V04TurnLimit = 60
@@ -113,6 +119,20 @@ func V04(seed uint64) *Pack {
 }
 
 // —— 怪物懒激活 (design §2.4/§2.5) ——
+//
+// 原则：纯函数 + 调用方持状态。某 chunk 是否已激活由调用方（match 的
+// activatedChunks，确定性重放状态）持有；本包只提供两个纯函数——
+// MonsterSpawnsFor（(seed, chunk) → 怪物规格）与 PendingSpawns
+// （激活圈覆盖计算）。不持任何跨对局状态：全局注册表以 *World 指针为
+// 键，World 被 GC 后地址复用会让新对局继承旧激活状态（怪物不激活、
+// 重放被破坏），该设计已于 WP5 评审后废除。
+
+// MobSpec is one chunk's lazily-activated mob specification (不含落点——
+// 落点依赖激活时刻的占位状态，由 PendingSpawns 在激活 tick 决定).
+type MobSpec struct {
+	Essence engine.Essence
+	Form    int
+}
 
 // PendingSpawn is one lazily-activated chunk mob. match 负责把 Entity
 // 交给 World.Spawn，并把 Event（回填 Entity 为新实体 id 后）并入该回合
@@ -152,72 +172,77 @@ func v04MobChance(depth int) float64 {
 	return p
 }
 
-// v04Activated tracks per-world which chunks have already rolled their
-// lazy activation——"chunk 首次生成时激活"只发生一次。World 结构属于
-// engine（WP2 不加字段），故注册表挂在 scenario 包内、以 *World 为键；
-// 生命周期与世界一致（v0.4 不做持久世界，进程内注册表即够）.
-var (
-	v04Mu        sync.Mutex
-	v04Activated = map[*engine.World]map[[2]int]bool{}
-)
-
-// PendingSpawns returns the mobs to lazily activate around playerPos:
-// 以玩家所在 chunk 为中心的 3×3 chunk 激活圈（与出生豁免区同构），
-// 圈内尚未激活的 chunk 按 hash 决定出怪。幂等：同一 chunk 不会二次
-// 激活；同一 seed 同一玩家路径 → 同一激活序列（重放安全）。
-//
-// 【match 接入点】由 match 在每回合推进时调用（见文件头）。
-func PendingSpawns(w *engine.World, playerPos engine.Hex) []PendingSpawn {
-	v04Mu.Lock()
-	defer v04Mu.Unlock()
-	done := v04Activated[w]
-	if done == nil {
-		done = map[[2]int]bool{}
-		v04Activated[w] = done
+// MonsterSpawnsFor returns the chunk's lazily-activated mob spec, or nil
+// when the chunk rolls no mob：纯函数 (seed, qc, rc)——hash 自带 seed，
+// 不消耗 match Rng，可重复调用、结果逐位一致 (design §2.5).
+func MonsterSpawnsFor(seed uint64, qc, rc int) *MobSpec {
+	ss := strconv.FormatUint(seed, 10)
+	depth := engine.HexDist(chunkCenter(qc, rc), chunkCenter(0, 0))
+	if engine.Hash01(ss, "mob", qc, rc) >= v04MobChance(depth) {
+		return nil // 本 chunk 无怪
 	}
-	ss := strconv.FormatUint(w.Seed, 10)
+	return &MobSpec{
+		Essence: v04DominantEssence(seed, qc, rc), // essence 取该 chunk 主导行
+		Form:    60 + int(engine.Hash01(ss, "mob-form", qc, rc)*21), // Form 由 hash 定：60..80
+	}
+}
+
+// ChunkSpawn is one newly-covered chunk's lazy-activation result of a
+// tick. Spawn == nil 表示该 chunk 覆盖到位但无怪——它同样必须记入调用
+// 方的 activated 集合（"只激活一次"是对 chunk 而非对怪成立的）.
+type ChunkSpawn struct {
+	QC, RC int
+	Spawn  *PendingSpawn
+}
+
+// PendingSpawns walks the 3×3 activation circle around playerPos（与出
+// 生豁免区同构）and returns every chunk not yet in activated，连同其怪
+// 物（若有）。
+//
+// 纯函数：不修改 activated；同一 (world 状态, playerPos, activated)
+// 重复调用结果逐位一致。跨对局零状态——world 指针不参与任何判定，
+// 同 seed 同玩家路径 + 同 activated 演化 → 同一激活序列（重放安全，
+// design §2.5）。幂等性由调用方把返回项的 chunk 键并入 activated 保证.
+func PendingSpawns(w *engine.World, playerPos engine.Hex, activated map[[2]int]bool) []ChunkSpawn {
 	frag := FragmentFor(w.Seed)
 	pcq, pcr := chunkOf(playerPos)
 
-	var out []PendingSpawn
+	var out []ChunkSpawn
 	for drc := -1; drc <= 1; drc++ { // 固定顺序 → 确定激活序列
 		for dqc := -1; dqc <= 1; dqc++ {
 			qc, rc := pcq+dqc, pcr+drc
 			key := [2]int{qc, rc}
-			if done[key] {
-				continue
+			if activated[key] {
+				continue // 调用方已激活过该 chunk
 			}
-			done[key] = true // 无论是否出怪，该 chunk 只激活一次
-			depth := engine.HexDist(chunkCenter(qc, rc), chunkCenter(0, 0))
-			if engine.Hash01(ss, "mob", qc, rc) >= v04MobChance(depth) {
-				continue // 本 chunk 无怪
+			cs := ChunkSpawn{QC: qc, RC: rc}
+			if ms := MonsterSpawnsFor(w.Seed, qc, rc); ms != nil {
+				if pos, ok := v04MobCell(w, w.Seed, qc, rc, playerPos, frag); ok {
+					cs.Spawn = &PendingSpawn{
+						Entity: v04BuildMob(pos, ms.Essence, ms.Form),
+						Event: engine.Event{
+							Tick: w.Tick,
+							Type: "spawn",
+							Text: fmt.Sprintf("懒激活：%s 行妖物现形于 (%d,%d)", ms.Essence, pos.Q, pos.R),
+						},
+					}
+				}
 			}
-			ess := v04DominantEssence(w, qc, rc)                       // essence 取该 chunk 主导行
-			form := 60 + int(engine.Hash01(ss, "mob-form", qc, rc)*21) // Form 由 hash 定：60..80
-			pos, ok := v04MobCell(w, ss, qc, rc, playerPos, frag)
-			if !ok {
-				continue // chunk 内无合法落点（理论上几乎不发生）
-			}
-			out = append(out, PendingSpawn{
-				Entity: v04BuildMob(pos, ess, form),
-				Event: engine.Event{
-					Tick: w.Tick,
-					Type: "spawn",
-					Text: fmt.Sprintf("懒激活：%s 行妖物现形于 (%d,%d)", ess, pos.Q, pos.R),
-				},
-			})
+			out = append(out, cs)
 		}
 	}
 	return out
 }
 
 // v04DominantEssence returns the mode of the chunk's 144 cell essences
-// （顽石格仍计入其 underlying essence）；并列取五行序最前者.
-func v04DominantEssence(w *engine.World, qc, rc int) engine.Essence {
+// （顽石格仍计入其 underlying essence）；并列取五行序最前者。纯函数：
+// 直接由 engine.Terrain 计算（与 pack 地形缝的 essence 逐位一致），
+// 不依赖任何 *World 实例.
+func v04DominantEssence(seed uint64, qc, rc int) engine.Essence {
 	var counts [5]int
 	for j := 0; j < engine.ChunkSize; j++ {
 		for i := 0; i < engine.ChunkSize; i++ {
-			counts[w.At(engine.Hex{Q: qc*engine.ChunkSize + i, R: rc*engine.ChunkSize + j}).Essence]++
+			counts[engine.Terrain(seed, qc*engine.ChunkSize+i, rc*engine.ChunkSize+j).Essence]++
 		}
 	}
 	best := engine.Essence(0)
@@ -232,7 +257,8 @@ func v04DominantEssence(w *engine.World, qc, rc int) engine.Essence {
 // v04MobCell picks the mob's cell: chunk 内可通行、非玩家位、非
 // Fragment 位、当前无实体阻挡的格子中按 hash 选取（固定行枚举序 →
 // 确定性）.
-func v04MobCell(w *engine.World, ss string, qc, rc int, playerPos, frag engine.Hex) (engine.Hex, bool) {
+func v04MobCell(w *engine.World, seed uint64, qc, rc int, playerPos, frag engine.Hex) (engine.Hex, bool) {
+	ss := strconv.FormatUint(seed, 10)
 	var cand []engine.Hex
 	for j := 0; j < engine.ChunkSize; j++ {
 		for i := 0; i < engine.ChunkSize; i++ {
