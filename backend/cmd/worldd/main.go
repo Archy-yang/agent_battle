@@ -22,7 +22,7 @@ import (
 	"agentbattle/backend/web"
 )
 
-const version = "v0.4.0"
+const version = "v0.7.0"
 
 // loadEnvFile reads KEY=VALUE lines and sets any not already present
 // in the environment (server-side LLM config; the key never reaches

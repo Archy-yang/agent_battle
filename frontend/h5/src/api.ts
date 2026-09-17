@@ -191,6 +191,33 @@ export interface StateExt extends StateView {
   order?: Hex | null
 }
 
+// ---- v0.7 对局录像与重放（backend/match/recording.go 的 JSON 契约） ----
+
+// Recording 的一帧：该 tick 实际进入引擎的玩家侧意图与随之产生的事件。
+// player_intents 原样透传（前端不解析意图结构，回放时整包回传服务端）；
+// Go 侧空意图 slice 序列化为 null，前端需 ?? [] 兜底。
+export interface ReplayFrame {
+  tick: number
+  player_intents: unknown[] | null
+  auto: boolean
+  resulting_events: Event[]
+}
+
+// GET /api/match/{id}/recording 的返回；POST /api/replay 的 body 主体
+// （内联 frames）+ until_tick。
+export interface Recording {
+  id: string
+  seed: number
+  scenario: string
+  frames: ReplayFrame[]
+  guidance?: Guidance[]
+}
+
+// POST /api/replay 请求体：Recording 展开（内联）+ 重演到的 tick。
+export interface ReplayRequest extends Recording {
+  until_tick: number
+}
+
 // GET/POST /api/profile —— Agent 养成档案
 export interface ProfileSliders {
   adventure: number // 0..1 冒险 ↔ 谨慎

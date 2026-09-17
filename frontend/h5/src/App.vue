@@ -8,8 +8,9 @@ import MapView from './views/MapView.vue'
 import BattleView from './views/BattleView.vue'
 import GearView from './views/GearView.vue'
 import StatsView from './views/StatsView.vue'
+import ReplayView from './views/ReplayView.vue'
 
-type Page = 'map' | 'battle' | 'gear' | 'stats'
+type Page = 'map' | 'battle' | 'gear' | 'stats' | 'replay'
 const page = ref<Page>('map')
 
 const PAGES: { key: Page; label: string }[] = [
@@ -17,6 +18,7 @@ const PAGES: { key: Page; label: string }[] = [
   { key: 'battle', label: '对战' },
   { key: 'gear', label: '装备' },
   { key: 'stats', label: '属性' },
+  { key: 'replay', label: '回放' },
 ]
 
 // 对局初始化放在外壳：外壳不随 Tab 切换卸载，切页返回不丢局。
@@ -59,7 +61,8 @@ watch(battleNavRequest, () => { page.value = 'battle' })
       <MapView v-if="page === 'map'" />
       <BattleView v-else-if="page === 'battle'" />
       <GearView v-else-if="page === 'gear'" />
-      <StatsView v-else />
+      <StatsView v-else-if="page === 'stats'" />
+      <ReplayView v-else />
     </main>
   </div>
 </template>
