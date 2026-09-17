@@ -350,10 +350,13 @@ export async function sendEquip(blueprint: BlueprintSpec[]) {
   }
 }
 
-// LLM 触发原因中文映射（BattleView 顶部反馈条；threshold:* 带后缀，前缀匹配）
+// LLM 触发原因中文映射（BattleView 顶部反馈条；threshold:* 带后缀，前缀匹配）。
+// 覆盖 combat/arrive(ral)/encounter/resource/threshold/heartbeat/guidance；
+// 未知值回退显示原文（triggerLabel 尾部 return t），不显示空白。
 const TRIGGER_LABELS: Record<string, string> = {
   combat: '接战',
   arrive: '抵达',
+  arrival: '抵达',
   encounter: '遭遇',
   resource: '发现',
   threshold: '状态告警',

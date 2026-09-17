@@ -32,7 +32,8 @@ watch(battleNavRequest, () => { page.value = 'battle' })
 <template>
   <div class="wrap">
     <header>
-      <h1>agent_battle <small>scenario/mvp-0.1</small></h1>
+      <!-- pack 名始终读全局 view（响应式）：新对局切换场景包后标题跟随 -->
+      <h1>agent_battle <small>{{ view?.pack ?? '未开局' }}</small></h1>
       <nav class="nav">
         <button
           v-for="p in PAGES" :key="p.key"
@@ -128,8 +129,8 @@ button:hover:not(:disabled) { background: #35405a; }
 button:disabled { opacity: 0.4; cursor: default; }
 button.danger { border-color: #5a3a3a; color: var(--fire); }
 button.danger:hover:not(:disabled) { background: #45303a; }
-.err { color: var(--fire); font-size: 13px; }
-.sub-err { color: var(--fire); font-size: 12px; margin: 4px 0 0; }
+/* 统一错误提示：所有页面的内联红字（guideError/askError/predictError/equipError/error 等） */
+.err { color: var(--fire); font-size: 13px; margin: 4px 0 0; }
 
 /* ---- 面板通用 ---- */
 h2 { font-size: 14px; margin: 18px 0 6px; color: var(--nav-active); }

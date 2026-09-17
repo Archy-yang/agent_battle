@@ -735,6 +735,81 @@ func (m *Match) InCombat() bool {
 	return false
 }
 
+// —— v0.6 克关系战术预览 (docs/world_laws.md §5 克曲线) ——
+
+// tacticPowerGuess is the assumed output power of the preview shot:
+// the engine's default projection strength, used both as the curve
+// input and as the my_power_guess field handed to the UI.
+const tacticPowerGuess = 600
+
+// TacticsView is one 克关系战术预览 card: the engine-side consequence
+// of "my fire onto its essence". This is the public corollary of the
+// 克曲线 (the laws say the agent must judge both essences before
+// striking) computed for the player — not a leak: the card exists only
+// for hostiles already inside the perception radius (信息边界不变).
+type TacticsView struct {
+	EnemyID       engine.EntityID `json:"enemy_id"`
+	MyEssence     string          `json:"my_essence"`     // 我方离火本源（中文名；无离火为空）
+	EnemyEssence  string          `json:"enemy_essence"`  // 敌方本源（中文名）
+	PredictedZone string          `json:"predicted_zone"` // 侮|微|衡|乘|中性；无离火为空
+	MyPowerGuess  int             `json:"my_power_guess"` // 预估作用功率（默认 600）
+	Note          string          `json:"note"`           // 一句战术建议
+}
+
+// tacticNotes maps each 克曲线 zone to its one-line tactical advice.
+var tacticNotes = map[engine.CurveZone]string{
+	engine.ZoneWu:    "以弱击强，会反噬",
+	engine.ZoneWei:   "杯水车薪",
+	engine.ZoneHeng:  "正常克制",
+	engine.ZoneCheng: "失控放大，会波及周围",
+}
+
+// Tactics computes the 克关系战术预览 for every hostile inside the
+// player's perception radius (与 Enemies 同一边界，visibleHostiles 定序):
+// 以我方离火本源对敌本源做一次默认功率 (600) 的 ApplyPower 演算。
+// 非克关系不落克曲线（律五：只有生克二门），报"中性"；无离火则无法
+// 反击，zone 留空。
+func (m *Match) Tactics() []TacticsView {
+	cards := []TacticsView{}
+	player := m.W.Entities[m.PlayerID]
+	if player == nil {
+		return cards
+	}
+	em := player.FindComponent(engine.CEmitter)
+	for _, id := range m.visibleHostiles() {
+		e := m.W.Entities[id]
+		if e == nil {
+			continue
+		}
+		card := TacticsView{
+			EnemyID:      id,
+			EnemyEssence: e.Essence.String(),
+			MyPowerGuess: tacticPowerGuess,
+		}
+		if em == nil {
+			card.Note = "无离火，无法反击"
+			cards = append(cards, card)
+			continue
+		}
+		card.MyEssence = em.Essence.String()
+		if !engine.Restrains(em.Essence, e.Essence) {
+			card.PredictedZone = "中性"
+			card.Note = "非克关系，作用减半"
+			cards = append(cards, card)
+			continue
+		}
+		strength := e.MaxIntegrity
+		if strength <= 0 {
+			strength = e.Integrity
+		}
+		res := engine.ApplyPower(em.Essence, e.Essence, tacticPowerGuess, strength)
+		card.PredictedZone = res.Zone.String()
+		card.Note = tacticNotes[res.Zone]
+		cards = append(cards, card)
+	}
+	return cards
+}
+
 // rotate advances a hex direction to the next in the fixed HexDirs
 // order (E→NE→NW→W→SW→SE→E).
 func rotate(d engine.Hex) engine.Hex {

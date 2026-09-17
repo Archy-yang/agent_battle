@@ -12,7 +12,8 @@ import {
   step, runToEnd,
   triggerLabel,
 } from '../state'
-import { essenceName, essenceColor } from '../api'
+import { essenceName, essenceColor, essenceColorByName } from '../api'
+import type { TacticsView } from '../api'
 import type { BattleStateView } from '../types-battle'
 
 // ---- 视图（战斗扩展字段，旧契约下为 undefined → 走空态渲染） ----
@@ -63,6 +64,21 @@ const heatPct = computed(() => pct(self.value?.heat ?? 0, 25))
 const heatColor = computed(() =>
   (self.value?.heat ?? 0) > 18 ? 'var(--fire)' : 'var(--metal)')
 const heatWarn = computed(() => (self.value?.heat ?? 0) > 18)
+
+// ---- v0.6 克关系战术预览：敌人卡下的"我的火 → 它的金【衡】"一行 ----
+// tactics 与 enemies 同感知边界，按 enemy_id 关联；旧对局无此字段 → 不渲染。
+const tacticOf = (id: number): TacticsView | undefined =>
+  (bv.value?.tactics ?? []).find((t) => t.enemy_id === id)
+
+// 落区语义色：侮/乘凶（火色），微弱（金属灰），衡吉（木色），中性暗灰
+const ZONE_COLORS: Record<string, string> = {
+  侮: 'var(--fire)',
+  微: 'var(--metal)',
+  衡: 'var(--wood)',
+  乘: 'var(--fire)',
+  中性: '#8d95a1',
+}
+const zoneColor = (z: string): string => ZONE_COLORS[z] ?? '#8d95a1'
 </script>
 
 <template>
@@ -118,6 +134,17 @@ const heatWarn = computed(() => (self.value?.heat ?? 0) > 18)
             <span v-else class="dist">{{ e.distance }} 格</span>
           </div>
           <div class="foe-stats">本源 {{ essenceName(e.essence) }} · 形 {{ e.integrity }} · 热 {{ e.heat }}</div>
+          <!-- v0.6 克关系战术预览：引擎演算的落区推算（无离火 → 提示行） -->
+          <div v-if="tacticOf(e.id)" class="tactic">
+            <template v-if="tacticOf(e.id)!.my_essence">
+              <span class="t-seg">我的<b :style="{ color: essenceColorByName(tacticOf(e.id)!.my_essence) }">{{ tacticOf(e.id)!.my_essence }}</b></span>
+              <span class="t-arrow">→</span>
+              <span class="t-seg">它的<b :style="{ color: essenceColorByName(tacticOf(e.id)!.enemy_essence) }">{{ tacticOf(e.id)!.enemy_essence }}</b></span>
+              <span class="t-seg">【<b :style="{ color: zoneColor(tacticOf(e.id)!.predicted_zone) }">{{ tacticOf(e.id)!.predicted_zone }}</b>】</span>
+              <span class="t-note">{{ tacticOf(e.id)!.note }}</span>
+            </template>
+            <span v-else class="t-note dim">{{ tacticOf(e.id)!.note }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -185,7 +212,7 @@ const heatWarn = computed(() => (self.value?.heat ?? 0) > 18)
           >{{ c }}</button>
         </div>
         <p v-if="askBusy" class="hint">Agent 思考中…</p>
-        <p v-if="askError" class="sub-err">{{ askError }}</p>
+        <p v-if="askError" class="err">{{ askError }}</p>
 
         <h3>最近回答</h3>
         <ul class="qa" v-if="qa.length">
@@ -210,7 +237,7 @@ const heatWarn = computed(() => (self.value?.heat ?? 0) > 18)
           />
           <button @click="sendGuidance" :disabled="busy || !view">发送</button>
         </div>
-        <p v-if="guideError" class="sub-err">{{ guideError }}</p>
+        <p v-if="guideError" class="err">{{ guideError }}</p>
 
         <h2>预测 <small>猜中 Agent 下一步 +0.5</small></h2>
         <div class="predict-btns">
@@ -220,7 +247,7 @@ const heatWarn = computed(() => (self.value?.heat ?? 0) > 18)
             :disabled="predictBusy || !view || !running"
           >{{ o.label }}</button>
         </div>
-        <p v-if="predictError" class="sub-err">{{ predictError }}</p>
+        <p v-if="predictError" class="err">{{ predictError }}</p>
         <p v-if="view?.pending" class="pending">
           已预测：{{ choiceLabel(view.pending.choice) }}，等下一回合结算
         </p>
@@ -290,6 +317,17 @@ const heatWarn = computed(() => (self.value?.heat ?? 0) > 18)
 }
 .foe-stats { color: #aab2bd; margin-top: 3px; font-variant-numeric: tabular-nums; }
 
+/* ---- v0.6 克关系战术预览行 ---- */
+.tactic {
+  margin-top: 4px; padding-top: 4px;
+  border-top: 1px dashed var(--border);
+  display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap;
+  font-size: 11.5px; color: #8d95a1;
+}
+.tactic .t-arrow { color: #59616d; }
+.tactic .t-note { color: #8d95a1; }
+.tactic .t-note.dim { color: #59616d; font-style: italic; }
+
 /* ---- v0.5 战斗反馈条 ---- */
 .trigger-row {
   display: flex; align-items: center; gap: 8px;
@@ -298,7 +336,11 @@ const heatWarn = computed(() => (self.value?.heat ?? 0) > 18)
   font-variant-numeric: tabular-nums;
 }
 .trigger-row .tl-label { color: #59616d; font-size: 11.5px; }
-.trigger-row .tl-value { color: var(--accent); font-weight: 600; }
+.trigger-row .tl-value {
+  color: var(--accent); font-weight: 600;
+  padding: 1px 9px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel);
+}
 .trigger-row .tl-sep { color: #3a4150; }
 
 /* ---- 双栏 ---- */

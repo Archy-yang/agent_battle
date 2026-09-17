@@ -497,7 +497,7 @@ onBeforeUnmount(() => {
           <input v-model="question" placeholder="例如：你现在最怕什么？" @keyup.enter="ask" />
           <button @click="ask" :disabled="askBusy || !view">提问</button>
         </div>
-        <p v-if="askError" class="sub-err">{{ askError }}</p>
+        <p v-if="askError" class="err">{{ askError }}</p>
         <ul class="qa-list" v-if="(view?.qa ?? []).length">
           <li v-for="(q, i) in (view?.qa ?? []).slice().reverse()" :key="'q' + i">
             <p class="q">Q：{{ q.question }}</p>
@@ -517,7 +517,7 @@ onBeforeUnmount(() => {
             :disabled="predictBusy || !view || view.status !== 'running'"
           >{{ o.label }}</button>
         </div>
-        <p v-if="predictError" class="sub-err">{{ predictError }}</p>
+        <p v-if="predictError" class="err">{{ predictError }}</p>
         <p v-if="view?.pending" class="pending">
           已预测：{{ choiceLabel(view.pending.choice) }}，等下一回合结算
         </p>
@@ -554,7 +554,7 @@ onBeforeUnmount(() => {
         <input v-model="guideText" placeholder="例如：先确认它的储气再决定是否接战" @keyup.enter="sendGuidance" />
         <button @click="sendGuidance" :disabled="busy || !view">发送</button>
       </div>
-      <p v-if="guideError" class="sub-err">{{ guideError }}</p>
+      <p v-if="guideError" class="err">{{ guideError }}</p>
       <ul class="list">
         <li v-for="(g, i) in (view?.guidance ?? []).slice().reverse()" :key="'g' + i">
           <em>T{{ g.turn }} {{ g.kind }}</em> {{ g.text }}

@@ -144,7 +144,7 @@ async function savePersona() {
     <section class="card">
       <h2>Agent 养成档案 <small>养成的不是数值，是它的决策方式</small></h2>
 
-      <p v-if="loadError" class="sub-err">档案读取失败：{{ loadError }}</p>
+      <p v-if="loadError" class="err">档案读取失败：{{ loadError }}</p>
       <p v-else-if="loading && !profile" class="empty">读取档案中…</p>
 
       <template v-if="profile">
@@ -163,7 +163,7 @@ async function savePersona() {
           </button>
           <small v-if="!slidersError" class="hint">拖动滑块调整决策倾向</small>
         </div>
-        <p v-if="slidersError" class="sub-err">{{ slidersError }}</p>
+        <p v-if="slidersError" class="err">{{ slidersError }}</p>
 
         <!-- 经验卡 -->
         <h3>经验卡</h3>
@@ -179,7 +179,7 @@ async function savePersona() {
           </li>
         </ul>
         <p v-else class="empty">暂无经验卡 —— 对局结束后的复盘会沉淀到这里。</p>
-        <p v-if="lessonError" class="sub-err">{{ lessonError }}</p>
+        <p v-if="lessonError" class="err">{{ lessonError }}</p>
 
         <!-- 人格补充 -->
         <h3>人格补充</h3>
@@ -195,7 +195,7 @@ async function savePersona() {
           </button>
           <small v-if="profile.updated" class="hint">上次更新 {{ new Date(profile.updated).toLocaleString() }}</small>
         </div>
-        <p v-if="personaError" class="sub-err">{{ personaError }}</p>
+        <p v-if="personaError" class="err">{{ personaError }}</p>
       </template>
       <p v-else-if="!loading && !loadError" class="empty">档案为空。</p>
     </section>

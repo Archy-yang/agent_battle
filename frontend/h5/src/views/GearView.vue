@@ -83,8 +83,12 @@ const equipType = ref<(typeof EQUIP_TYPES)[number]>('灵机')
 // 材质：-1 不发 essence（引擎取组件默认本源），0-4 与 BlueprintSpec.essence 对齐
 const equipEssence = ref(-1)
 
-// 当前身体组件数（复杂度预算 ≤8，后端 MaxBodyComponents）
-const compCount = computed(() => components.length)
+// 当前身体组件数（复杂度预算 ≤8，后端 MaxBodyComponents）。
+// 数据链路任何一环为空（未开局 / observation 为 null / self 无 components）都
+// 回退 0，标题恒显示 "n/8"，不出现 "—"。
+const compCount = computed(
+  () => (view.value?.observation?.self as SelfExt | undefined)?.components?.length ?? 0,
+)
 
 async function install() {
   const spec: BlueprintSpec = { type: COMP_INDEX[equipType.value] ?? 0 }
@@ -145,12 +149,15 @@ async function install() {
       <button class="assemble" @click="assemble" :disabled="assembleBusy || busy || !view">
         发送组装
       </button>
-      <p v-if="assembleError" class="sub-err">{{ assembleError }}</p>
+      <p v-if="assembleError" class="err">{{ assembleError }}</p>
     </section>
 
     <!-- 装备自身（v0.5：equip 意图，把组件装进自己） -->
     <section>
-      <h2>装备自身 <small>身体组件 {{ compCount }}/8（复杂度预算）</small></h2>
+      <h2>
+        装备自身
+        <small>身体组件 {{ compCount }}/8（复杂度预算）{{ view?.observation ? '' : ' · 暂无观测数据' }}</small>
+      </h2>
       <p class="note">躯壳与储气是身体之根，不可安装；材质即天敌。</p>
       <div class="bp-row">
         <select v-model="equipType">
@@ -166,7 +173,7 @@ async function install() {
           :disabled="equipBusy || busy || !view || view.status !== 'running'"
         >安装</button>
       </div>
-      <p v-if="equipError" class="sub-err">{{ equipError }}</p>
+      <p v-if="equipError" class="err">{{ equipError }}</p>
       <ul class="list" v-if="equipLog.length">
         <li v-for="(e, i) in equipLog.slice().reverse()" :key="'eq' + i">
           <em>T{{ e.tick }}</em>

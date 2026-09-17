@@ -45,6 +45,10 @@ type StateView struct {
 	// Enemies lists the hostile entities inside the player's perception
 	// radius (4 with the sensor on, 1 with it off).
 	Enemies []EnemyView `json:"enemies"`
+	// Tactics is the v0.6 克关系战术预览: one card per hostile inside
+	// the same perception radius as Enemies (world_laws §5 克曲线的公开
+	// 推论——落区由引擎演算，不扩大信息边界).
+	Tactics []TacticsView `json:"tactics"`
 	// LastTrigger is the most recent LLM trigger reason (design §3.2):
 	// arrive | encounter | resource | threshold:* | heartbeat | combat |
 	// guidance. Empty string = 尚无触发.
@@ -152,21 +156,13 @@ func (m *Match) View() *StateView {
 			o := *player.OrderTo
 			order = &o
 		}
-		radius := 1 // 被动感知：自身与邻格
-		if s := player.FindComponent(engine.CSensor); s != nil && s.Active {
-			radius = 4 // 感识开启
-		}
-		for _, id := range m.hostiles() {
+		for _, id := range m.visibleHostiles() { // 感知边界单一来源（与 Tactics 一致）
 			e := m.W.Entities[id]
 			if e == nil {
 				continue
 			}
-			d := engine.HexDist(player.Pos, e.Pos)
-			if d > radius {
-				continue
-			}
 			enemies = append(enemies, EnemyView{
-				ID: id, Pos: e.Pos, Distance: d,
+				ID: id, Pos: e.Pos, Distance: engine.HexDist(player.Pos, e.Pos),
 				Essence:   e.Essence.String(),
 				Integrity: e.Integrity, Heat: e.Heat,
 			})
@@ -190,6 +186,7 @@ func (m *Match) View() *StateView {
 		Order:       order,
 		InCombat:    m.InCombat(),
 		Enemies:     enemies,
+		Tactics:     m.Tactics(),
 		LastTrigger: m.lastTrigger,
 		LLMCalls:    m.llmCalls,
 	}

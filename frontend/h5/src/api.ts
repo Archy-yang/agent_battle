@@ -121,6 +121,10 @@ export interface StateView {
   last_trigger?: string
   // 本局 LLM 调用计数
   llm_calls?: number
+  // ---- v0.6 追加字段（backend/match/api.go StateView 已实现，旧对局下为 undefined） ----
+  // 克关系战术预览：感知内每个敌人的"我的火 → 它的本源"落区推算
+  // （与 enemies 同感知边界，信息边界不变）
+  tactics?: TacticsView[]
 }
 
 // M3.4：感知范围内的一名敌对实体（backend EnemyView）。
@@ -131,6 +135,18 @@ export interface EnemyView {
   essence: string // 五行中文名：木/火/土/金/水
   integrity: number
   heat: number
+}
+
+// v0.6：克关系战术预览卡（backend TacticsView）。
+// predicted_zone ∈ 侮|微|衡|乘|中性；无离火时 my_essence 与
+// predicted_zone 为空串，note 提示"无离火，无法反击"。
+export interface TacticsView {
+  enemy_id: number
+  my_essence: string // 我方离火本源（五行中文名）
+  enemy_essence: string // 敌方本源（五行中文名）
+  predicted_zone: string
+  my_power_guess: number // 预估作用功率（默认 600）
+  note: string // 一句战术建议
 }
 
 // v0.4 计划：explored 元素从纯坐标扩展为带地形记忆的格子
