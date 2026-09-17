@@ -66,6 +66,9 @@ func main() {
 		match.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": version})
 	})
 
+	mux.HandleFunc("GET /api/match/{id}/recording", reg.ServeRecording)
+	mux.HandleFunc("POST /api/replay", match.ServeReplay)
+
 	mux.HandleFunc("POST /api/match", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Seed     uint64 `json:"seed"`

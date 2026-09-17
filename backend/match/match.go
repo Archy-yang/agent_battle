@@ -137,6 +137,13 @@ type Match struct {
 	// pickup，见 resolveGathers）；只进 classifyTick 的喂入，不进事件流.
 	lastGatherEvs []engine.Event
 	lastIntents   []engine.Intent
+
+	// —— v0.7 录像 (world_genesis §7) ——
+	// rec 持每 tick 一帧的录像；nil = 不录像（回放局）。
+	rec *Recording
+	// autoTick 标记本 tick 是否 pilot 自动决策：TickAuto 置位，Tick
+	// 记帧后清零（手动 tick 的帧 Auto=false）。
+	autoTick bool
 }
 
 // New creates a match of scenario/mvp-0.1. The pilot is the LLM agent
@@ -172,6 +179,7 @@ func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) 
 		unknownDir: engine.HexDirs[0], // E：六方向固定顺序游荡
 
 		activatedChunks: map[[2]int]bool{}, // v0.4 懒激活：调用方持状态
+		rec:             &Recording{Seed: seed, Scenario: pack.Name}, // v0.7 录像：每 tick 一帧
 	}
 	if cfg := agent.LLMFromEnv(); cfg != nil {
 		p := agent.NewLLM(*cfg)
@@ -188,6 +196,7 @@ func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) 
 
 // Tick advances one turn with explicit player intents.
 func (m *Match) Tick(intents []engine.Intent) {
+	defer func() { m.autoTick = false }() // 帧记完后复位（含提前返回路径）
 	if m.Status != StatusRunning {
 		return
 	}
@@ -202,6 +211,14 @@ func (m *Match) Tick(intents []engine.Intent) {
 	m.lastEvs = evs
 	m.lastIntents = intents
 	m.Events = append(m.Events, evs...)
+	if m.rec != nil { // v0.7 录像：每 tick 一帧（意图原样快照 + 事件基准）
+		m.rec.Frames = append(m.rec.Frames, Frame{
+			Tick:            m.W.Tick,
+			PlayerIntents:   append([]engine.Intent(nil), intents...),
+			Auto:            m.autoTick,
+			ResultingEvents: append([]engine.Event(nil), evs...),
+		})
+	}
 	if obs := m.W.Observe(m.PlayerID, nil); obs != nil { // 形散后无感知
 		for _, p := range obs.Visible {
 			m.Explored[p] = true
@@ -325,6 +342,7 @@ func (m *Match) TickAuto() {
 	if m.Status != StatusRunning {
 		return
 	}
+	m.autoTick = true // 本 tick 由 pilot 自动决策（录像 Auto 标记）
 	if m.pauseNext { // 紧急暂停：Agent 本回合待命（strage_1 影响表）
 		m.pauseNext = false
 		m.Tick(nil)

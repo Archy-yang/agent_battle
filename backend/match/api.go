@@ -2,6 +2,7 @@ package match
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -212,6 +213,46 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 // WriteErr writes a JSON error response.
 func WriteErr(w http.ResponseWriter, status int, msg string) {
 	WriteJSON(w, status, map[string]string{"error": msg})
+}
+
+// —— v0.7 对局录像与重放端点 ——
+
+// ServeRecording handles GET /api/match/{id}/recording: the match's
+// full replay record (world_genesis §7)。main.go 挂线：
+//
+//	mux.HandleFunc("GET /api/match/{id}/recording", reg.ServeRecording)
+func (r *Registry) ServeRecording(w http.ResponseWriter, req *http.Request) {
+	m := r.Get(req.PathValue("id"))
+	if m == nil {
+		WriteErr(w, http.StatusNotFound, "match not found")
+		return
+	}
+	WriteJSON(w, http.StatusOK, m.Recording())
+}
+
+// ServeReplay handles POST /api/replay: body = Recording（内联）+
+// {until_tick}。新建一次性 match 逐帧重演到 until_tick（不碰注册表），
+// 返回其 StateView（含 observation/events）。重演事件与录像记录的
+// ResultingEvents 不一致 → 500 {"error":"replay mismatch"}——决定性的
+// 在线自证。main.go 挂线：
+//
+//	mux.HandleFunc("POST /api/replay", match.ServeReplay)
+func ServeReplay(w http.ResponseWriter, req *http.Request) {
+	var body ReplayRequest
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		WriteErr(w, http.StatusBadRequest, "bad replay request: "+err.Error())
+		return
+	}
+	m, err := Replay(&body.Recording, body.UntilTick)
+	if err != nil {
+		if errors.Is(err, ErrReplayMismatch) {
+			WriteErr(w, http.StatusInternalServerError, "replay mismatch")
+			return
+		}
+		WriteErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, m.View())
 }
 
 // slidersPatch updates the persona dials; nil field = unchanged.
