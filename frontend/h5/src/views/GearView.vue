@@ -6,7 +6,7 @@ import {
   api,
   type BlueprintSpec, type ComponentView, type SelfExt, type StateExt, type StateView,
 } from '../api'
-import { view, busy } from '../state'
+import { view, busy, sendEquip, equipBusy, equipError, equipLog } from '../state'
 
 // ---- 五行中文名 → 颜色 / 序号（components/materials 里是中文字符串） ----
 const WUXING = ['木', '火', '土', '金', '水'] as const
@@ -74,6 +74,23 @@ async function assemble() {
     assembleBusy.value = false
   }
 }
+
+// ---- 装备自身（v0.5 WPC）----
+// equip 可装组件：灵机/感识/识海/离火/仓廪/清源。躯壳(0)/储气(1) 是
+// 身体之根，后端会拒绝，不进下拉。
+const EQUIP_TYPES = ['灵机', '感识', '识海', '离火', '仓廪', '清源'] as const
+const equipType = ref<(typeof EQUIP_TYPES)[number]>('灵机')
+// 材质：-1 不发 essence（引擎取组件默认本源），0-4 与 BlueprintSpec.essence 对齐
+const equipEssence = ref(-1)
+
+// 当前身体组件数（复杂度预算 ≤8，后端 MaxBodyComponents）
+const compCount = computed(() => components.length)
+
+async function install() {
+  const spec: BlueprintSpec = { type: COMP_INDEX[equipType.value] ?? 0 }
+  if (equipEssence.value >= 0) spec.essence = equipEssence.value
+  await sendEquip([spec])
+}
 </script>
 
 <template>
@@ -131,6 +148,34 @@ async function assemble() {
       <p v-if="assembleError" class="sub-err">{{ assembleError }}</p>
     </section>
 
+    <!-- 装备自身（v0.5：equip 意图，把组件装进自己） -->
+    <section>
+      <h2>装备自身 <small>身体组件 {{ compCount }}/8（复杂度预算）</small></h2>
+      <p class="note">躯壳与储气是身体之根，不可安装；材质即天敌。</p>
+      <div class="bp-row">
+        <select v-model="equipType">
+          <option v-for="t in EQUIP_TYPES" :key="t" :value="t">{{ t }}</option>
+        </select>
+        <select v-model.number="equipEssence">
+          <option :value="-1">默认材质</option>
+          <option v-for="(w, wi) in WUXING" :key="w" :value="wi">{{ w }}</option>
+        </select>
+        <button
+          class="install"
+          @click="install"
+          :disabled="equipBusy || busy || !view || view.status !== 'running'"
+        >安装</button>
+      </div>
+      <p v-if="equipError" class="sub-err">{{ equipError }}</p>
+      <ul class="list" v-if="equipLog.length">
+        <li v-for="(e, i) in equipLog.slice().reverse()" :key="'eq' + i">
+          <em>T{{ e.tick }}</em>
+          <span :class="e.rejected ? 'reject' : 'ok'">{{ e.text }}</span>
+        </li>
+      </ul>
+      <p v-else class="empty">尚未安装组件。</p>
+    </section>
+
     <!-- 装配结果反馈 -->
     <section>
       <h2>装配结果</h2>
@@ -179,6 +224,7 @@ async function assemble() {
 }
 .bp-label { color: #59616d; font-size: 12px; width: 14px; text-align: right; }
 .assemble { margin-top: 6px; }
+.install { border-color: var(--wood); color: var(--wood); }
 ul.list .reject { color: var(--fire); }
 ul.list .ok { color: var(--wood); }
 </style>

@@ -10,6 +10,7 @@ import {
   predictBusy, predictError, predict,
   costOf, choiceLabel,
   step, runToEnd,
+  triggerLabel,
 } from '../state'
 import { essenceName, essenceColor } from '../api'
 import type { BattleStateView } from '../types-battle'
@@ -120,6 +121,15 @@ const heatWarn = computed(() => (self.value?.heat ?? 0) > 18)
         </div>
       </div>
     </div>
+
+    <!-- v0.5 战斗反馈：最近 LLM 触发原因 + 本局调用计数 -->
+    <div class="trigger-row">
+      <span class="tl-label">触发原因</span>
+      <b class="tl-value">{{ triggerLabel(view?.last_trigger) }}</b>
+      <span class="tl-sep">·</span>
+      <span>本局 LLM 判断 {{ view?.llm_calls ?? 0 }} 次</span>
+    </div>
+
     <p v-if="error" class="err">{{ error }}</p>
 
     <div class="cols">
@@ -279,6 +289,17 @@ const heatWarn = computed(() => (self.value?.heat ?? 0) > 18)
   border: 1px solid var(--fire); border-radius: 8px; padding: 0 6px;
 }
 .foe-stats { color: #aab2bd; margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+/* ---- v0.5 战斗反馈条 ---- */
+.trigger-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel); color: var(--text-dim); font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.trigger-row .tl-label { color: #59616d; font-size: 11.5px; }
+.trigger-row .tl-value { color: var(--accent); font-weight: 600; }
+.trigger-row .tl-sep { color: #3a4150; }
 
 /* ---- 双栏 ---- */
 .cols { display: flex; gap: 14px; flex-wrap: wrap; align-items: stretch; }

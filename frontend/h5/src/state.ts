@@ -2,7 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import {
   api, essenceName,
-  type ExploredCell, type GuidanceKind, type Hex, type PredictChoice, type StateView,
+  type BlueprintSpec, type ExploredCell, type GuidanceKind, type Hex,
+  type PredictChoice, type StateView,
 } from './api'
 
 // ---------- 状态 ----------
@@ -295,6 +296,77 @@ export async function sendMoveTo(q: number, r: number) {
 // 待命一回合：POST tick 空意图（原地恢复散热）。与 step(false) 等价，
 // 保留语义化导出供地图页按钮使用。
 export const waitOneTurn = () => step(false)
+
+// ---------- v0.5 采集与装备（WPC） ----------
+
+// 采集：玩家站上晶簇格后发 transfer 意图（与拾取结晶同意图）。transfer
+// 指向 Kind "resource" 的实体时由 match 层结算（引擎冻结）：成功事件
+// type "gather"（物料入库），失败走 intent_rejected。
+export async function sendTransfer(target: number) {
+  if (!view.value || busy.value || view.value.status !== 'running') return
+  busy.value = true
+  error.value = ''
+  try {
+    view.value = await api<StateView>(`/api/match/${view.value.id}/tick`, {
+      intents: [{ type: 'transfer', target }],
+    })
+    const turn = view.value.turn
+    const recent = (view.value.events ?? []).filter(e => e.tick === turn)
+    const rejected = recent.find(e => e.type === 'intent_rejected')
+    const gathered = recent.find(e => e.type === 'gather')
+    if (rejected) flashHint(rejected.text) // 如「必须站在晶簇所在格」
+    else if (gathered) flashHint(gathered.text)
+    else flashHint('采集请求已提交')
+  } catch (e) {
+    error.value = errText(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+// 装备自身：POST tick {intents:[{type:"equip",blueprint:[…]}]}。躯壳(0)/
+// 储气(1) 会被后端拒绝（身体之根，不可 equip）；身体组件数上限 8。
+// 结果反馈取返回 state 的 events 里最近 3 条 equip / intent_rejected。
+export const equipBusy = ref(false)
+export const equipError = ref('')
+export const equipLog = ref<{ tick: number; text: string; rejected: boolean }[]>([])
+
+export async function sendEquip(blueprint: BlueprintSpec[]) {
+  if (!view.value || equipBusy.value || view.value.status !== 'running') return
+  equipBusy.value = true
+  equipError.value = ''
+  try {
+    view.value = await api<StateView>(`/api/match/${view.value.id}/tick`, {
+      intents: [{ type: 'equip', blueprint }],
+    })
+    equipLog.value = (view.value.events ?? [])
+      .filter(e => e.type === 'equip' || e.type === 'intent_rejected')
+      .slice(-3)
+      .map(e => ({ tick: e.tick, text: e.text, rejected: e.type === 'intent_rejected' }))
+  } catch (e) {
+    equipError.value = errText(e)
+  } finally {
+    equipBusy.value = false
+  }
+}
+
+// LLM 触发原因中文映射（BattleView 顶部反馈条；threshold:* 带后缀，前缀匹配）
+const TRIGGER_LABELS: Record<string, string> = {
+  combat: '接战',
+  arrive: '抵达',
+  encounter: '遭遇',
+  resource: '发现',
+  threshold: '状态告警',
+  heartbeat: '例行反思',
+  guidance: '玩家干预',
+}
+
+export const triggerLabel = (t?: string): string => {
+  if (!t) return '—'
+  if (TRIGGER_LABELS[t]) return TRIGGER_LABELS[t]
+  if (t.startsWith('threshold')) return TRIGGER_LABELS.threshold
+  return t
+}
 
 export async function runToEnd() {
   if (!view.value) return

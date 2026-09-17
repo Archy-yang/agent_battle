@@ -116,6 +116,11 @@ export interface StateView {
   enemies?: EnemyView[]
   // 当前移动订单目标格（move_to），无订单为 null
   order?: Hex | null
+  // ---- v0.5 追加字段（backend/match/api.go StateView 已实现，旧对局下为 undefined） ----
+  // 最近一次 LLM 触发原因（combat/arrive/encounter/resource/threshold:*/heartbeat/guidance）
+  last_trigger?: string
+  // 本局 LLM 调用计数
+  llm_calls?: number
 }
 
 // M3.4：感知范围内的一名敌对实体（backend EnemyView）。

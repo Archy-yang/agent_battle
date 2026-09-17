@@ -13,7 +13,7 @@ import {
   guideKind, guideText, guideError, sendGuidance,
   question, askBusy, askError, ask,
   predictBusy, predictError, predict, pause,
-  newMatch, step, runToEnd, sendMoveTo, waitOneTurn, flashHint, mapHint,
+  newMatch, step, runToEnd, sendMoveTo, sendTransfer, waitOneTurn, flashHint, mapHint,
   requestBattleNav, FOG,
   derivedCognition, costOf, choiceLabel,
 } from '../state'
@@ -46,8 +46,9 @@ const selfHex = computed<Hex | null>(() => {
   return o ? { q: o.self.pos.q, r: o.self.pos.r } : null
 })
 
-interface MarkerVm { q: number; r: number; glyph: string; color?: string }
-// 实体层：💎 结晶 / ❓ 敌对实体（observation.entities + view.enemies，五行色描边）
+interface MarkerVm { q: number; r: number; glyph: string; color?: string; diamond?: boolean }
+// 实体层：◆ 晶簇 / 💎 结晶 / ❓ 敌对实体（observation.entities + view.enemies，
+// 五行色描边；晶簇按其本源上五行色菱形）
 const markers = computed<MarkerVm[]>(() => {
   const out: MarkerVm[] = []
   const seen = new Set<string>()
@@ -55,9 +56,13 @@ const markers = computed<MarkerVm[]>(() => {
     const k = hexKey(e.pos)
     if (seen.has(k)) continue
     seen.add(k)
-    out.push(e.kind === 'fragment'
-      ? { q: e.pos.q, r: e.pos.r, glyph: '💎' }
-      : { q: e.pos.q, r: e.pos.r, glyph: '❓', color: essenceColor(e.essence) })
+    if (e.kind === 'resource') {
+      out.push({ q: e.pos.q, r: e.pos.r, glyph: '', color: essenceColor(e.essence), diamond: true })
+    } else {
+      out.push(e.kind === 'fragment'
+        ? { q: e.pos.q, r: e.pos.r, glyph: '💎' }
+        : { q: e.pos.q, r: e.pos.r, glyph: '❓', color: essenceColor(e.essence) })
+    }
   }
   for (const en of view.value?.enemies ?? []) {
     const k = hexKey(en.pos)
@@ -66,6 +71,15 @@ const markers = computed<MarkerVm[]>(() => {
     out.push({ q: en.pos.q, r: en.pos.r, glyph: '❓', color: essenceColorByName(en.essence) })
   }
   return out
+})
+
+// 站上晶簇格时可采集：该晶簇实体 id（无则 null）
+const gatherTarget = computed<number | null>(() => {
+  const o = view.value?.observation
+  if (!o) return null
+  const p = o.self.pos
+  const res = o.entities.find(e => e.kind === 'resource' && e.pos.q === p.q && e.pos.r === p.r)
+  return res?.id ?? null
 })
 
 function centerOnSelf() {
@@ -182,6 +196,21 @@ function draw() {
   }
   for (const m of markers.value) {
     const p = at({ q: m.q, r: m.r })
+    if (m.diamond) { // 晶簇：五行色菱形（站上去采集）
+      const d = r * 0.52
+      ctx.beginPath()
+      ctx.moveTo(p.x, p.y - d)
+      ctx.lineTo(p.x + d, p.y)
+      ctx.lineTo(p.x, p.y + d)
+      ctx.lineTo(p.x - d, p.y)
+      ctx.closePath()
+      ctx.fillStyle = m.color ?? ACCENT
+      ctx.fill()
+      ctx.strokeStyle = HEX_BORDER
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+      continue
+    }
     if (m.color) { // 敌对实体：五行色描边
       ctx.beginPath()
       ctx.arc(p.x, p.y, r * 0.62, 0, Math.PI * 2)
@@ -389,12 +418,19 @@ onBeforeUnmount(() => {
         <span><i class="sw" :style="{ background: FOG.remembered, opacity: 0.45 }" />已探索（记忆）</span>
         <span><i class="sw" :style="{ background: FOG.visible }" />感知内</span>
         <span><i class="sw sw-order" />移动订单</span>
+        <span class="res-leg">◆ 晶簇（站上去采集）</span>
         <span class="tip">
           拖拽平移 · 滚轮/双指缩放（0.5~2.0） · 点击已探索格下达移动订单（每回合自动走一格） · 双击恢复跟随
         </span>
       </div>
 
       <div class="btns">
+        <button
+          v-if="gatherTarget !== null"
+          class="gather"
+          @click="sendTransfer(gatherTarget)"
+          :disabled="busy || view?.status !== 'running'"
+        >采集晶簇</button>
         <button @click="step(true)" :disabled="busy || view?.status !== 'running'">自动一步</button>
         <button @click="waitOneTurn" :disabled="busy || view?.status !== 'running'">待命一回合</button>
         <button @click="runToEnd" :disabled="busy || view?.status !== 'running'">自动到结束</button>
@@ -580,9 +616,11 @@ onBeforeUnmount(() => {
   margin-right: 4px; border: 1px solid var(--border); vertical-align: -1px;
 }
 .legend .sw-order { background: transparent; border: 1.5px dashed var(--accent); }
+.legend .res-leg { color: var(--wood); }
 .legend .tip { flex-basis: 100%; color: #59616d; }
 
 .btns { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.btns .gather { border-color: var(--wood); color: var(--wood); }
 .hint { color: var(--accent); font-size: 12.5px; margin: 8px 0 0; }
 
 .panel h2 { font-size: 14px; margin: 18px 0 6px; color: var(--nav-active); }
