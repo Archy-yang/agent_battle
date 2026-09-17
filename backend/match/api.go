@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"sync"
 
+	"agentbattle/backend/agent"
 	"agentbattle/backend/engine"
+	"agentbattle/backend/profile"
 )
 
 // StateView is the full client-facing state of one match: observation,
-// status, event log, guidance log and the explored fog overlay.
+// cognition, economy, logs and the explored fog overlay.
 type StateView struct {
 	ID       string             `json:"id"`
 	Seed     uint64             `json:"seed"`
@@ -19,10 +21,17 @@ type StateView struct {
 	Status   string             `json:"status"`
 	Turn     int64              `json:"turn"`
 	TurnLimit int64             `json:"turn_limit"`
+	Influence float64           `json:"influence"`
 	Observation *engine.Observation `json:"observation"`
+	Cognition *agent.Cognition  `json:"cognition"`
 	Explored []engine.Vec2      `json:"explored"`
 	Events   []engine.Event     `json:"events"`
 	Guidance []Guidance         `json:"guidance"`
+	Predictions []*Prediction    `json:"predictions"`
+	Pending  *Prediction        `json:"pending"`
+	QA       []QA               `json:"qa"`
+	Review   *Review            `json:"review"`
+	Costs    map[string]float64 `json:"costs"`
 }
 
 // Registry is an in-memory match registry (v0.1 single-process; the
@@ -30,11 +39,14 @@ type StateView struct {
 type Registry struct {
 	mu      sync.Mutex
 	matches map[string]*Match
+	profile *profile.Store
 	next    int
 }
 
-// NewRegistry creates an empty registry.
-func NewRegistry() *Registry { return &Registry{matches: map[string]*Match{}} }
+// NewRegistry creates an empty registry bound to the creator profile.
+func NewRegistry(prof *profile.Store) *Registry {
+	return &Registry{matches: map[string]*Match{}, profile: prof}
+}
 
 // Create starts a new match of mvp-0.1. seed 0 → fixed default.
 func (r *Registry) Create(seed uint64) *Match {
@@ -44,7 +56,7 @@ func (r *Registry) Create(seed uint64) *Match {
 	if seed == 0 {
 		seed = 20260917
 	}
-	m := New(fmt.Sprintf("m%04d", r.next), seed)
+	m := New(fmt.Sprintf("m%04d", r.next), seed, r.profile)
 	m.Explored[m.Spawn] = true
 	r.matches[m.ID] = m
 	return m
@@ -68,13 +80,32 @@ func (m *Match) View() *StateView {
 	if m.Status == StatusRunning || m.W.Entities[m.PlayerID] != nil {
 		obs = m.Observe()
 	}
+	qa := m.QA
+	if qa == nil {
+		qa = []QA{}
+	}
+	preds := m.Predictions
+	if preds == nil {
+		preds = []*Prediction{}
+	}
+	costs := map[string]float64{
+		"whisper": CostWhisper, "guide": CostGuide, "deeplink": CostDeepLink,
+		"information": CostInform, "pause": CostPause, "predict_reward": PredictReward,
+	}
 	return &StateView{
 		ID: m.ID, Seed: m.Seed, Pack: m.PackName, Pilot: m.PilotName,
 		Status: m.Status, Turn: m.W.Tick, TurnLimit: m.TurnLimit,
+		Influence:   m.Influence,
 		Observation: obs,
+		Cognition:   m.Cognition,
 		Explored:    explored,
 		Events:      m.Events,
 		Guidance:    m.Guidance,
+		Predictions: preds,
+		Pending:     m.pending,
+		QA:          qa,
+		Review:      m.ReviewRes,
+		Costs:       costs,
 	}
 }
 

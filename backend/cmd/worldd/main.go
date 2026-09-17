@@ -17,6 +17,7 @@ import (
 
 	"agentbattle/backend/engine"
 	"agentbattle/backend/match"
+	"agentbattle/backend/profile"
 	"agentbattle/backend/web"
 )
 
@@ -49,12 +50,14 @@ func loadEnvFile(path string) {
 
 func main() {
 	config := flag.String("config", "llm.env", "env file (KEY=VALUE) loaded at startup")
+	profilePath := flag.String("profile", "profile.json", "creator profile (agent 养成档案)")
 	flag.Parse()
 	if *config != "" {
 		loadEnvFile(*config)
 	}
+	prof := profile.Load(*profilePath)
 
-	reg := match.NewRegistry()
+	reg := match.NewRegistry(prof)
 
 	mux := http.NewServeMux()
 
@@ -119,8 +122,84 @@ func main() {
 			match.WriteErr(w, http.StatusBadRequest, "bad guidance")
 			return
 		}
-		m.AddGuidance(body.Kind, body.Text)
+		if err := m.AddGuidance(body.Kind, body.Text); err != nil {
+			match.WriteErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		match.WriteJSON(w, http.StatusOK, m.View())
+	})
+
+	mux.HandleFunc("POST /api/match/{id}/predict", func(w http.ResponseWriter, r *http.Request) {
+		m := reg.Get(r.PathValue("id"))
+		if m == nil {
+			match.WriteErr(w, http.StatusNotFound, "match not found")
+			return
+		}
+		var body struct {
+			Choice string `json:"choice"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			match.WriteErr(w, http.StatusBadRequest, "bad predict")
+			return
+		}
+		if err := m.Predict(body.Choice); err != nil {
+			match.WriteErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		match.WriteJSON(w, http.StatusOK, m.View())
+	})
+
+	mux.HandleFunc("POST /api/match/{id}/ask", func(w http.ResponseWriter, r *http.Request) {
+		m := reg.Get(r.PathValue("id"))
+		if m == nil {
+			match.WriteErr(w, http.StatusNotFound, "match not found")
+			return
+		}
+		var body struct {
+			Question string `json:"question"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Question == "" {
+			match.WriteErr(w, http.StatusBadRequest, "bad question")
+			return
+		}
+		ans, err := m.Ask(body.Question)
+		if err != nil {
+			match.WriteErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		match.WriteJSON(w, http.StatusOK, map[string]string{"answer": ans})
+	})
+
+	mux.HandleFunc("POST /api/match/{id}/pause", func(w http.ResponseWriter, r *http.Request) {
+		m := reg.Get(r.PathValue("id"))
+		if m == nil {
+			match.WriteErr(w, http.StatusNotFound, "match not found")
+			return
+		}
+		if err := m.Pause(); err != nil {
+			match.WriteErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		match.WriteJSON(w, http.StatusOK, m.View())
+	})
+
+	mux.HandleFunc("GET /api/profile", func(w http.ResponseWriter, _ *http.Request) {
+		match.WriteJSON(w, http.StatusOK, prof.P)
+	})
+
+	mux.HandleFunc("POST /api/profile", func(w http.ResponseWriter, r *http.Request) {
+		var body profile.Profile
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			match.WriteErr(w, http.StatusBadRequest, "bad profile")
+			return
+		}
+		if body.Persona != "" {
+			prof.SetPersona(body.Persona)
+		}
+		if len(body.Lessons) > 0 {
+			prof.AddLessons(body.Lessons)
+		}
+		match.WriteJSON(w, http.StatusOK, prof.P)
 	})
 
 	dist, err := fs.Sub(web.FS, "dist")

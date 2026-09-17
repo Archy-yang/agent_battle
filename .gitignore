@@ -6,3 +6,4 @@ backend/*.out
 .vscode/
 frontend/h5/node_modules/
 backend/llm.env
+backend/profile.json
