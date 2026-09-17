@@ -4,3 +4,4 @@ backend/*.test
 backend/*.out
 .idea/
 .vscode/
+frontend/h5/node_modules/

@@ -60,7 +60,10 @@ type Connection struct {
 }
 
 // Vec2 is a grid coordinate.
-type Vec2 struct{ X, Y int }
+type Vec2 struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+}
 
 // Entity is the only kind of object in the world (world_rule §4).
 type Entity struct {
