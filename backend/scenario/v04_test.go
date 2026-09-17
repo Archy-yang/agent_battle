@@ -92,8 +92,8 @@ func TestV04CrossProcessDeterminism(t *testing.T) {
 	}
 }
 
-// Fragment：由 seed 哈希确定，12 向 × HexDist 20~28，跨 seed 分布且落
-// 点强制可通行 (design §2.4).
+// Fragment：由 seed 哈希确定，12 向 × HexDist 14~18（2026-09-19 平衡
+// 修订，与蓄息经济匹配），跨 seed 分布且落点强制可通行 (design §2.4).
 func TestV04Fragment(t *testing.T) {
 	seen := map[engine.Hex]bool{}
 	for _, seed := range []uint64{1, 7, 42, 20260917, 20260918, 99, 12345} {
@@ -102,8 +102,8 @@ func TestV04Fragment(t *testing.T) {
 		if frag != FragmentFor(seed) {
 			t.Fatalf("seed %d: FragmentPos != FragmentFor", seed)
 		}
-		if d := engine.HexDist(engine.Hex{}, frag); d < 20 || d > 28 {
-			t.Fatalf("seed %d: fragment dist = %d, want [20,28]", seed, d)
+		if d := engine.HexDist(engine.Hex{}, frag); d < 14 || d > 18 {
+			t.Fatalf("seed %d: fragment dist = %d, want [14,18]", seed, d)
 		}
 		if !p.Passable(frag) {
 			t.Fatalf("seed %d: fragment cell %v impassable", seed, frag)

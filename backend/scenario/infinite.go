@@ -11,7 +11,8 @@ import (
 //
 // 地形：engine.Terrain 四步五行生成（design §2.2），经 TerrainFn 注入
 // 世界；Fragment 落点格在纯函数内强制可通行（不改噪声）。
-// Fragment：由 seed 哈希在 12 向 × 距离 20~28 内确定（FragmentFor）。
+// Fragment：由 seed 哈希在 12 向 × 距离 14~18 内确定（FragmentFor；
+// 2026-09-19 平衡修订，与蓄息经济匹配）。
 // 怪物：Tier-2 生成表——每 chunk 用 hash(seed,"mob",qc,rc) 决定是否出
 // 怪，概率随 HexDist(出生 chunk, 该 chunk) 上升；essence 取该 chunk 主
 // 导行，Form 由 hash 定。怪物在 chunk 首次参与激活圈时懒激活，激活事
@@ -69,12 +70,14 @@ func fragmentDirs12() [12]engine.Hex {
 }
 
 // FragmentFor deterministically places the Fragment from the seed:
-// 12 向之一 × HexDist 20~28 (design §2.4). 奇数距离以"再向外一步"补足
-// （取第一个使距离 +1 的 hex 邻向，HexDirs 序保证确定性）.
+// 12 向之一 × HexDist 14~18 (design §2.4；2026-09-19 平衡修订，与蓄息
+// 经济匹配：RestRegen=2 时 60 回合最优步数上限 36，往返 2d ≤ 36 方可
+// 胜). 奇数距离以"再向外一步"补足（取第一个使距离 +1 的 hex 邻向，
+// HexDirs 序保证确定性）.
 func FragmentFor(seed uint64) engine.Hex {
 	ss := strconv.FormatUint(seed, 10)
 	k := int(engine.Hash01(ss, "frag-dir", 0, 0)*12) % 12
-	d := 20 + int(engine.Hash01(ss, "frag-dist", 0, 0)*9) // 20..28
+	d := 14 + int(engine.Hash01(ss, "frag-dist", 0, 0)*5) // 14..18
 	u := fragmentDirs12()[k]
 	pos := engine.Hex{Q: u.Q * (d / 2), R: u.R * (d / 2)} // HexDist = 2*(d/2)
 	if d%2 == 1 {
@@ -104,7 +107,8 @@ func v04Terrain(seed uint64, frag engine.Hex) engine.TerrainFunc {
 
 // V04 is 场景包 #3：scenario/infinite-0.4，v0.4 无限世界 (design §2.4)。
 // 出生 (0,0)（3×3 出生 chunk 豁免顽石，engine 侧保证）；Fragment 由
-// seed 哈希落在 HexDist 20~28；Unknown 在西位出生环上；三只 Tier-2 怪
+// seed 哈希落在 HexDist 14~18（2026-09-19 平衡修订）；Unknown 在西位
+// 出生环上；三只 Tier-2 怪
 // 物沿出生环（HexDist 8）分布——它们是"开局即在场上"的保底遭遇（继承
 // WP1 结构，match_test 契约）；其余怪物由 chunk 懒激活按深度出怪
 // （PendingSpawns）。

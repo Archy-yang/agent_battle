@@ -67,6 +67,22 @@ const (
 	NeutralMult    Fixed = 500 // 非克关系作用 ×0.5
 )
 
+// ChengCapPermill is the 乘区封顶 (world-laws/0.2 平衡修订)：单次作用
+// 的伤害上限 = 目标其质（MaxIntegrity）× 600‰。乘依然致命（两击可毙
+// 满形之敌），但不再一击秒杀——死亡窗口的存在让 Influence 紧急暂停
+// 与战术撤退有介入空间。
+const ChengCapPermill = 600
+
+// capDamage folds one raw damage value by the 其质封顶：单次作用 ≤
+// 目标其质 × ChengCapPermill（world-laws/0.2）。设计意图：乘区保留
+// 失控放大的语义，但任何一击都可存活。
+func capDamage(raw, targetStrength int) int {
+	if cap := targetStrength * ChengCapPermill / 1000; raw > cap {
+		return cap
+	}
+	return raw
+}
+
 // RestraintResult is the outcome of applying essence a with power p
 // onto essence b (the 克曲线 evaluated at r = p / target strength).
 type RestraintResult struct {
@@ -81,6 +97,8 @@ type RestraintResult struct {
 // Damage/backlash are returned in 形-loss points: the raw curve value
 // is folded by 1/10 so that a full-power (1000) hit in the 衡 zone
 // costs 150 形 — deadly to a 100-形 agent only at close to full power.
+// All damage is additionally folded by the 其质封顶 capDamage
+// (world-laws/0.2)：单次作用 ≤ 其质 ×0.6，乘依然致命但可存活.
 //
 // 推论 (world_laws §5)：动手前必须评估双方本源强度——
 // 估错方向，轻则无效（微），重则反噬（侮）或失控（乘）。
@@ -96,19 +114,20 @@ func ResolveRestraint(power, targetStrength int) RestraintResult {
 	case r < ZoneWeiUpper: // 微：杯水车薪
 		return RestraintResult{Zone: ZoneWei}
 	case r < ZoneHengUpper: // 衡：线性克制 ×1.5
-		return RestraintResult{Zone: ZoneHeng, Damage: int(Fmul(p, HengMult) / 10)}
-	default: // 乘：失控 ×2.5 + 溢出
+		return RestraintResult{Zone: ZoneHeng, Damage: capDamage(int(Fmul(p, HengMult)/10), targetStrength)}
+	default: // 乘：失控 ×2.5 + 溢出（封顶后不再一击秒杀，world-laws/0.2）
 		spill := ChengSpill
 		if r >= ChengSpillR4 {
 			spill = ChengSpillR4V
 		}
-		return RestraintResult{Zone: ZoneCheng, Damage: int(Fmul(p, ChengMult) / 10), Spill: int(spill)}
+		return RestraintResult{Zone: ZoneCheng, Damage: capDamage(int(Fmul(p, ChengMult)/10), targetStrength), Spill: int(spill)}
 	}
 }
 
 // ApplyPower computes the outcome of projecting an essence with power
 // onto a target of essence b. 相克走克曲线；非克关系一律 ×0.5
-// （world_laws §4 律五：只有生克二门，生不是作用方式）.
+// （world_laws §4 律五：只有生克二门，生不是作用方式）。伤害同样受
+// 其质封顶约束（world-laws/0.2，与克曲线同规则）.
 func ApplyPower(a, b Essence, power, targetStrength int) RestraintResult {
 	if Restrains(a, b) {
 		return ResolveRestraint(power, targetStrength)
@@ -116,7 +135,7 @@ func ApplyPower(a, b Essence, power, targetStrength int) RestraintResult {
 	if power <= 0 || targetStrength <= 0 {
 		return RestraintResult{Zone: ZoneWei}
 	}
-	return RestraintResult{Zone: ZoneHeng, Damage: int(Fmul(Fixed(power), NeutralMult) / 10)}
+	return RestraintResult{Zone: ZoneHeng, Damage: capDamage(int(Fmul(Fixed(power), NeutralMult)/10), targetStrength)}
 }
 
 // 阴阳曲线 (world_laws §3). x is the 阳性输出强度 in permille (0..1000):
@@ -143,8 +162,18 @@ const (
 	// OverheatDamage: integrity lost per tick while overheated.
 	OverheatDamage = 2
 	// DangerEnergyDrain / DangerHeat: 火阳过盛 cells drain and heat (world_genesis §8).
-	DangerEnergyDrain = 2
-	DangerHeat        = 3
+	// 0.2 平衡修订：DangerHeat 3 → 2（行进净热归零，危险区可穿越、
+	// 不可驻留）；DangerEnergyDrain 2 → 1（危险格蓄息净 +1：驻留可
+	// 自愈脱困，但仍劣于平地——若为 2，则与 RestRegen 恰好抵消，低气
+	// 者踏上危险格即被永久锁死）.
+	DangerEnergyDrain = 1
+	DangerHeat        = 2
+	// RestRegen is the 蓄息律 (world-laws/0.2 新增)：本 tick 未执行任何
+	// move/activate/equip（站桩不动即阴）且气未满 → 回 RestRegen 气。
+	// 阴阳互根（world_laws 律一）：阳动耗气生热，阴静蓄气回神——停留
+	// 有代价也有收益，深探-折返-再深探的节奏由此成立。怪物同规则
+	// （对称物理）.
+	RestRegen = 2
 	// StallThreshold: 输出低于此视为不作为 (world_laws §7 停滞阈).
 	StallThreshold = 50
 )

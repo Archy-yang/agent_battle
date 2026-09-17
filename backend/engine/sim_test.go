@@ -52,6 +52,8 @@ func TestMoveRejectedByOccupancy(t *testing.T) {
 
 // 火阳过盛地形：耗气、生热（world_genesis §8 环境损耗）。
 // hex 危险区：(X,Y)=(2q+r,r) ∈ {4,5}×{4,5} ⇒ 格 (0,4) 与 (0,5)。
+// world-laws/0.2：驻留者无输出 → 蓄息 +RestRegen，危险格耗气 −1 →
+// 净 +1 气（可自愈脱困仍劣于平地）；DangerHeat 3→2 后行进净热归零.
 func TestDangerZoneDrains(t *testing.T) {
 	gen := func(_ uint64, q, r int) Cell {
 		x, y := 2*q+r, r
@@ -62,15 +64,55 @@ func TestDangerZoneDrains(t *testing.T) {
 	}
 	w, p := newTestWorldT(gen)
 	p.Pos = Hex{0, 4}
+	p.Battery = 60 // 低于上限：蓄息才会触发（满气者不蓄）
 	b0, i0 := p.Battery, p.Integrity
 	w.Advance(nil)
-	if p.Battery != b0-DangerEnergyDrain {
-		t.Errorf("battery = %d", p.Battery)
+	if p.Battery != b0+RestRegen-DangerEnergyDrain {
+		t.Errorf("battery = %d, want %d（蓄息 +2 与危险税 −2 相抵）", p.Battery, b0+RestRegen-DangerEnergyDrain)
 	}
 	if p.Heat != DangerHeat-PassiveCooling {
 		t.Errorf("heat = %d", p.Heat)
 	}
 	_ = i0
+}
+
+// 蓄息律 (world-laws/0.2)：无输出回合回气且封顶；有行动不回气；
+// 被拒的意图不算输出——断气者原地自愈.
+func TestRestRegen(t *testing.T) {
+	w, p := newTestWorld()
+	// 触发：无任何意图 → +2
+	p.Battery = 50
+	w.Advance(nil)
+	if p.Battery != 50+RestRegen {
+		t.Errorf("resting battery = %d, want %d", p.Battery, 50+RestRegen)
+	}
+	// 封顶：不超过 MaxBattery
+	p.Battery = p.MaxBattery - 1
+	w.Advance(nil)
+	if p.Battery != p.MaxBattery {
+		t.Errorf("capped battery = %d, want %d", p.Battery, p.MaxBattery)
+	}
+	// 不触发：move 生效则不回气（50 − EnergyCost(400)=4）
+	p.Battery = 50
+	w.Advance(map[EntityID][]Intent{p.ID: {{Type: "move", To: &Hex{2, 1}}}})
+	if p.Battery != 46 {
+		t.Errorf("acting battery = %d, want 46（行动回合不蓄息）", p.Battery)
+	}
+	// 不触发：activate 生效则不回气（默认功率 400 → 耗气 4）
+	p.Battery = 50
+	p.Pos = Hex{1, 1}
+	s := p.FindComponent(CSensor)
+	w.Advance(map[EntityID][]Intent{p.ID: {{Type: "activate", Component: s.ID}}})
+	if p.Battery != 46 {
+		t.Errorf("sensing battery = %d, want 46", p.Battery)
+	}
+	// 被拒意图不算输出：气不足被拒 → 原地蓄息（断气自愈，罚站消失）
+	p.Battery = 3
+	p.Pos = Hex{1, 1}
+	w.Advance(map[EntityID][]Intent{p.ID: {{Type: "move", To: &Hex{2, 1}}}})
+	if p.Battery != 3+RestRegen {
+		t.Errorf("starved battery = %d, want %d", p.Battery, 3+RestRegen)
+	}
 }
 
 // 阳极自毁（world_laws 互根律）：过热每回合扣形。

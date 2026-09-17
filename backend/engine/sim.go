@@ -6,6 +6,12 @@ import "fmt"
 // (world_laws 律四：一时之所为有限).
 const MaxIntentsPerTick = 2
 
+// restActed 记录本 tick 已实际执行（提交生效，被拒不算）move/activate/
+// equip 的实体 id——蓄息律（world-laws/0.2）的判定输入。生命周期仅限
+// 一次 Advance 调用之内：Advance 开场重建，environment 阶段读取；引擎
+// 单线程、Advance 不可重入，故不构成跨 tick 状态，重放语义不变.
+var restActed = map[EntityID]bool{}
+
 // Intent is one proposed action. Agents return intents; the engine
 // decides reality (world_rule §12). Only primitive intents exist —
 // "attack"/"build" are NOT intents (world_rule §14): attacking is
@@ -48,6 +54,7 @@ func (w *World) emit(evs *[]Event, e *Entity, typ, format string, args ...any) {
 func (w *World) Advance(intents map[EntityID][]Intent) []Event {
 	w.Tick++
 	var evs []Event
+	restActed = make(map[EntityID]bool) // 蓄息判定：本 tick 无输出者回气
 	for _, e := range w.SortedEntities() {
 		list := intents[e.ID]
 		used := 0
@@ -182,6 +189,7 @@ func (w *World) resolveMove(e *Entity, in Intent, evs *[]Event) {
 	e.Battery -= cost
 	e.Heat += HeatGain(x)
 	e.Pos = to
+	restActed[e.ID] = true // 阳动：本 tick 不蓄息（move_to 订单的自动步进同走此处）
 	w.emit(evs, e, "move", "移动至 %v（耗气 %d，生热 %d）", to, cost, HeatGain(x))
 }
 
@@ -233,6 +241,7 @@ func (w *World) resolveActivate(e *Entity, in Intent, evs *[]Event) {
 		e.Battery -= cost
 		e.Heat += HeatGain(x)
 		c.Active = !c.Active
+		restActed[e.ID] = true // 阳动：本 tick 不蓄息
 		w.emit(evs, e, "sense", "感识%s（耗气 %d）", onOff(c.Active), cost)
 	case CEmitter:
 		t := w.Entities[in.Target]
@@ -246,6 +255,7 @@ func (w *World) resolveActivate(e *Entity, in Intent, evs *[]Event) {
 		}
 		e.Battery -= cost
 		e.Heat += HeatGain(x)
+		restActed[e.ID] = true // 阳动：本 tick 不蓄息
 		w.project(e, c, t, x, evs)
 	default:
 		w.emit(evs, e, "intent_rejected", "该组件不可激活 %s", c.Type)
@@ -497,6 +507,7 @@ func (w *World) resolveEquip(e *Entity, in Intent, evs *[]Event) {
 	// commit：扣气、生热、扣料、装上即生效
 	e.Battery -= cost
 	e.Heat += HeatGain(EquipStrength)
+	restActed[e.ID] = true // 阳动：本 tick 不蓄息
 	for i, s := range bp {
 		inv[essences[i]]--
 		e.AddComponent(s.Type, essences[i])
@@ -524,11 +535,21 @@ func (w *World) freeAdjacent(p Hex) (Hex, bool) {
 	return Hex{}, false
 }
 
-// environment is the physics phase: 火阳过盛地形、被动散热、过热损伤、形散.
+// environment is the physics phase: 蓄息回气、火阳过盛地形、被动散热、
+// 过热损伤、形散.
 func (w *World) environment(evs *[]Event) {
 	for _, e := range w.SortedEntities() {
 		if e.Kind == "fragment" {
 			continue
+		}
+		// 蓄息律 (world-laws/0.2, world_laws 律一 阴阳互根)：本 tick 未
+		// 执行任何 move/activate/equip（阴静）且气未满 → 回 RestRegen 气。
+		// 被拒的意图不算输出——断气者原地自愈，"断气罚站"不复存在；
+		// 怪物同规则（对称物理）。先蓄息后结算危险税：危险格驻留净
+		// 收支 = RestRegen − DangerEnergyDrain = +1，可自愈脱困但劣于
+		// 平地（0.2 二轮修订前为 0，低气者会被锁死）.
+		if !restActed[e.ID] && e.Battery < e.MaxBattery {
+			e.Battery = minInt(e.MaxBattery, e.Battery+RestRegen)
 		}
 		if c := w.At(e.Pos); c != nil && c.Danger {
 			e.Battery = maxInt(0, e.Battery-DangerEnergyDrain)
@@ -549,6 +570,13 @@ func (w *World) environment(evs *[]Event) {
 
 func maxInt(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b

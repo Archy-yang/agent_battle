@@ -156,8 +156,8 @@ func TestV02DeterministicGeneration(t *testing.T) {
 }
 
 // v0.4 无限世界包：出生 (0,0)、Fragment 由 seed 哈希落在 12 向 ×
-// HexDist 20~28（WP2，design §2.4）、Unknown 与三怪物沿出生环分布、
-// TurnLimit 60、v0.4 五行地形。
+// HexDist 14~18（WP2，design §2.4；2026-09-19 平衡修订，与蓄息经济
+// 匹配）、Unknown 与三怪物沿出生环分布、TurnLimit 60、v0.4 五行地形。
 func TestV04Layout(t *testing.T) {
 	p := V04(42)
 	if p.Name != "scenario/infinite-0.4" || p.TurnLimit != 60 {
@@ -169,8 +169,8 @@ func TestV04Layout(t *testing.T) {
 	if p.FragmentPos != FragmentFor(42) {
 		t.Fatalf("fragment = %v, want FragmentFor(42)", p.FragmentPos)
 	}
-	if d := engine.HexDist(p.PlayerSpawn, p.FragmentPos); d < 20 || d > 28 {
-		t.Fatalf("spawn→fragment hex distance = %d, want in [20,28]", d)
+	if d := engine.HexDist(p.PlayerSpawn, p.FragmentPos); d < 14 || d > 18 {
+		t.Fatalf("spawn→fragment hex distance = %d, want in [14,18]", d)
 	}
 	spawns := append([]MonsterSpec{{
 		Essence: engine.Metal, Form: 0, Pos: p.UnknownSpawn,

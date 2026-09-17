@@ -181,7 +181,8 @@ Materials 全部维持现状——这一条保证 sim.go 的主体逻辑与"无�
 ```text
 world:     无限；TurnLimit 60
 出生点:    (0,0) chunk 中心，地形豁免区
-Fragment:  由 seed 哈希确定方向（12 向量化）与距离（HexDist 20~28），
+Fragment:  由 seed 哈希确定方向（12 向量化）与距离（HexDist 14~18；
+           2026-09-19 平衡修订，与蓄息经济匹配），
            落点格强制改写为可通行（纯函数内完成，不改噪声）
 旧地图:    prior_knowledge 给出 Fragment 的粗略方位象限（可不准，§3.5）
 怪物:      Tier 2 生成表（world_genesis §5.1）：每 chunk 用

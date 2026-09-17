@@ -44,12 +44,13 @@ func TestResolveRestraintZones(t *testing.T) {
 		backlash        int
 		spill           int
 	}{
-		{100, 600, ZoneWu, 0, 5, 0},        // r≈0.17 侮：反噬 = 100×0.5÷10
-		{100, 250, ZoneWei, 0, 0, 0},       // r=0.40 微：杯水车薪
-		{600, 600, ZoneHeng, 90, 0, 0},     // r=1.00 衡：600×1.5÷10
-		{1999, 1000, ZoneHeng, 299, 0, 0},  // r=1.999 仍在衡区
-		{1200, 500, ZoneCheng, 300, 0, 250}, // r=2.4 乘：×2.5÷10 溢出 25%
-		{2400, 500, ZoneCheng, 600, 0, 500}, // r=4.8 溢出 50%
+		{100, 600, ZoneWu, 0, 5, 0},         // r≈0.17 侮：反噬 = 100×0.5÷10
+		{100, 250, ZoneWei, 0, 0, 0},        // r=0.40 微：杯水车薪
+		{600, 600, ZoneHeng, 90, 0, 0},      // r=1.00 衡：600×1.5÷10
+		{1999, 1000, ZoneHeng, 299, 0, 0},   // r=1.999 仍在衡区
+		{1200, 500, ZoneCheng, 300, 0, 250}, // r=2.4 乘：×2.5÷10 溢出 25%（恰在其质×0.6 封顶上）
+		{2400, 500, ZoneCheng, 300, 0, 500}, // r=4.8 溢出 50%；原值 600 被其质封顶 300
+		{3000, 100, ZoneCheng, 60, 0, 500},  // r=30 封顶生效：其质 100 → 单次 ≤60
 	}
 	for _, c := range cases {
 		got := ResolveRestraint(c.power, c.strength)
@@ -72,6 +73,26 @@ func TestApplyPowerNeutral(t *testing.T) {
 	got = ApplyPower(Water, Fire, 600, 600)
 	if got.Zone != ZoneHeng || got.Damage != 90 {
 		t.Errorf("ApplyPower(Water,Fire,600,600) = %+v", got)
+	}
+}
+
+// 乘区封顶 (world-laws/0.2)：单次作用伤害 ≤ 其质 ×0.6——乘依然致命
+// 但可存活（其质 100 的目标吃两击才散，死亡窗口存在）。
+func TestChengCapPerTargetStrength(t *testing.T) {
+	// 克曲线乘区：金克木，功率 500、其质 100 → 原值 125，封顶 60
+	got := ResolveRestraint(500, 100)
+	if got.Zone != ZoneCheng || got.Damage != 60 {
+		t.Errorf("ResolveRestraint(500,100) = %+v, want 乘区封顶 60", got)
+	}
+	// 非克关系同样封顶：火→土 中性，功率 1000、其质 60 → 原值 50，封顶 36
+	got = ApplyPower(Fire, Earth, 1000, 60)
+	if got.Damage != 36 {
+		t.Errorf("ApplyPower(Fire,Earth,1000,60) damage = %d, want 封顶 36", got.Damage)
+	}
+	// 未触顶不受影响：功率 600、其质 600 → 衡区 90 < 360
+	got = ResolveRestraint(600, 600)
+	if got.Damage != 90 {
+		t.Errorf("ResolveRestraint(600,600) damage = %d, want 90（未触顶）", got.Damage)
 	}
 }
 
