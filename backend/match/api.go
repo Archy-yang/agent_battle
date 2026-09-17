@@ -24,7 +24,7 @@ type StateView struct {
 	Influence   float64             `json:"influence"`
 	Observation *engine.Observation `json:"observation"`
 	Cognition   *agent.Cognition    `json:"cognition"`
-	Explored    []engine.Vec2       `json:"explored"`
+	Explored    []engine.Hex        `json:"explored"`
 	Events      []engine.Event      `json:"events"`
 	Guidance    []Guidance          `json:"guidance"`
 	Predictions []*Prediction       `json:"predictions"`
@@ -38,7 +38,7 @@ type StateView struct {
 	// Order is the player entity's standing move order (OrderTo), or
 	// null — read straight off the entity, not reconstructed from the
 	// last tick's intents.
-	Order *engine.Vec2 `json:"order"`
+	Order *engine.Hex `json:"order"`
 	// InCombat reports whether the player is in a fight this tick
 	// (M3.1 战斗状态).
 	InCombat bool `json:"in_combat"`
@@ -50,7 +50,7 @@ type StateView struct {
 // EnemyView is one hostile entity as the player perceives it.
 type EnemyView struct {
 	ID        engine.EntityID `json:"id"`
-	Pos       engine.Vec2     `json:"pos"`
+	Pos       engine.Hex      `json:"pos"`
 	Distance  int             `json:"distance"`
 	Essence   string          `json:"essence"`
 	Integrity int             `json:"integrity"`
@@ -72,9 +72,9 @@ func NewRegistry(prof *profile.Store) *Registry {
 }
 
 // Create starts a new match. scenarioName selects the pack — "mvp"
-// (default) or "v02"; the variadic keeps old call sites unchanged.
-// An unknown scenario name yields nil (callers turn that into a
-// client-facing error). seed 0 → fixed default.
+// (default), "v02" or "v04"; the variadic keeps old call sites
+// unchanged. An unknown scenario name yields nil (callers turn that
+// into a client-facing error). seed 0 → fixed default.
 func (r *Registry) Create(seed uint64, scenarioName ...string) *Match {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -91,6 +91,8 @@ func (r *Registry) Create(seed uint64, scenarioName ...string) *Match {
 		m = New("", seed, r.profile)
 	case "v02":
 		m = NewV02("", seed, r.profile)
+	case "v04":
+		m = NewV04("", seed, r.profile)
 	default: // 未知场景：不落库，交由调用方报错
 		return nil
 	}
@@ -110,11 +112,11 @@ func (r *Registry) Get(id string) *Match {
 
 // View builds the client-facing state of a match.
 func (m *Match) View() *StateView {
-	explored := make([]engine.Vec2, 0, len(m.Explored))
+	explored := make([]engine.Hex, 0, len(m.Explored))
 	for p := range m.Explored {
 		explored = append(explored, p)
 	}
-	sortVecs(explored)
+	sortHexes(explored)
 	var obs *engine.Observation
 	if m.Status == StatusRunning || m.W.Entities[m.PlayerID] != nil {
 		obs = m.Observe()
@@ -135,7 +137,7 @@ func (m *Match) View() *StateView {
 	for e, n := range m.W.Materials["player"] {
 		materials[e.String()] = n
 	}
-	var order *engine.Vec2
+	var order *engine.Hex
 	enemies := []EnemyView{}
 	player := m.W.Entities[m.PlayerID]
 	if player != nil {
@@ -152,7 +154,7 @@ func (m *Match) View() *StateView {
 			if e == nil {
 				continue
 			}
-			d := engine.Chebyshev(player.Pos, e.Pos)
+			d := engine.HexDist(player.Pos, e.Pos)
 			if d > radius {
 				continue
 			}
@@ -184,9 +186,11 @@ func (m *Match) View() *StateView {
 	}
 }
 
-func sortVecs(vs []engine.Vec2) {
+// sortHexes orders hex coordinates deterministically (R ascending,
+// then Q ascending) for stable JSON output.
+func sortHexes(vs []engine.Hex) {
 	for i := 1; i < len(vs); i++ {
-		for j := i; j > 0 && (vs[j].Y < vs[j-1].Y || (vs[j].Y == vs[j-1].Y && vs[j].X < vs[j-1].X)); j-- {
+		for j := i; j > 0 && (vs[j].R < vs[j-1].R || (vs[j].R == vs[j-1].R && vs[j].Q < vs[j-1].Q)); j-- {
 			vs[j], vs[j-1] = vs[j-1], vs[j]
 		}
 	}

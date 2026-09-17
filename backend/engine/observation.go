@@ -9,7 +9,7 @@ package engine
 type Observation struct {
 	Tick     int64        `json:"tick"`
 	Self     SelfView     `json:"self"`
-	Visible  []Vec2       `json:"visible"`
+	Visible  []Hex        `json:"visible"`
 	Entities []SeenEntity `json:"entities"`
 	Events   []Event      `json:"events"`
 }
@@ -26,7 +26,7 @@ type ComponentView struct {
 
 // SelfView is the agent's own state — the one place full detail is legal.
 type SelfView struct {
-	Pos          Vec2            `json:"pos"`
+	Pos          Hex             `json:"pos"`
 	Essence      Essence         `json:"essence"`
 	Integrity    int             `json:"integrity"`
 	MaxIntegrity int             `json:"max_integrity"`
@@ -44,7 +44,7 @@ type SelfView struct {
 // (world_laws 律六：观察即读迹).
 type SeenEntity struct {
 	ID       EntityID `json:"id"`
-	Pos      Vec2     `json:"pos"`
+	Pos      Hex      `json:"pos"`
 	Distance int      `json:"distance"`
 	Kind     string   `json:"kind"`
 	Owner    string   `json:"owner"`
@@ -92,20 +92,28 @@ func (w *World) Observe(id EntityID, lastEvents []Event) *Observation {
 				return false
 			}(),
 		},
-		Visible:  []Vec2{},
+		Visible:  []Hex{},
 		Entities: []SeenEntity{},
 		Events:   lastEvents,
 	}
-	for dx := -radius; dx <= radius; dx++ {
-		for dy := -radius; dy <= radius; dy++ {
-			p := Vec2{X: e.Pos.X + dx, Y: e.Pos.Y + dy}
-			if w.InBounds(p) {
-				obs.Visible = append(obs.Visible, p)
-			}
+	// 可见格 = HexDist ≤ radius 的所有格（design §1.4 环遍历）；
+	// 无限世界无边界截断。轴向枚举顺序确定（dq 升序、dr 升序），
+	// 同 seed 重放的字节一致性不受影响。
+	for dq := -radius; dq <= radius; dq++ {
+		lo := -radius
+		if -dq-radius > lo {
+			lo = -dq - radius
+		}
+		hi := radius
+		if -dq+radius < hi {
+			hi = -dq + radius
+		}
+		for dr := lo; dr <= hi; dr++ {
+			obs.Visible = append(obs.Visible, Hex{Q: e.Pos.Q + dq, R: e.Pos.R + dr})
 		}
 	}
 	for _, o := range w.SortedEntities() {
-		d := Chebyshev(e.Pos, o.Pos)
+		d := HexDist(e.Pos, o.Pos)
 		if o.ID == e.ID || d > radius {
 			continue
 		}

@@ -13,7 +13,7 @@ const MaxIntentsPerTick = 2
 type Intent struct {
 	Type      string      `json:"type"` // move|move_to|activate|transfer|inspect|connect|disconnect|assemble
 	Target    EntityID    `json:"target,omitempty"`
-	To        *Vec2       `json:"to,omitempty"`
+	To        *Hex        `json:"to,omitempty"`
 	Component ComponentID `json:"component,omitempty"`
 	Power     int         `json:"power,omitempty"` // 阳性输出强度 0..1000, 0 = default
 	Blueprint []CompSpec  `json:"blueprint,omitempty"`
@@ -155,7 +155,9 @@ func (w *World) resolveMove(e *Entity, in Intent, evs *[]Event) {
 		return
 	}
 	to := *in.To
-	if !w.InBounds(to) || !w.At(to).Passable {
+	// v0.4 无限世界：InBounds 校验取消（一切格皆在界内），只保留地形
+	// 可通行 / 邻接 / 占位 / 储气检查.
+	if !w.At(to).Passable {
 		w.emit(evs, e, "intent_rejected", "目标格不可通行 %v", to)
 		return
 	}
@@ -194,7 +196,7 @@ func (w *World) resolveMoveTo(e *Entity, in Intent, evs *[]Event) {
 		return
 	}
 	to := *in.To
-	if !w.InBounds(to) || !w.At(to).Passable {
+	if !w.At(to).Passable {
 		w.emit(evs, e, "intent_rejected", "目标格不可通行 %v", to)
 		return
 	}
@@ -234,7 +236,7 @@ func (w *World) resolveActivate(e *Entity, in Intent, evs *[]Event) {
 			w.emit(evs, e, "intent_rejected", "作用目标无效")
 			return
 		}
-		if Chebyshev(e.Pos, t.Pos) > 3 {
+		if HexDist(e.Pos, t.Pos) > 3 {
 			w.emit(evs, e, "intent_rejected", "超出作用距离")
 			return
 		}
@@ -276,7 +278,7 @@ func (w *World) project(e *Entity, c *Component, t *Entity, x int, evs *[]Event)
 			if o.ID == e.ID || o.ID == t.ID || o.Kind == "fragment" {
 				continue
 			}
-			if Chebyshev(o.Pos, t.Pos) <= 1 {
+			if HexDist(o.Pos, t.Pos) <= 1 {
 				o.Integrity -= spillDmg
 				w.emit(evs, o, "spill", "溢出波及，损 %d", spillDmg)
 			}
@@ -305,7 +307,7 @@ func (w *World) resolveInspect(e *Entity, in Intent, evs *[]Event) {
 		w.emit(evs, e, "intent_rejected", "检视目标不存在")
 		return
 	}
-	if Chebyshev(e.Pos, t.Pos) > 4 {
+	if HexDist(e.Pos, t.Pos) > 4 {
 		w.emit(evs, e, "intent_rejected", "超出感知范围")
 		return
 	}
@@ -429,14 +431,13 @@ func describeDevice(d *Entity) string {
 	return s
 }
 
-func (w *World) freeAdjacent(p Vec2) (Vec2, bool) {
-	for _, d := range [][2]int{{0, -1}, {1, 0}, {0, 1}, {-1, 0}} {
-		q := Vec2{X: p.X + d[0], Y: p.Y + d[1]}
-		if w.InBounds(q) && w.At(q).Passable && w.EntityAt(q) == nil {
+func (w *World) freeAdjacent(p Hex) (Hex, bool) {
+	for _, q := range HexNeighbors(p) { // 六方向（design §1.4）
+		if w.At(q).Passable && w.EntityAt(q) == nil {
 			return q, true
 		}
 	}
-	return Vec2{}, false
+	return Hex{}, false
 }
 
 // environment is the physics phase: 火阳过盛地形、被动散热、过热损伤、形散.

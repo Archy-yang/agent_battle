@@ -22,7 +22,7 @@ import (
 	"agentbattle/backend/web"
 )
 
-const version = "v0.2.0"
+const version = "v0.4.0"
 
 // loadEnvFile reads KEY=VALUE lines and sets any not already present
 // in the environment (server-side LLM config; the key never reaches
@@ -69,7 +69,7 @@ func main() {
 	mux.HandleFunc("POST /api/match", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Seed     uint64 `json:"seed"`
-			Scenario string `json:"scenario"` // "mvp"(默认) | "v02"
+			Scenario string `json:"scenario"` // "mvp"(默认) | "v02" | "v04"
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body) // empty body allowed
 		m := reg.Create(body.Seed, body.Scenario)

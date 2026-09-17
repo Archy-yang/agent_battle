@@ -86,7 +86,7 @@ func TestGuidanceEconomy(t *testing.T) {
 	if err := m.Predict("move"); err != nil {
 		t.Fatalf("predict rejected: %v", err)
 	}
-	m.lastIntents = []engine.Intent{{Type: "move", To: &engine.Vec2{X: 1, Y: 9}}}
+	m.lastIntents = []engine.Intent{{Type: "move", To: &engine.Hex{Q: 1, R: 9}}}
 	m.W.Tick++ // 模拟推进一步
 	m.judgePending()
 	if m.Influence != InfluenceStart-CostGuide-CostDeepLink-CostWhisper+PredictReward {
@@ -95,7 +95,8 @@ func TestGuidanceEconomy(t *testing.T) {
 }
 
 // v0.2：三只怪物入场；玩家靠近后怪物逐回合接近直至相邻并发起攻击
-// （离火 activate，事件流里出现 attack）。
+// （离火 activate，事件流里出现 attack）。距离语义 Chebyshev → HexDist；
+// 走廊格 r=0 在障碍锚点蔓延范围（r≥1）之外，保证追击路线无顽石。
 func TestV02MonsterChaseAndAttack(t *testing.T) {
 	m := NewV02("v02c", 42, nil)
 	if len(m.MonsterIDs) != 3 {
@@ -103,14 +104,14 @@ func TestV02MonsterChaseAndAttack(t *testing.T) {
 	}
 	p := m.W.Entities[m.PlayerID]
 	mon := m.W.Entities[m.MonsterIDs[0]] // 火行怪
-	p.Pos = engine.Vec2{X: 5, Y: 5}
-	mon.Pos = engine.Vec2{X: 5, Y: 8} // 距离 3：进入追击圈
+	p.Pos = engine.Hex{Q: 0, R: 0}
+	mon.Pos = engine.Hex{Q: 3, R: 0} // HexDist 3：进入追击圈
 
 	attacked := false
-	lastDist := engine.Chebyshev(p.Pos, mon.Pos)
+	lastDist := engine.HexDist(p.Pos, mon.Pos)
 	for i := 0; i < 5 && !attacked; i++ {
 		m.Tick(nil)
-		d := engine.Chebyshev(p.Pos, mon.Pos)
+		d := engine.HexDist(p.Pos, mon.Pos)
 		if d > lastDist {
 			t.Fatalf("monster did not close in: dist %d → %d", lastDist, d)
 		}
@@ -135,7 +136,7 @@ func TestV02MonsterChaseAndAttack(t *testing.T) {
 		t.Errorf("adjacent monster should be visible in enemies view")
 	}
 	// 远离后：无相邻敌对实体、本 tick 无战斗事件 → in_combat 为 false
-	p.Pos = engine.Vec2{X: 0, Y: 23}
+	p.Pos = engine.Hex{Q: 0, R: 23}
 	m.Tick(nil)
 	if v := m.View(); v.InCombat {
 		t.Errorf("in_combat should be false when far from every hostile")
@@ -144,12 +145,12 @@ func TestV02MonsterChaseAndAttack(t *testing.T) {
 	if v := m.View(); len(v.Enemies) != 0 {
 		t.Errorf("enemies should be empty out of perception, got %+v", v.Enemies)
 	}
-	// 感识开启：感知半径扩到 4——距离 3 的怪物可见（被动半径看不见）
+	// 感识开启：感知半径扩到 4——距离 3~4 的怪物可见（被动半径看不见）
 	sens := p.FindComponent(engine.CSensor)
-	p.Pos = engine.Vec2{X: 10, Y: 10}
-	mon.Pos = engine.Vec2{X: 10, Y: 6} // 距离 4：本 tick 怪物追近一格
+	p.Pos = engine.Hex{Q: 10, R: 10}
+	mon.Pos = engine.Hex{Q: 10, R: 6} // HexDist 4：本 tick 怪物追近一格
 	m.Tick([]engine.Intent{{Type: "activate", Component: sens.ID}})
-	if d := engine.Chebyshev(p.Pos, mon.Pos); d <= 1 {
+	if d := engine.HexDist(p.Pos, mon.Pos); d <= 1 {
 		t.Fatalf("precondition broken: monster distance %d", d)
 	} else if !enemyVisible(m.View(), mon.ID) {
 		t.Errorf("monster at distance %d should be visible with the sensor on", d)
@@ -179,14 +180,22 @@ func TestRegistryScenarioSelect(t *testing.T) {
 	if m.PackName != "scenario/v02-0.2" {
 		t.Errorf("v02 pack = %s", m.PackName)
 	}
-	if m.W.W != 24 || m.W.H != 24 {
-		t.Errorf("v02 map = %dx%d", m.W.W, m.W.H)
-	}
 	if m.TurnLimit != 60 {
 		t.Errorf("v02 turn limit = %d", m.TurnLimit)
 	}
 	if len(m.MonsterIDs) != 3 {
 		t.Errorf("v02 monsters = %d", len(m.MonsterIDs))
+	}
+	// v0.4 无限世界包：Registry 按名可选，出生 (0,0)、TurnLimit 60
+	m4 := r.Create(7, "v04")
+	if m4 == nil || m4.PackName != "scenario/infinite-0.4" {
+		t.Fatalf("v04 pack = %v", m4)
+	}
+	if m4.TurnLimit != 60 || len(m4.MonsterIDs) != 3 {
+		t.Errorf("v04 limit/monsters = %d/%d", m4.TurnLimit, len(m4.MonsterIDs))
+	}
+	if m4.Spawn != (engine.Hex{Q: 0, R: 0}) {
+		t.Errorf("v04 spawn = %v", m4.Spawn)
 	}
 	if m := r.Create(7, "v99"); m != nil {
 		t.Errorf("unknown scenario should be nil, got %s", m.PackName)
@@ -218,13 +227,13 @@ func TestV02Determinism30Turns(t *testing.T) {
 }
 
 // 战斗状态另一路径：即便距离拉开，本 tick 玩家/敌对实体被
-// attack/spill 作用（事件侧）也置 in_combat。
+// attack/spill 作用（事件侧）也置 in_combat。距离语义 Chebyshev → HexDist。
 func TestInCombatViaEvents(t *testing.T) {
 	m := NewV02("v02e", 42, nil)
 	p := m.W.Entities[m.PlayerID]
 	mon := m.W.Entities[m.MonsterIDs[0]]
-	p.Pos = engine.Vec2{X: 0, Y: 23}
-	mon.Pos = engine.Vec2{X: 12, Y: 12} // 与玩家和所有敌对实体拉开
+	p.Pos = engine.Hex{Q: 0, R: 23}
+	mon.Pos = engine.Hex{Q: 12, R: 12} // HexDist 23：与玩家和所有敌对实体拉开
 
 	m.lastEvs = []engine.Event{{Tick: m.W.Tick, Type: "attack", Entity: m.PlayerID}}
 	if !m.InCombat() {

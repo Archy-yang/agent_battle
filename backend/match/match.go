@@ -85,7 +85,7 @@ type Match struct {
 	PackName  string
 	W         *engine.World
 	TurnLimit int64
-	Spawn     engine.Vec2
+	Spawn     engine.Hex
 
 	PlayerID   engine.EntityID
 	UnknownID  engine.EntityID
@@ -98,7 +98,7 @@ type Match struct {
 
 	Status string
 
-	Explored    map[engine.Vec2]bool
+	Explored    map[engine.Hex]bool
 	Events      []engine.Event
 	Guidance    []Guidance
 	Predictions []*Prediction
@@ -112,7 +112,7 @@ type Match struct {
 	pauseNext  bool
 
 	profile     *profile.Store
-	unknownDir  engine.Vec2
+	unknownDir  engine.Hex
 	lastEvs     []engine.Event
 	lastIntents []engine.Intent
 }
@@ -123,31 +123,30 @@ func New(id string, seed uint64, prof *profile.Store) *Match {
 	return newMatch(id, seed, prof, scenario.MVP(seed))
 }
 
-// NewV02 creates a match of scenario/v02-0.2: a 24×24 field with three
-// hand-placed monsters in addition to the Unknown Agent.
+// NewV02 creates a match of scenario/v02-0.2: the hex-translated v0.2
+// field with three hand-placed monsters in addition to the Unknown Agent.
 func NewV02(id string, seed uint64, prof *profile.Store) *Match {
 	return newMatch(id, seed, prof, scenario.V02(seed))
 }
 
+// NewV04 creates a match of scenario/infinite-0.4: the v0.4 minimal
+// infinite-world pack (design §2.4).
+func NewV04(id string, seed uint64, prof *profile.Store) *Match {
+	return newMatch(id, seed, prof, scenario.V04(seed))
+}
+
 func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) *Match {
-	var w *engine.World
-	var player, unknown, frag engine.EntityID
-	var monsters []engine.EntityID
-	if len(pack.MonsterSpawns) > 0 {
-		w, player, unknown, frag, monsters = pack.GenesisV02()
-	} else {
-		w, player, unknown, frag = pack.Genesis()
-	}
+	w, player, unknown, frag, monsters := pack.Genesis()
 	m := &Match{
 		ID: id, Seed: seed, PackName: pack.Name,
 		W: w, TurnLimit: pack.TurnLimit, Spawn: pack.PlayerSpawn,
 		PlayerID: player, UnknownID: unknown, FragmentID: frag,
 		MonsterIDs: monsters,
-		Explored:   map[engine.Vec2]bool{},
+		Explored:   map[engine.Hex]bool{},
 		Status:     StatusRunning,
 		Influence:  InfluenceStart,
 		profile:    prof,
-		unknownDir: engine.Vec2{X: -1, Y: 0},
+		unknownDir: engine.HexDirs[0], // E：六方向固定顺序游荡
 	}
 	if cfg := agent.LLMFromEnv(); cfg != nil {
 		p := agent.NewLLM(*cfg)
@@ -156,7 +155,7 @@ func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) 
 		}
 		m.Pilot, m.PilotName = p, "llm"
 	} else {
-		m.Pilot = agent.NewScripted(pack.PlayerSpawn, pack.FragmentPos, pack.Passable, pack.W, pack.H)
+		m.Pilot = agent.NewScripted(pack.PlayerSpawn, pack.FragmentPos, pack.Passable)
 		m.PilotName = "scripted"
 	}
 	return m
@@ -401,40 +400,34 @@ func carries(e *engine.Entity, id engine.EntityID) bool {
 }
 
 // unknownAct is the Unknown Agent's v0.1 behaviour — a deterministic
-// stand-in for its Logic DSL (world_genesis §5.2): wander the outer
-// ring; flee if the player gets close. Same seed → same walk.
+// stand-in for its Logic DSL (world_genesis §5.2): wander the infinite
+// plain along a rotating hex direction; flee if the player gets close.
+// Same seed → same walk.
 func (m *Match) unknownAct() []engine.Intent {
 	u := m.W.Entities[m.UnknownID]
 	if u == nil {
 		return nil
 	}
-	try := func(p engine.Vec2) bool {
-		return m.W.InBounds(p) && m.W.At(p).Passable && m.W.EntityAt(p) == nil
+	try := func(p engine.Hex) bool {
+		return m.W.At(p).Passable && m.W.EntityAt(p) == nil
 	}
-	if p := m.W.Entities[m.PlayerID]; p != nil && engine.Chebyshev(p.Pos, u.Pos) <= 2 {
-		d := engine.Vec2{X: sign2(u.Pos.X - p.Pos.X), Y: sign2(u.Pos.Y - p.Pos.Y)}
-		for _, cand := range []engine.Vec2{
-			{X: u.Pos.X + d.X, Y: u.Pos.Y + d.Y},
-			{X: u.Pos.X + d.X, Y: u.Pos.Y},
-			{X: u.Pos.X, Y: u.Pos.Y + d.Y},
-		} {
-			if (cand != u.Pos) && try(cand) {
+	if p := m.W.Entities[m.PlayerID]; p != nil && engine.HexDist(p.Pos, u.Pos) <= 2 {
+		// 逃离：按"远离玩家的距离"降序尝试六邻格（固定次序打破平局）。
+		cands := engine.HexStepToward(u.Pos, p.Pos)
+		for i := 5; i >= 0; i-- {
+			if cand := cands[i]; cand != u.Pos && try(cand) {
 				return []engine.Intent{{Type: "move", To: &cand, Power: 600}}
 			}
 		}
 	}
-	for i := 0; i < 4; i++ {
-		cand := engine.Vec2{X: u.Pos.X + m.unknownDir.X, Y: u.Pos.Y + m.unknownDir.Y}
-		if try(cand) && m.onRing(cand) {
+	for i := 0; i < 6; i++ {
+		cand := u.Pos.Add(m.unknownDir)
+		if try(cand) {
 			return []engine.Intent{{Type: "move", To: &cand, Power: 400}}
 		}
 		m.unknownDir = rotate(m.unknownDir)
 	}
 	return nil
-}
-
-func (m *Match) onRing(p engine.Vec2) bool {
-	return p.X == 0 || p.Y == 0 || p.X == m.W.W-1 || p.Y == m.W.H-1
 }
 
 // hostiles lists every hostile entity id (the Unknown Agent + all
@@ -467,8 +460,8 @@ func (m *Match) monstersAct() map[engine.EntityID][]engine.Intent {
 // for its Logic DSL (world_genesis §5.2 铁律二：敌人走 Agent Protocol).
 // At most one intent per tick:
 //
-//	正交相邻        → 攻击：activate 离火作用于玩家（power 500）
-//	距离 ≤ 4        → 追击：朝玩家方向移动一格（不可穿墙，可入危险区）
+//	hex 相邻        → 攻击：activate 离火作用于玩家（power 500）
+//	距离 ≤ 4        → 追击：朝玩家方向移动一格（不可穿障碍，可入危险区）
 //	距离 > 4        → 游荡：Rng 驱动，原地停留概率 1/3
 //
 // (the 4-cell band closes the spec's 3..4 gap: chase up to and
@@ -482,23 +475,18 @@ func (m *Match) monsterAct(id engine.EntityID) []engine.Intent {
 	if p == nil {
 		return nil
 	}
-	try := func(pos engine.Vec2) bool { // 不可穿墙；危险区可入（Passable）
-		return m.W.InBounds(pos) && m.W.At(pos).Passable && m.W.EntityAt(pos) == nil
+	try := func(pos engine.Hex) bool { // 不可穿障碍；危险区可入（Passable）
+		return m.W.At(pos).Passable && m.W.EntityAt(pos) == nil
 	}
-	// 相邻（Chebyshev ≤ 1 且正交邻接）：攻击
+	// 相邻（HexDist == 1，六方向等价）：攻击
 	if engine.Adjacent(p.Pos, mon.Pos) {
 		if em := mon.FindComponent(engine.CEmitter); em != nil {
 			return []engine.Intent{{Type: "activate", Component: em.ID, Target: p.ID, Power: 500}}
 		}
 	}
-	switch dist := engine.Chebyshev(p.Pos, mon.Pos); {
-	case dist <= 4: // 追击
-		dx, dy := sign2(p.Pos.X-mon.Pos.X), sign2(p.Pos.Y-mon.Pos.Y)
-		for _, cand := range []engine.Vec2{
-			{X: mon.Pos.X + dx, Y: mon.Pos.Y + dy},
-			{X: mon.Pos.X + dx, Y: mon.Pos.Y},
-			{X: mon.Pos.X, Y: mon.Pos.Y + dy},
-		} {
+	switch dist := engine.HexDist(p.Pos, mon.Pos); {
+	case dist <= 4: // 追击：贪心六方向（HexDist 递减排布，固定次序破平局）
+		for _, cand := range engine.HexStepToward(mon.Pos, p.Pos) {
 			if cand != mon.Pos && try(cand) {
 				return []engine.Intent{{Type: "move", To: &cand, Power: 400}}
 			}
@@ -508,11 +496,9 @@ func (m *Match) monsterAct(id engine.EntityID) []engine.Intent {
 		if m.W.Rng.Intn(3) == 0 { // 原地停留概率 1/3
 			return nil
 		}
-		dirs := [][2]int{{0, -1}, {1, 0}, {0, 1}, {-1, 0}}
-		start := m.W.Rng.Intn(4)
-		for i := 0; i < 4; i++ {
-			d := dirs[(start+i)%4]
-			cand := engine.Vec2{X: mon.Pos.X + d[0], Y: mon.Pos.Y + d[1]}
+		start := m.W.Rng.Intn(6)
+		for i := 0; i < 6; i++ {
+			cand := mon.Pos.Add(engine.HexDirs[(start+i)%6])
 			if try(cand) {
 				return []engine.Intent{{Type: "move", To: &cand, Power: 400}}
 			}
@@ -522,13 +508,13 @@ func (m *Match) monsterAct(id engine.EntityID) []engine.Intent {
 }
 
 // InCombat reports whether the player is in a fight this tick: any
-// hostile within Chebyshev 2, or a player/hostile acted upon by an
+// hostile within HexDist 2, or a player/hostile acted upon by an
 // attack, backlash or spill in the most recent tick's events.
 func (m *Match) InCombat() bool {
 	p := m.W.Entities[m.PlayerID]
 	if p != nil {
 		for _, id := range m.hostiles() {
-			if e := m.W.Entities[id]; e != nil && engine.Chebyshev(p.Pos, e.Pos) <= 2 {
+			if e := m.W.Entities[id]; e != nil && engine.HexDist(p.Pos, e.Pos) <= 2 {
 				return true
 			}
 		}
@@ -548,18 +534,15 @@ func (m *Match) InCombat() bool {
 	return false
 }
 
-func rotate(d engine.Vec2) engine.Vec2 {
-	return engine.Vec2{X: -d.Y, Y: d.X}
-}
-
-func sign2(v int) int {
-	if v > 0 {
-		return 1
+// rotate advances a hex direction to the next in the fixed HexDirs
+// order (E→NE→NW→W→SW→SE→E).
+func rotate(d engine.Hex) engine.Hex {
+	for i, dir := range engine.HexDirs {
+		if dir == d {
+			return engine.HexDirs[(i+1)%6]
+		}
 	}
-	if v < 0 {
-		return -1
-	}
-	return 0
+	return engine.HexDirs[0]
 }
 
 // Summary returns a compact one-line state for logs and tests.

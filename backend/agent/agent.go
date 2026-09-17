@@ -14,15 +14,14 @@ type DecisionMaker interface {
 // and the Fragment's approximate location, walks there, picks it up
 // and returns to spawn. It exercises the full loop without an LLM.
 type ScriptedAgent struct {
-	Spawn    engine.Vec2
-	Target   engine.Vec2
-	Passable func(engine.Vec2) bool
-	W, H     int
+	Spawn    engine.Hex
+	Target   engine.Hex
+	Passable func(engine.Hex) bool
 }
 
-// NewScripted builds a pilot for scenario/mvp-0.1.
-func NewScripted(spawn, fragment engine.Vec2, passable func(engine.Vec2) bool, w, h int) *ScriptedAgent {
-	return &ScriptedAgent{Spawn: spawn, Target: fragment, Passable: passable, W: w, H: h}
+// NewScripted builds a pilot for a scenario pack.
+func NewScripted(spawn, fragment engine.Hex, passable func(engine.Hex) bool) *ScriptedAgent {
+	return &ScriptedAgent{Spawn: spawn, Target: fragment, Passable: passable}
 }
 
 func (a *ScriptedAgent) Decide(obs *engine.Observation) []engine.Intent {
@@ -53,31 +52,20 @@ func (a *ScriptedAgent) Decide(obs *engine.Observation) []engine.Intent {
 	return nil
 }
 
-// nextStep is a deterministic greedy walk: prefer the axis with the
-// larger remaining delta; sidestep if blocked.
-func (a *ScriptedAgent) nextStep(from, goal engine.Vec2, obs *engine.Observation) (engine.Vec2, bool) {
-	dx, dy := goal.X-from.X, goal.Y-from.Y
-	primary, secondary := engine.Vec2{}, engine.Vec2{}
-	if abs(dx) >= abs(dy) {
-		primary = engine.Vec2{X: sign(dx), Y: 0}
-		secondary = engine.Vec2{X: 0, Y: sign(dy)}
-	} else {
-		primary = engine.Vec2{X: 0, Y: sign(dy)}
-		secondary = engine.Vec2{X: sign(dx), Y: 0}
-	}
-	for _, d := range []engine.Vec2{primary, secondary} {
-		if d.X == 0 && d.Y == 0 {
-			continue
-		}
-		cand := engine.Vec2{X: from.X + d.X, Y: from.Y + d.Y}
+// nextStep is a deterministic greedy walk over the six hex directions:
+// candidates ordered by ascending HexDist to the goal (fixed tie order
+// by HexDirs), first passable and unblocked candidate wins. On open
+// terrain every step closes the distance by exactly 1.
+func (a *ScriptedAgent) nextStep(from, goal engine.Hex, obs *engine.Observation) (engine.Hex, bool) {
+	for _, cand := range engine.HexStepToward(from, goal) {
 		if a.Passable(cand) && !a.blocked(cand, obs) {
 			return cand, true
 		}
 	}
-	return engine.Vec2{}, false
+	return engine.Hex{}, false
 }
 
-func (a *ScriptedAgent) blocked(p engine.Vec2, obs *engine.Observation) bool {
+func (a *ScriptedAgent) blocked(p engine.Hex, obs *engine.Observation) bool {
 	for _, seen := range obs.Entities {
 		if seen.Kind == "fragment" {
 			continue
@@ -87,21 +75,4 @@ func (a *ScriptedAgent) blocked(p engine.Vec2, obs *engine.Observation) bool {
 		}
 	}
 	return false
-}
-
-func sign(v int) int {
-	if v > 0 {
-		return 1
-	}
-	if v < 0 {
-		return -1
-	}
-	return 0
-}
-
-func abs(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
