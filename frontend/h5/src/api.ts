@@ -109,7 +109,8 @@ const ESSENCE_NAMES = ['木', '火', '土', '金', '水'] as const
 
 export const essenceName = (e: number): string => ESSENCE_NAMES[e] ?? '?'
 
-const ESSENCE_COLORS = ['#4a9', '#e55', '#cb6', '#ccc', '#59d'] as const
+// 五行语义色，与 design.ts / App.vue 的 --wood/--fire/--earth/--metal/--water 一致
+const ESSENCE_COLORS = ['#57b26a', '#e05545', '#c9a44a', '#b8c0cc', '#4a8fd4'] as const
 
 export const essenceColor = (e: number): string => ESSENCE_COLORS[e] ?? '#888'
 

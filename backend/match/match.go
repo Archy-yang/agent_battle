@@ -133,7 +133,7 @@ func New(id string, seed uint64, prof *profile.Store) *Match {
 	if cfg := agent.LLMFromEnv(); cfg != nil {
 		p := agent.NewLLM(*cfg)
 		if prof != nil {
-			p.SetProfile(prof.P.Persona, prof.P.Lessons)
+			p.SetProfile(prof.P.PersonaText(), prof.P.EnabledLessons())
 		}
 		m.Pilot, m.PilotName = p, "llm"
 	} else {

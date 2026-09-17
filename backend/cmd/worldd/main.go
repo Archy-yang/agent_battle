@@ -9,6 +9,7 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -188,16 +189,14 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /api/profile", func(w http.ResponseWriter, r *http.Request) {
-		var body profile.Profile
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
 			match.WriteErr(w, http.StatusBadRequest, "bad profile")
 			return
 		}
-		if body.Persona != "" {
-			prof.SetPersona(body.Persona)
-		}
-		if len(body.Lessons) > 0 {
-			prof.AddLessons(body.Lessons)
+		if err := match.ApplyProfilePatch(prof, data); err != nil {
+			match.WriteErr(w, http.StatusBadRequest, err.Error())
+			return
 		}
 		match.WriteJSON(w, http.StatusOK, prof.P)
 	})

@@ -83,6 +83,11 @@ type Entity struct {
 	NextCompID  ComponentID
 
 	Carrying []EntityID // carried entities (e.g. the Fragment)
+
+	// OrderTo is a standing pathing order ("move_to"). It is not an
+	// action: issuing it costs no action slot and no qi; the engine
+	// auto-steps along the path each tick (see sim.go stepOrder).
+	OrderTo *Vec2
 }
 
 // EntityID identifies an entity within one world.

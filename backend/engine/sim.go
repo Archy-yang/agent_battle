@@ -11,7 +11,7 @@ const MaxIntentsPerTick = 2
 // "attack"/"build" are NOT intents (world_rule §14): attacking is
 // activating an Emitter, building is assembling a Blueprint.
 type Intent struct {
-	Type      string      `json:"type"` // move|activate|transfer|inspect|connect|disconnect|assemble
+	Type      string      `json:"type"` // move|move_to|activate|transfer|inspect|connect|disconnect|assemble
 	Target    EntityID    `json:"target,omitempty"`
 	To        *Vec2       `json:"to,omitempty"`
 	Component ComponentID `json:"component,omitempty"`
@@ -39,29 +39,85 @@ func (w *World) emit(evs *[]Event, e *Entity, typ, format string, args ...any) {
 
 // Tick advances the world one step (world_rule §3.6):
 // collect → validate → resolve → physics. Entities act in id order.
+//
+// move_to orders are not actions (订单不是动作)：they bypass the
+// MaxIntentsPerTick budget, and each tick — when the entity spent no
+// explicit move intent — the engine auto-steps one cell along the path.
 func (w *World) Advance(intents map[EntityID][]Intent) []Event {
 	w.Tick++
 	var evs []Event
 	for _, e := range w.SortedEntities() {
 		list := intents[e.ID]
-		if len(list) > MaxIntentsPerTick {
-			list = list[:MaxIntentsPerTick]
-		}
+		used := 0
+		explicitMove := false
 		for _, in := range list {
+			if in.Type == "move_to" { // 订单不占意图预算
+				w.resolve(e, in, &evs)
+				continue
+			}
+			if used >= MaxIntentsPerTick {
+				break
+			}
+			used++
 			w.resolve(e, in, &evs)
+			if in.Type == "move" {
+				explicitMove = true // 显式 move 优先于订单
+			}
 			if e.Integrity <= 0 {
 				break
 			}
 		}
+		if explicitMove || e.Integrity <= 0 {
+			continue // 本 tick 已有显式移动，订单让位
+		}
+		w.stepOrder(e, &evs)
 	}
 	w.environment(&evs)
 	return evs
+}
+
+// stepOrder executes one auto-step of a standing move_to order.
+// The path is recomputed each tick on the static grid, so a reroute is
+// picked up automatically once the terrain picture changes (it never
+// does in v0.1); dynamic blockers are handled below by waiting.
+func (w *World) stepOrder(e *Entity, evs *[]Event) {
+	if e.OrderTo == nil {
+		return
+	}
+	to := *e.OrderTo
+	if e.Pos == to { // 到达：清除订单
+		e.OrderTo = nil
+		w.emit(evs, e, "order_done", "已到达目标格 %v", to)
+		return
+	}
+	path, ok := w.bfsPath(e.Pos, to)
+	if !ok || len(path) == 0 {
+		w.emit(evs, e, "order_blocked", "无法寻路至 %v，订单保留", to)
+		return
+	}
+	step := path[0]
+	if w.EntityAt(step) != nil { // 被动态实体挡路：等待，订单保留
+		w.emit(evs, e, "order_blocked", "前方 %v 被占据，本 tick 等待", step)
+		return
+	}
+	cost := EnergyCost(clampPower(400))
+	if e.Battery < cost { // 储气不足：保留订单，气够了继续走
+		w.emit(evs, e, "order_blocked", "储气不足（需 %d，余 %d），订单保留", cost, e.Battery)
+		return
+	}
+	w.resolveMove(e, Intent{Type: "move", To: &step, Power: 400}, evs)
+	if e.Pos == step && e.Pos == to { // 这一步踏上目标格
+		e.OrderTo = nil
+		w.emit(evs, e, "order_done", "订单完成，已到达 %v", to)
+	}
 }
 
 func (w *World) resolve(e *Entity, in Intent, evs *[]Event) {
 	switch in.Type {
 	case "move":
 		w.resolveMove(e, in, evs)
+	case "move_to":
+		w.resolveMoveTo(e, in, evs)
 	case "activate":
 		w.resolveActivate(e, in, evs)
 	case "transfer":
@@ -121,6 +177,34 @@ func (w *World) resolveMove(e *Entity, in Intent, evs *[]Event) {
 	e.Heat += HeatGain(x)
 	e.Pos = to
 	w.emit(evs, e, "move", "移动至 %v（耗气 %d，生热 %d）", to, cost, HeatGain(x))
+}
+
+// resolveMoveTo registers a standing pathing order ("move_to", M3.0).
+// 订单不是动作：this tick it consumes no action slot and no qi — the
+// engine walks the path one cell per tick afterwards (stepOrder).
+// Reachability is judged on the static passable grid via BFS; dynamic
+// occupants are ignored there and handled at stepping time.
+func (w *World) resolveMoveTo(e *Entity, in Intent, evs *[]Event) {
+	if in.To == nil {
+		w.emit(evs, e, "intent_rejected", "move_to 缺少目标格")
+		return
+	}
+	if e.FindComponent(CMotor) == nil {
+		w.emit(evs, e, "intent_rejected", "没有灵机，无法移动")
+		return
+	}
+	to := *in.To
+	if !w.InBounds(to) || !w.At(to).Passable {
+		w.emit(evs, e, "intent_rejected", "目标格不可通行 %v", to)
+		return
+	}
+	path, ok := w.bfsPath(e.Pos, to)
+	if !ok {
+		w.emit(evs, e, "intent_rejected", "目标格不可达 %v", to)
+		return
+	}
+	e.OrderTo = &to
+	w.emit(evs, e, "order_set", "移动订单：前往 %v（%d 步）", to, len(path))
 }
 
 // resolveActivate: sensor → toggle perception on; emitter + Target →

@@ -32,6 +32,12 @@ type StateView struct {
 	QA       []QA               `json:"qa"`
 	Review   *Review            `json:"review"`
 	Costs    map[string]float64 `json:"costs"`
+	// Materials is the player 物料库 (world_genesis §3.2): essence
+	// 中文名 → units. Empty (not nil) when nothing is stored.
+	Materials map[string]int `json:"materials"`
+	// Order is the player entity's current move order (the To of the
+	// most recent move intent), or null.
+	Order *engine.Vec2 `json:"order"`
 }
 
 // Registry is an in-memory match registry (v0.1 single-process; the
@@ -92,6 +98,18 @@ func (m *Match) View() *StateView {
 		"whisper": CostWhisper, "guide": CostGuide, "deeplink": CostDeepLink,
 		"information": CostInform, "pause": CostPause, "predict_reward": PredictReward,
 	}
+	materials := map[string]int{}
+	for e, n := range m.W.Materials["player"] {
+		materials[e.String()] = n
+	}
+	var order *engine.Vec2
+	for _, in := range m.lastIntents {
+		if in.Type == "move" && in.To != nil {
+			o := *in.To
+			order = &o
+			break
+		}
+	}
 	return &StateView{
 		ID: m.ID, Seed: m.Seed, Pack: m.PackName, Pilot: m.PilotName,
 		Status: m.Status, Turn: m.W.Tick, TurnLimit: m.TurnLimit,
@@ -106,6 +124,8 @@ func (m *Match) View() *StateView {
 		QA:          qa,
 		Review:      m.ReviewRes,
 		Costs:       costs,
+		Materials:   materials,
+		Order:       order,
 	}
 }
 
@@ -127,4 +147,59 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 // WriteErr writes a JSON error response.
 func WriteErr(w http.ResponseWriter, status int, msg string) {
 	WriteJSON(w, status, map[string]string{"error": msg})
+}
+
+// slidersPatch updates the persona dials; nil field = unchanged.
+type slidersPatch struct {
+	Adventure   *float64 `json:"adventure"`
+	Cooperation *float64 `json:"cooperation"`
+	Exploration *float64 `json:"exploration"`
+}
+
+// lessonTogglePatch flips one experience card on/off.
+type lessonTogglePatch struct {
+	Index   int  `json:"index"`
+	Enabled bool `json:"enabled"`
+}
+
+// profilePatch is one POST /api/profile body. Each field is handled
+// independently; an absent field is untouched.
+type profilePatch struct {
+	Sliders      *slidersPatch      `json:"sliders"`
+	LessonToggle *lessonTogglePatch `json:"lesson_toggle"`
+	Persona      *string            `json:"persona"`
+}
+
+// ApplyProfilePatch decodes and applies a profile update to the store.
+// Any malformed or out-of-range field returns an error and nothing is
+// applied (400 at the handler).
+func ApplyProfilePatch(prof *profile.Store, body []byte) error {
+	var patch profilePatch
+	if err := json.Unmarshal(body, &patch); err != nil {
+		return fmt.Errorf("bad profile patch: %v", err)
+	}
+	if patch.Sliders != nil {
+		adv, coop, expl := prof.P.Sliders.Adventure, prof.P.Sliders.Cooperation, prof.P.Sliders.Exploration
+		if patch.Sliders.Adventure != nil {
+			adv = *patch.Sliders.Adventure
+		}
+		if patch.Sliders.Cooperation != nil {
+			coop = *patch.Sliders.Cooperation
+		}
+		if patch.Sliders.Exploration != nil {
+			expl = *patch.Sliders.Exploration
+		}
+		if err := prof.SetSliders(adv, coop, expl); err != nil {
+			return err
+		}
+	}
+	if patch.LessonToggle != nil {
+		if err := prof.SetLessonEnabled(patch.LessonToggle.Index, patch.LessonToggle.Enabled); err != nil {
+			return err
+		}
+	}
+	if patch.Persona != nil {
+		prof.SetPersona(*patch.Persona)
+	}
+	return nil
 }
