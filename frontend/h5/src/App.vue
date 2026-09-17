@@ -28,7 +28,7 @@ const visibleSet = computed(() => {
 })
 
 const entityAt = (x: number, y: number) =>
-  view.value?.observation?.entities.find(e => e.pos.x === x && e.pos.y === y)
+  view.value?.observation?.entities?.find(e => e.pos.x === x && e.pos.y === y)
 
 const selfAt = (x: number, y: number) =>
   view.value?.observation?.self.pos.x === x && view.value!.observation!.self.pos.y === y
@@ -59,14 +59,15 @@ const cognition = computed(() => {
   const v = view.value
   if (!v?.observation) return []
   const s = v.observation.self
+  const seen = v.observation.entities ?? []
   const rows: [string, string][] = [
-    ['Goal', s.carrying.length ? '携带 Fragment 返回出生点' : '前往危险区取得 Fragment'],
+    ['Goal', (s.carrying ?? []).length ? '携带 Fragment 返回出生点' : '前往危险区取得 Fragment'],
     ['Plan', '直线推进，功率 0.4（阴偏稳）'],
-    ['Known', v.observation.entities.length
-      ? v.observation.entities.map(e => `${e.kind === 'fragment' ? '结晶' : e.owner === 'unknown' ? '未知体' : e.kind}·${essenceName(e.essence)} @${e.pos.x},${e.pos.y}`).join('；')
+    ['Known', seen.length
+      ? seen.map(e => `${e.kind === 'fragment' ? '结晶' : e.owner === 'unknown' ? '未知体' : e.kind}·${essenceName(e.essence)} @${e.pos.x},${e.pos.y}`).join('；')
       : '感知范围内无其他实体'],
     ['Risk', `热 ${s.heat}/25 · 气 ${s.battery}/${s.max_battery}`],
-    ['Suspicions', v.observation.entities.some(e => e.owner === 'unknown') ? 'Unknown Agent 在附近（火迹明显，虚张声势？）' : '无'],
+    ['Suspicions', seen.some(e => e.owner === 'unknown') ? 'Unknown Agent 在附近（火迹明显，虚张声势？）' : '无'],
   ]
   return rows
 })

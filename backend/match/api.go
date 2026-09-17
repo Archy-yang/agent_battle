@@ -15,6 +15,7 @@ type StateView struct {
 	ID       string             `json:"id"`
 	Seed     uint64             `json:"seed"`
 	Pack     string             `json:"pack"`
+	Pilot    string             `json:"pilot"`
 	Status   string             `json:"status"`
 	Turn     int64              `json:"turn"`
 	TurnLimit int64             `json:"turn_limit"`
@@ -68,7 +69,7 @@ func (m *Match) View() *StateView {
 		obs = m.Observe()
 	}
 	return &StateView{
-		ID: m.ID, Seed: m.Seed, Pack: m.PackName,
+		ID: m.ID, Seed: m.Seed, Pack: m.PackName, Pilot: m.PilotName,
 		Status: m.Status, Turn: m.W.Tick, TurnLimit: m.TurnLimit,
 		Observation: obs,
 		Explored:    explored,

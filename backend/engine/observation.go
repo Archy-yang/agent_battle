@@ -14,19 +14,30 @@ type Observation struct {
 	Events   []Event      `json:"events"`
 }
 
+// ComponentView is one of the agent's own components as seen in the
+// Capability Manifest sense (world_rule §22): what it is, its essence,
+// whether it is active.
+type ComponentView struct {
+	ID      ComponentID `json:"id"`
+	Type    string      `json:"type"`
+	Essence string      `json:"essence"`
+	Active  bool        `json:"active"`
+}
+
 // SelfView is the agent's own state — the one place full detail is legal.
 type SelfView struct {
-	Pos          Vec2       `json:"pos"`
-	Essence      Essence    `json:"essence"`
-	Integrity    int        `json:"integrity"`
-	MaxIntegrity int        `json:"max_integrity"`
-	Heat         int        `json:"heat"`
-	Battery      int        `json:"battery"`
-	MaxBattery   int        `json:"max_battery"`
-	Carrying     []EntityID `json:"carrying"`
-	HasMotor     bool       `json:"has_motor"`
-	SensorActive bool       `json:"sensor_active"`
-	HasEmitter   bool       `json:"has_emitter"`
+	Pos          Vec2            `json:"pos"`
+	Essence      Essence         `json:"essence"`
+	Integrity    int             `json:"integrity"`
+	MaxIntegrity int             `json:"max_integrity"`
+	Heat         int             `json:"heat"`
+	Battery      int             `json:"battery"`
+	MaxBattery   int             `json:"max_battery"`
+	Carrying     []EntityID      `json:"carrying"`
+	Components   []ComponentView `json:"components"`
+	HasMotor     bool            `json:"has_motor"`
+	SensorActive bool            `json:"sensor_active"`
+	HasEmitter   bool            `json:"has_emitter"`
 }
 
 // SeenEntity is another entity as perceived — with its 五行 traces
@@ -54,13 +65,24 @@ func (w *World) Observe(id EntityID, lastEvents []Event) *Observation {
 	if s := e.FindComponent(CSensor); s != nil && s.Active {
 		radius = 4 // 感识开启（world_laws 律六：读迹有代价）
 	}
+	carrying := e.Carrying
+	if carrying == nil {
+		carrying = []EntityID{} // JSON 空数组，而不是 null
+	}
+	comps := make([]ComponentView, 0, len(e.Components))
+	for _, c := range e.Components {
+		comps = append(comps, ComponentView{
+			ID: c.ID, Type: c.Type.String(), Essence: c.Essence.String(), Active: c.Active,
+		})
+	}
 	obs := &Observation{
 		Tick: w.Tick,
 		Self: SelfView{
 			Pos: e.Pos, Essence: e.Essence,
 			Integrity: e.Integrity, MaxIntegrity: e.MaxIntegrity,
 			Heat: e.Heat, Battery: e.Battery, MaxBattery: e.MaxBattery,
-			Carrying: e.Carrying,
+			Carrying: carrying,
+			Components: comps,
 			HasMotor: e.FindComponent(CMotor) != nil,
 			HasEmitter: e.FindComponent(CEmitter) != nil,
 			SensorActive: func() bool {
@@ -70,7 +92,9 @@ func (w *World) Observe(id EntityID, lastEvents []Event) *Observation {
 				return false
 			}(),
 		},
-		Events: lastEvents,
+		Visible:  []Vec2{},
+		Entities: []SeenEntity{},
+		Events:   lastEvents,
 	}
 	for dx := -radius; dx <= radius; dx++ {
 		for dy := -radius; dy <= radius; dy++ {

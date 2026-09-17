@@ -8,19 +8,52 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"agentbattle/backend/engine"
 	"agentbattle/backend/match"
 	"agentbattle/backend/web"
 )
 
-const version = "v0.1.0"
+const version = "v0.2.0"
+
+// loadEnvFile reads KEY=VALUE lines and sets any not already present
+// in the environment (server-side LLM config; the key never reaches
+// clients).
+func loadEnvFile(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // 缺省配置不存在时静默跳过
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if _, exists := os.LookupEnv(k); !exists {
+			_ = os.Setenv(k, v)
+		}
+	}
+	log.Printf("loaded config from %s", path)
+}
 
 func main() {
+	config := flag.String("config", "llm.env", "env file (KEY=VALUE) loaded at startup")
+	flag.Parse()
+	if *config != "" {
+		loadEnvFile(*config)
+	}
+
 	reg := match.NewRegistry()
 
 	mux := http.NewServeMux()
@@ -35,7 +68,7 @@ func main() {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body) // empty body allowed
 		m := reg.Create(body.Seed)
-		log.Printf("created %s (seed=%d)", m.ID, m.Seed)
+		log.Printf("created %s (seed=%d, pilot=%s)", m.ID, m.Seed, m.PilotName)
 		match.WriteJSON(w, http.StatusCreated, m.View())
 	})
 

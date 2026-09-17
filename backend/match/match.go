@@ -41,7 +41,8 @@ type Match struct {
 	UnknownID  engine.EntityID
 	FragmentID engine.EntityID
 
-	Pilot agent.DecisionMaker // scripted v0.1; LLM-backed in M1
+	Pilot     agent.DecisionMaker
+	PilotName string // "llm" | "scripted"
 
 	Explored map[engine.Vec2]bool
 	Events   []engine.Event
@@ -52,19 +53,27 @@ type Match struct {
 	lastEvs    []engine.Event
 }
 
-// New creates a match of scenario/mvp-0.1 with a scripted pilot.
+// New creates a match of scenario/mvp-0.1. The pilot is the LLM agent
+// when AGENTBATTLE_LLM_* is configured; the scripted agent otherwise.
 func New(id string, seed uint64) *Match {
 	pack := scenario.MVP(seed)
 	w, player, unknown, frag := pack.Genesis()
-	return &Match{
+	m := &Match{
 		ID: id, Seed: seed, PackName: pack.Name,
 		W: w, TurnLimit: pack.TurnLimit, Spawn: pack.PlayerSpawn,
 		PlayerID: player, UnknownID: unknown, FragmentID: frag,
-		Pilot: agent.NewScripted(pack.PlayerSpawn, pack.FragmentPos, pack.Passable, pack.W, pack.H),
-		Explored: map[engine.Vec2]bool{},
-		Status:   StatusRunning,
+		Explored:   map[engine.Vec2]bool{},
+		Status:     StatusRunning,
 		unknownDir: engine.Vec2{X: -1, Y: 0}, // 沿北环向西游荡
 	}
+	if cfg := agent.LLMFromEnv(); cfg != nil {
+		m.Pilot = agent.NewLLM(*cfg)
+		m.PilotName = "llm"
+	} else {
+		m.Pilot = agent.NewScripted(pack.PlayerSpawn, pack.FragmentPos, pack.Passable, pack.W, pack.H)
+		m.PilotName = "scripted"
+	}
+	return m
 }
 
 // Tick advances one turn with explicit player intents.
@@ -86,10 +95,18 @@ func (m *Match) Tick(intents []engine.Intent) {
 	m.checkEnd()
 }
 
-// TickAuto advances one turn using the pilot's decision.
+// TickAuto advances one turn using the pilot's decision. Player
+// guidance enters the LLM pilot's context (偏好，不是动作).
 func (m *Match) TickAuto() {
 	if m.Status != StatusRunning {
 		return
+	}
+	if la, ok := m.Pilot.(*agent.LLMAgent); ok {
+		notes := make([]agent.GuidanceNote, 0, len(m.Guidance))
+		for _, g := range m.Guidance {
+			notes = append(notes, agent.GuidanceNote{Turn: g.Turn, Kind: g.Kind, Text: g.Text})
+		}
+		la.SetGuidance(notes)
 	}
 	obs := m.W.Observe(m.PlayerID, m.lastEvs)
 	m.Tick(m.Pilot.Decide(obs))

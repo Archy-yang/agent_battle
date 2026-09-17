@@ -35,3 +35,17 @@ cd backend && go run ./cmd/worldd     # 默认 :8080，可用 PORT 覆盖
 cd frontend/h5 && npm run build       # 前端改动后重建（产物直出 backend/web/dist）
 go test ./...                         # 法则单测 + 整局集成 + 决定性重放
 ```
+
+## LLM 配置（M1）
+
+worldd 启动时加载 `-config` 指向的 env 文件（默认 `llm.env`，已 gitignore）：
+
+```bash
+# backend/llm.env
+AGENTBATTLE_LLM_BASE_URL=https://<openai兼容端点>/v2
+AGENTBATTLE_LLM_API_KEY=<key>      # 只存服务端，永不进客户端
+AGENTBATTLE_LLM_MODEL=<model>
+```
+
+配置存在时新对局自动使用 LLM pilot（Observation → 模型 → Intent[] → Engine 裁决）；
+未配置时回退脚本 pilot。Guidance 会进入模型决策上下文（偏好，不是动作）。
