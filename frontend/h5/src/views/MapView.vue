@@ -3,7 +3,8 @@
 // pointy-top / axial 坐标（{q,r} 契约），相机 {cx, cy, zoom} 平移缩放，
 // 迷雾三态（未探索 / 已探索离开感知 / 感知内），点选已探索格下达 move_to。
 // 六边形数学全部来自 ../hex 纯函数模块（无 Vue 依赖，Flutter 移植参考）；
-// 数据源只有 ../state（Reality ≠ Agent Knowledge）：未探索格不请求、
+// canvas 世界绘制统一走 ../render 的 drawWorld（v0.8 共享渲染层，
+// 与 ReplayView 同源）；数据源只有 ../state（Reality ≠ Agent Knowledge）：未探索格不请求、
 // 不猜测地形；服务端当前只下发坐标，地形五行色在 essence 记忆下发后自动生效。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
@@ -17,19 +18,12 @@ import {
   requestBattleNav, FOG,
   derivedCognition, costOf, choiceLabel,
 } from '../state'
-import { essenceColor, essenceColorByName, type Hex } from '../api'
-import {
-  fogOf, hexCorners, hexCenter, hexKey, pickHex, visibleHexes, worldToScreen, zoomAt,
-  type Camera,
-} from '../hex'
+import { type Hex } from '../api'
+import { hexCenter, hexKey, pickHex, zoomAt, type Camera } from '../hex'
+import { drawWorld, DEFAULT_HEX_SIZE } from '../render'
 
 // ---- 常量 ----
-const HEX_SIZE = 28 // 世界像素下的外接圆半径（zoom=1）
-const ACCENT = '#d4a94e' // 与 --accent 一致
-const FIRE = '#e05545' // 与 --fire 一致
-const WATER = '#4a8fd4' // 与 --water 一致
-const SELF_RING = '#9fd0ff'
-const HEX_BORDER = 'rgba(15, 18, 22, 0.55)'
+const HEX_SIZE = DEFAULT_HEX_SIZE // 世界像素下的外接圆半径（zoom=1）；绘制层见 ../render
 
 // ---- 相机 / 画布 ----
 const shellRef = ref<HTMLDivElement | null>(null)
@@ -44,33 +38,6 @@ const invalidate = () => { dirty = true }
 const selfHex = computed<Hex | null>(() => {
   const o = view.value?.observation
   return o ? { q: o.self.pos.q, r: o.self.pos.r } : null
-})
-
-interface MarkerVm { q: number; r: number; glyph: string; color?: string; diamond?: boolean }
-// 实体层：◆ 晶簇 / 💎 结晶 / ❓ 敌对实体（observation.entities + view.enemies，
-// 五行色描边；晶簇按其本源上五行色菱形）
-const markers = computed<MarkerVm[]>(() => {
-  const out: MarkerVm[] = []
-  const seen = new Set<string>()
-  for (const e of view.value?.observation?.entities ?? []) {
-    const k = hexKey(e.pos)
-    if (seen.has(k)) continue
-    seen.add(k)
-    if (e.kind === 'resource') {
-      out.push({ q: e.pos.q, r: e.pos.r, glyph: '', color: essenceColor(e.essence), diamond: true })
-    } else {
-      out.push(e.kind === 'fragment'
-        ? { q: e.pos.q, r: e.pos.r, glyph: '💎' }
-        : { q: e.pos.q, r: e.pos.r, glyph: '❓', color: essenceColor(e.essence) })
-    }
-  }
-  for (const en of view.value?.enemies ?? []) {
-    const k = hexKey(en.pos)
-    if (seen.has(k)) continue
-    seen.add(k)
-    out.push({ q: en.pos.q, r: en.pos.r, glyph: '❓', color: essenceColorByName(en.essence) })
-  }
-  return out
 })
 
 // 站上晶簇格时可采集：该晶簇实体 id（无则 null）
@@ -94,142 +61,29 @@ function centerOnSelf() {
 watch(selfHex, () => { if (follow.value) centerOnSelf() })
 watch(() => view.value?.id, () => { follow.value = true; centerOnSelf() })
 
-// ---- 渲染 ----
-function hexPath(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
-  ctx.beginPath()
-  const pts = hexCorners(x, y, r)
-  ctx.moveTo(pts[0].x, pts[0].y)
-  for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y)
-  ctx.closePath()
-}
-
+// ---- 渲染：单帧绘制交给共享渲染层 ../render（v0.8），本组件只负责
+// 尺寸 / dpr 适配、脏检查调度与相机交互 ----
 function draw() {
   const canvas = canvasRef.value
   const ctx = canvas?.getContext('2d')
   if (!canvas || !ctx) return
-  const { width, height } = vp.value
-  const c = cam.value
-  const s = HEX_SIZE * c.zoom
-  const r = s * 0.96
-
-  // 未探索 = 深底（不绘制的部分自然露出）
-  ctx.fillStyle = FOG.unexplored
-  ctx.fillRect(0, 0, width, height)
-  if (s < 3) return
-
-  const explored = exploredSet.value
-  const visible = visibleSet.value
-  const cells = exploredCellMap.value
-  const order = orderTarget.value
-  const spawn = spawnCell.value
-
-  // 地形层：只渲染服务端已知格（explored / observation.visible）
-  for (const h of visibleHexes(c, vp.value, HEX_SIZE)) {
-    const fog = fogOf(h, explored, visible)
-    if (fog === 'unexplored') continue
-    const w = hexCenter(h, HEX_SIZE)
-    const p = worldToScreen(w.x, w.y, c, vp.value)
-    hexPath(ctx, p.x, p.y, r)
-    if (fog === 'visible') {
-      // 感知内全亮：服务端下发五行记忆（ExploredCell.essence）时按五行上色，
-      // 否则中性亮灰 —— 客户端不猜测地形
-      const cell = cells.get(hexKey(h))
-      ctx.fillStyle = cell?.essence != null ? essenceColor(cell.essence) : FOG.visible
-      ctx.fill()
-      ctx.strokeStyle = HEX_BORDER
-      ctx.lineWidth = 1
-      ctx.stroke()
-      if (cell?.danger) {
-        // Danger 叠加：火色描边 + 斜线纹理
-        ctx.strokeStyle = FIRE
-        ctx.lineWidth = 2
-        hexPath(ctx, p.x, p.y, r - 1.5)
-        ctx.stroke()
-        ctx.lineWidth = 1.2
-        const half = r * 0.45
-        for (let i = -1; i <= 1; i++) {
-          ctx.beginPath()
-          ctx.moveTo(p.x - half, p.y + i * half * 0.7)
-          ctx.lineTo(p.x + half, p.y + i * half * 0.7 - half * 0.6)
-          ctx.stroke()
-        }
-      }
-    } else {
-      // 已探索离开感知：45% 记忆色
-      ctx.globalAlpha = 0.45
-      ctx.fillStyle = FOG.remembered
-      ctx.fill()
-      ctx.globalAlpha = 1
-      ctx.strokeStyle = HEX_BORDER
-      ctx.lineWidth = 1
-      ctx.stroke()
-    }
-  }
-
-  // 移动订单目标：强调金虚线框
-  if (order) {
-    const w = hexCenter(order, HEX_SIZE)
-    const p = worldToScreen(w.x, w.y, c, vp.value)
-    hexPath(ctx, p.x, p.y, r - 2)
-    ctx.setLineDash([5, 3])
-    ctx.strokeStyle = ACCENT
-    ctx.lineWidth = 2
-    ctx.stroke()
-    ctx.setLineDash([])
-  }
-
-  // 实体层
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  const glyph = Math.max(9, Math.min(40, s * 1.05))
-  ctx.font = `${glyph}px system-ui, sans-serif`
-  const at = (h: Hex) => {
-    const w = hexCenter(h, HEX_SIZE)
-    return worldToScreen(w.x, w.y, c, vp.value)
-  }
-  if (spawn) {
-    const p = at(spawn)
-    ctx.font = `${glyph * 0.85}px system-ui, sans-serif`
-    ctx.fillStyle = WATER
-    ctx.fillText('⌂', p.x, p.y + glyph * 0.04)
-    ctx.font = `${glyph}px system-ui, sans-serif`
-  }
-  for (const m of markers.value) {
-    const p = at({ q: m.q, r: m.r })
-    if (m.diamond) { // 晶簇：五行色菱形（站上去采集）
-      const d = r * 0.52
-      ctx.beginPath()
-      ctx.moveTo(p.x, p.y - d)
-      ctx.lineTo(p.x + d, p.y)
-      ctx.lineTo(p.x, p.y + d)
-      ctx.lineTo(p.x - d, p.y)
-      ctx.closePath()
-      ctx.fillStyle = m.color ?? ACCENT
-      ctx.fill()
-      ctx.strokeStyle = HEX_BORDER
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-      continue
-    }
-    if (m.color) { // 敌对实体：五行色描边
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, r * 0.62, 0, Math.PI * 2)
-      ctx.strokeStyle = m.color
-      ctx.lineWidth = 2
-      ctx.stroke()
-    }
-    ctx.fillText(m.glyph, p.x, p.y + glyph * 0.06)
-  }
-  if (selfHex.value) {
-    const p = at(selfHex.value)
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, r * 0.66, 0, Math.PI * 2)
-    ctx.strokeStyle = SELF_RING
-    ctx.lineWidth = 2
-    ctx.stroke()
-    ctx.font = `${glyph * 1.1}px system-ui, sans-serif`
-    ctx.fillText('🤖', p.x, p.y + glyph * 0.06)
-  }
+  const o = view.value?.observation ?? null
+  drawWorld({
+    ctx,
+    view: {
+      self: o?.self ?? null,
+      visible: o?.visible ?? [],
+      entities: o?.entities ?? [],
+      enemies: view.value?.enemies ?? [],
+    },
+    explored: exploredSet.value,
+    cells: exploredCellMap.value,
+    camera: cam.value,
+    viewport: vp.value,
+    size: HEX_SIZE,
+    markers: { spawn: spawnCell.value, order: orderTarget.value },
+    interactions: true,
+  })
 }
 
 // 脏检查 + rAF：只在相机 / 数据 / 尺寸变化时重绘

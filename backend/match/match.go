@@ -7,6 +7,7 @@ package match
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"agentbattle/backend/agent"
 	"agentbattle/backend/engine"
@@ -95,6 +96,8 @@ type Match struct {
 	UnknownID  engine.EntityID
 	FragmentID engine.EntityID
 	// MonsterIDs lists the hand-placed monsters (v0.2); empty for mvp.
+	// （v0.8：懒激活怪物不进本列表——维持 v0.4~v0.7 的静默置景；其
+	// 行为模板仍按激活 hash 登记进 minds，见 lazySpawns。）
 	MonsterIDs []engine.EntityID
 
 	Pilot     agent.DecisionMaker
@@ -102,8 +105,14 @@ type Match struct {
 
 	Status string
 
-	Explored    map[engine.Hex]bool
-	Events      []engine.Event
+	Explored map[engine.Hex]bool
+	Events   []engine.Event
+	// Commentary is the 战斗解说 mirror of the display stream: the
+	// combat battle_notes the LLM pilot produced, appended to Events as
+	// Type "commentary" AFTER the tick's frame was recorded. Agent 的
+	// 话，不是世界事实——不进引擎事件流（lastEvs）、不进录像帧的
+	// ResultingEvents、不影响任何引擎判定.
+	Commentary  []engine.Event
 	Guidance    []Guidance
 	Predictions []*Prediction
 	pending     *Prediction
@@ -121,6 +130,12 @@ type Match struct {
 	// PendingSpawns 是纯函数，不持任何跨对局状态.
 	activatedChunks map[[2]int]bool
 
+	// —— v0.8 WPC 行为模板 (world_genesis §5.1 Tier 1) ——
+	// minds 持每只怪物的行为状态（模板/锚点/哨卫警戒态），键为实体 id。
+	// 全部字段随 tick 演化、无随机特权：与 activatedChunks 同属确定性
+	// 重放状态——同 seed 同 Intent 流 → 同 mind 演化 (design §2.5)。
+	minds map[engine.EntityID]*monsterMind
+
 	// —— v0.4 LLM 介入层 (design §3) ——
 	// cls 的全部去抖状态是确定性字段；TriggerLog 记录每次触发原因，
 	// lastTrigger 是最近一次触发（View.last_trigger），llmCalls 是本局
@@ -130,9 +145,9 @@ type Match struct {
 	lastTrigger string
 	llmCalls    int
 
-	profile     *profile.Store
-	unknownDir  engine.Hex
-	lastEvs     []engine.Event
+	profile    *profile.Store
+	unknownDir engine.Hex
+	lastEvs    []engine.Event
 	// lastGatherEvs 是上一 tick 采集结算生成的分类器镜像事件（gather →
 	// pickup，见 resolveGathers）；只进 classifyTick 的喂入，不进事件流.
 	lastGatherEvs []engine.Event
@@ -178,8 +193,18 @@ func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) 
 		cls:        NewEventClassifier(),
 		unknownDir: engine.HexDirs[0], // E：六方向固定顺序游荡
 
-		activatedChunks: map[[2]int]bool{}, // v0.4 懒激活：调用方持状态
+		activatedChunks: map[[2]int]bool{},                           // v0.4 懒激活：调用方持状态
 		rec:             &Recording{Seed: seed, Scenario: pack.Name}, // v0.7 录像：每 tick 一帧
+	}
+	// v0.8 WPC：手摆怪物按 pack 声明登记行为模板（空/未知值回落
+	// wanderer 基线，旧包 V02/MVP 行为兼容），锚点即出生位。
+	m.minds = make(map[engine.EntityID]*monsterMind, len(monsters))
+	for i, id := range monsters {
+		t := scenario.TemperWanderer
+		if i < len(pack.MonsterSpawns) {
+			t = normalizeTemper(pack.MonsterSpawns[i].Temper)
+		}
+		m.minds[id] = &monsterMind{temper: t, anchor: pack.MonsterSpawns[i].Pos}
 	}
 	if cfg := agent.LLMFromEnv(); cfg != nil {
 		p := agent.NewLLM(*cfg)
@@ -258,6 +283,15 @@ func (m *Match) lazySpawns() []engine.Event {
 			e := m.W.Spawn(ps.Entity)
 			ev := ps.Event
 			ev.Entity = e.ID // 实体 id 在 Spawn 后才存在
+			if e.Kind == "monster" {
+				// v0.8 WPC：懒激活怪物登记行为模板（激活 hash 分配、
+				// 锚点即现身格）。本版只登记不驱行为（与 v0.4~v0.7
+				// 一致，懒激活怪保持静默置景）——模板随实体就位，为
+				// 后续战斗化铺路（届时把 e.ID 并入 MonsterIDs 即战斗化，
+				// 见 balance 实测：战斗化后 recording_test 的 seed 7
+				// 会在 t=10 早夭，须连同重采样一起做）。
+				m.minds[e.ID] = &monsterMind{temper: normalizeTemper(ps.Temper), anchor: e.Pos}
+			}
 			evs = append(evs, ev)
 		}
 	}
@@ -343,7 +377,7 @@ func (m *Match) TickAuto() {
 		return
 	}
 	m.autoTick = true // 本 tick 由 pilot 自动决策（录像 Auto 标记）
-	if m.pauseNext { // 紧急暂停：Agent 本回合待命（strage_1 影响表）
+	if m.pauseNext {  // 紧急暂停：Agent 本回合待命（strage_1 影响表）
 		m.pauseNext = false
 		m.Tick(nil)
 		return
@@ -358,13 +392,7 @@ func (m *Match) TickAuto() {
 	m.llmCalls++ // 计数口径：本局 pilot 决策调用数（LLM pilot 下即 LLM 调用数）
 
 	if la, ok := m.Pilot.(*agent.LLMAgent); ok {
-		la.SetGuidance(m.guidanceNotes())
-		la.SetTrigger(trigger)
-		obs := m.W.Observe(m.PlayerID, m.lastEvs)
-		m.Tick(la.DecideTriggered(obs))
-		if c := la.LastCognition(); c != nil {
-			m.Cognition = c
-		}
+		m.pilotTick(la, trigger)
 		return
 	}
 	obs := m.W.Observe(m.PlayerID, m.lastEvs)
@@ -373,6 +401,42 @@ func (m *Match) TickAuto() {
 		return
 	}
 	m.Tick(m.Pilot.Decide(obs))
+}
+
+// pilotTick is TickAuto's LLM branch: wake the pilot for this trigger,
+// advance one tick on its intents, then collect its cognition and — for
+// combat triggers — its battle_note as one commentary event.
+func (m *Match) pilotTick(la *agent.LLMAgent, trigger string) {
+	la.SetGuidance(m.guidanceNotes())
+	la.SetTrigger(trigger)
+	obs := m.W.Observe(m.PlayerID, m.lastEvs)
+	m.Tick(la.DecideTriggered(obs))
+	if c := la.LastCognition(); c != nil {
+		m.Cognition = c
+	}
+	if trigger == TriggerCombat { // 战斗解说：Agent 的话流入战斗文字流
+		m.recordCommentary(la.LastBattleNote())
+	}
+}
+
+// battleNoteMax caps one commentary text (协议要求 ≤50 字，超长兜底截断).
+const battleNoteMax = 50
+
+// recordCommentary appends one battle_note to the display stream as a
+// Type "commentary" event. 调用时机在 Tick（帧已记录）之后：引擎事件流
+// lastEvs 与录像帧的 ResultingEvents 均不受影响——commentary 是 Agent 的
+// 话，不是世界事实，重放（不重跑 LLM）也无须再生它. 形散后不再解说.
+func (m *Match) recordCommentary(note string) {
+	note = strings.TrimSpace(note)
+	if note == "" || m.W.Entities[m.PlayerID] == nil {
+		return
+	}
+	if r := []rune(note); len(r) > battleNoteMax {
+		note = string(r[:battleNoteMax])
+	}
+	ev := engine.Event{Tick: m.W.Tick, Type: "commentary", Entity: m.PlayerID, Text: note}
+	m.Events = append(m.Events, ev)
+	m.Commentary = append(m.Commentary, ev)
 }
 
 // classifyTick feeds the classifier with the facts of the tick just
@@ -675,16 +739,60 @@ func (m *Match) monstersAct() map[engine.EntityID][]engine.Intent {
 	return acts
 }
 
-// monsterAct is the v0.2 monster behaviour — a deterministic stand-in
-// for its Logic DSL (world_genesis §5.2 铁律二：敌人走 Agent Protocol).
-// At most one intent per tick:
+// —— v0.8 WPC 行为模板 (world_genesis §5.1 Tier 1：行为模板 + 参数变体)
+// ——
 //
-//	hex 相邻        → 攻击：activate 离火作用于玩家（power 500）
-//	距离 ≤ 4        → 追击：朝玩家方向移动一格（不可穿障碍，可入危险区）
-//	距离 > 4        → 游荡：Rng 驱动，原地停留概率 1/3
+// 三模板共用同一条物理链（§5.2 铁律：Intent → Engine，无特权 AI、无特
+// 例物理）；所有随机性走 world Rng 同链，同 seed 同激活序列 → 同行为.
+const (
+	wandererAlertRadius  = 3 // 游荡者：玩家 ≤3 追击（基线）
+	sentinelAlertRadius  = 3 // 哨卫：警戒圈（入圈即警戒）
+	sentinelPatrolRadius = 2 // 哨卫：锚点 ±2 内驻守/巡逻（几乎不游荡）
+	sentinelLostGrace    = 3 // 哨卫：玩家离开追击圈的宽限 tick，过后回锚
+	predatorAlertRadius  = 5 // 掠食者：更远的警戒圈
+)
+
+// temperAttackPower is each template's melee emitter power（相邻攻击的
+// 参数变体）：游荡者 400 / 哨卫 550 / 掠食者 450。
+var temperAttackPower = map[string]int{
+	scenario.TemperWanderer: 400,
+	scenario.TemperSentinel: 550,
+	scenario.TemperPredator: 450,
+}
+
+// monsterMind is one monster's behaviour state (v0.8 WPC)：模板、哨卫
+// 锚点与警戒态。全部随 tick 确定性演化，进重放语义（见 Match.minds）。
+type monsterMind struct {
+	temper    string     // wanderer | sentinel | predator
+	anchor    engine.Hex // 哨卫锚点（出生/现身格）
+	hot       bool       // 哨卫：警戒中（追击）
+	lostTicks int        // 哨卫：玩家离开警戒圈以来的连续 tick 数
+}
+
+// normalizeTemper falls unknown/empty declarations back to the wanderer
+// baseline (旧包 MonsterSpec 未声明模板时行为不变).
+func normalizeTemper(t string) string {
+	switch t {
+	case scenario.TemperSentinel, scenario.TemperPredator:
+		return t
+	default:
+		return scenario.TemperWanderer
+	}
+}
+
+// monsterAct is the v0.2 monster behaviour promoted to the v0.8 WPC
+// 三模板分派 — a deterministic stand-in for its Logic DSL (world_genesis
+// §5.2 铁律二：敌人走 Agent Protocol). At most one intent per tick:
 //
-// (the 4-cell band closes the spec's 3..4 gap: chase up to and
-// including distance 4, wander strictly beyond).
+//	hex 相邻        → 攻击：activate 离火作用于玩家（功率按模板）
+//	警戒圈内        → 追击：朝玩家最短路径移动一格（不可穿障碍，可入危险区）
+//	警戒圈外        → 游荡/驻守：Rng 驱动（模板各异）
+//
+// 模板参数（world_genesis §5.1 参数变体）：
+//   - 游荡者 wanderer（基线）：≤3 追击，攻击 400，游荡原地停留 1/3
+//   - 哨卫 sentinel：锚点 ±2 驻守，≤3 警戒，攻击 550；玩家离圈 3 tick
+//     后解除警戒返回锚点
+//   - 掠食者 predator：≤5 即追击，攻击 450，游荡不停留（大范围巡逻）
 func (m *Match) monsterAct(id engine.EntityID) []engine.Intent {
 	mon := m.W.Entities[id]
 	if mon == nil {
@@ -694,36 +802,94 @@ func (m *Match) monsterAct(id engine.EntityID) []engine.Intent {
 	if p == nil {
 		return nil
 	}
+	mind := m.minds[id]
+	temper := scenario.TemperWanderer
+	if mind != nil {
+		temper = mind.temper
+	}
 	try := func(pos engine.Hex) bool { // 不可穿障碍；危险区可入（Passable）
 		return m.W.At(pos).Passable && m.W.EntityAt(pos) == nil
 	}
-	// 相邻（HexDist == 1，六方向等价）：攻击
+	// 相邻（HexDist == 1，六方向等价）：攻击（功率按模板）
 	if engine.Adjacent(p.Pos, mon.Pos) {
 		if em := mon.FindComponent(engine.CEmitter); em != nil {
-			return []engine.Intent{{Type: "activate", Component: em.ID, Target: p.ID, Power: 500}}
+			return []engine.Intent{{Type: "activate", Component: em.ID, Target: p.ID, Power: temperAttackPower[temper]}}
 		}
 	}
-	switch dist := engine.HexDist(p.Pos, mon.Pos); {
-	case dist <= 4: // 追击：贪心六方向（HexDist 递减排布，固定次序破平局）
-		for _, cand := range engine.HexStepToward(mon.Pos, p.Pos) {
-			if cand != mon.Pos && try(cand) {
-				return []engine.Intent{{Type: "move", To: &cand, Power: 400}}
-			}
+	chase := func() []engine.Intent { // 追击：贪心最短路径（逃跑玩家亦追最短路）
+		return m.stepToward(mon, p.Pos, try)
+	}
+	switch temper {
+	case scenario.TemperSentinel:
+		return m.sentinelAct(mind, mon, p.Pos, engine.HexDist(p.Pos, mon.Pos), chase, try)
+	case scenario.TemperPredator:
+		if engine.HexDist(p.Pos, mon.Pos) <= predatorAlertRadius {
+			return chase()
 		}
-		return nil // 被地形卡死：本回合驻足
-	default: // 游荡（dist > 4）
-		if m.W.Rng.Intn(3) == 0 { // 原地停留概率 1/3
-			return nil
+		return m.wanderStep(mon, false, try) // 主动巡逻大范围：不停留
+	default: // 游荡者（基线）
+		if engine.HexDist(p.Pos, mon.Pos) <= wandererAlertRadius {
+			return chase()
 		}
-		start := m.W.Rng.Intn(6)
-		for i := 0; i < 6; i++ {
-			cand := mon.Pos.Add(engine.HexDirs[(start+i)%6])
-			if try(cand) {
-				return []engine.Intent{{Type: "move", To: &cand, Power: 400}}
-			}
+		return m.wanderStep(mon, true, try) // 游荡：原地停留概率 1/3
+	}
+}
+
+// sentinelAct is the sentinel template：警戒圈内追击；离圈连续
+// sentinelLostGrace tick 后解除警戒、返回锚点 ±2 内驻守/巡逻。
+func (m *Match) sentinelAct(mind *monsterMind, mon *engine.Entity, playerPos engine.Hex, dist int, chase func() []engine.Intent, try func(engine.Hex) bool) []engine.Intent {
+	if dist <= sentinelAlertRadius {
+		mind.hot, mind.lostTicks = true, 0 // 入圈：警戒
+	} else if mind.hot {
+		mind.lostTicks++
+		if mind.lostTicks > sentinelLostGrace {
+			mind.hot = false // 追击圈离开 3 tick：放弃，返回锚点
 		}
+	}
+	if mind.hot { // 宽限期内仍朝玩家最短路径追击
+		return chase()
+	}
+	if engine.HexDist(mon.Pos, mind.anchor) > sentinelPatrolRadius {
+		return m.stepToward(mon, mind.anchor, try) // 脱岗：返回锚点
+	}
+	if m.W.Rng.Intn(3) != 0 { // 2/3 原地驻守（几乎不游荡）
 		return nil
 	}
+	start := m.W.Rng.Intn(6)
+	for i := 0; i < 6; i++ { // 1/3 巡逻：限制仍在锚点 ±2 内
+		cand := mon.Pos.Add(engine.HexDirs[(start+i)%6])
+		if try(cand) && engine.HexDist(cand, mind.anchor) <= sentinelPatrolRadius {
+			return []engine.Intent{{Type: "move", To: &cand, Power: 400}}
+		}
+	}
+	return nil
+}
+
+// stepToward moves one greedy step along the shortest hex path to to
+// (HexStepToward 固定次序破平局；被地形卡死则本回合驻足).
+func (m *Match) stepToward(mon *engine.Entity, to engine.Hex, try func(engine.Hex) bool) []engine.Intent {
+	for _, cand := range engine.HexStepToward(mon.Pos, to) {
+		if cand != mon.Pos && try(cand) {
+			return []engine.Intent{{Type: "move", To: &cand, Power: 400}}
+		}
+	}
+	return nil
+}
+
+// wanderStep is the Rng-driven wander：stayRoll 时原地停留概率 1/3（游
+// 荡者基线），否则必走一步（掠食者大范围巡逻）。
+func (m *Match) wanderStep(mon *engine.Entity, stayRoll bool, try func(engine.Hex) bool) []engine.Intent {
+	if stayRoll && m.W.Rng.Intn(3) == 0 {
+		return nil
+	}
+	start := m.W.Rng.Intn(6)
+	for i := 0; i < 6; i++ {
+		cand := mon.Pos.Add(engine.HexDirs[(start+i)%6])
+		if try(cand) {
+			return []engine.Intent{{Type: "move", To: &cand, Power: 400}}
+		}
+	}
+	return nil
 }
 
 // InCombat reports whether the player is in a fight this tick: any

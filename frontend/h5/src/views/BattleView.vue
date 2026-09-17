@@ -27,6 +27,9 @@ const running = computed(() => bv.value?.status === 'running')
 // ---- 战斗文字流：全部事件，最新在上；战斗类高亮 ----
 const COMBAT_TYPES = new Set(['attack', 'backlash', 'spill', 'overheat', 'destroyed'])
 const isCombat = (t: string) => COMBAT_TYPES.has(t)
+// 战斗解说：combat 触发的 LLM battle_note（Agent 的话，非世界事实）——
+// 渲染为助手气泡（🤖 + 金色描边），与引擎事件区分
+const isNote = (t: string) => t === 'commentary'
 const events = computed(() => (bv.value?.events ?? []).slice().reverse())
 
 // 自动滚动：最新在上 → 有新事件且用户未手动上滚时回到顶部
@@ -167,11 +170,18 @@ const zoneColor = (z: string): string => ZONE_COLORS[z] ?? '#8d95a1'
           <div
             v-for="(e, i) in events" :key="i"
             class="ev"
-            :class="{ hot: isCombat(e.type) }"
+            :class="{ hot: isCombat(e.type), note: isNote(e.type) }"
           >
-            <em>T{{ e.tick }}</em>
-            <b class="tag">{{ e.type }}</b>
-            <span>{{ e.text }}</span>
+            <template v-if="isNote(e.type)">
+              <em>T{{ e.tick }}</em>
+              <span class="note-face" aria-hidden="true">🤖</span>
+              <span class="note-text">{{ e.text }}</span>
+            </template>
+            <template v-else>
+              <em>T{{ e.tick }}</em>
+              <b class="tag">{{ e.type }}</b>
+              <span>{{ e.text }}</span>
+            </template>
           </div>
         </div>
 
@@ -367,6 +377,18 @@ const zoneColor = (z: string): string => ZONE_COLORS[z] ?? '#8d95a1'
 }
 .ev.hot .tag { color: var(--fire); }
 .ev.hot em { color: #a08580; }
+
+/* ---- 战斗解说气泡：Agent 的话，金色描边区分于引擎事件 ---- */
+.ev.note {
+  border: 1px solid var(--earth);
+  background: rgba(201, 164, 74, 0.07);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 4px 8px;
+}
+.ev.note em { color: var(--earth); }
+.ev.note .note-face { flex: none; font-size: 13px; }
+.ev.note .note-text { line-height: 1.5; }
 
 /* ---- LLM 助手 ---- */
 .assistant { display: flex; gap: 10px; align-items: flex-start; }

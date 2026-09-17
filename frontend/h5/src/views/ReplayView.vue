@@ -4,23 +4,18 @@
 //   POST /api/replay {recording, until_tick} → 该 tick 的 StateView（服务端
 //   从头逐帧重演并校验事件流；篡改/损坏 → 500 "replay mismatch"）。
 // 回放视图只用本组件局部 ref，不读写 state.ts 的全局 view —— 不污染
-// 正在对局的全局状态。地图绘制与 MapView.vue 同源（复制自其 draw()，
-// 见下方标注），v0.8 抽共享渲染层。
+// 正在对局的全局状态。地图绘制走 ../render 的 drawWorld（v0.8 共享渲染层，
+// 与 MapView.vue 同源同实现），本组件只保留平移/缩放/跟随与播放器。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { api, essenceColor, essenceColorByName, type Hex, type Recording, type StateView } from '../api'
-import { view as globalView, FOG } from '../state'
 import {
-  fogOf, hexCorners, hexCenter, hexKey, visibleHexes, worldToScreen, zoomAt,
-  type Camera,
-} from '../hex'
+  api, type ExploredCell, type Hex, type Recording, type StateView,
+} from '../api'
+import { view as globalView } from '../state'
+import { hexCenter, zoomAt, type Camera } from '../hex'
+import { drawWorld, DEFAULT_HEX_SIZE } from '../render'
 
-// ---- 常量（与 MapView 一致） ----
-const HEX_SIZE = 28
-const ACCENT = '#d4a94e'
-const FIRE = '#e05545'
-const WATER = '#4a8fd4'
-const SELF_RING = '#9fd0ff'
-const HEX_BORDER = 'rgba(15, 18, 22, 0.55)'
+// ---- 常量 ----
+const HEX_SIZE = DEFAULT_HEX_SIZE
 const PLAY_INTERVAL_MS = 600
 
 // 战斗类事件（与 BattleView 的 COMBAT_TYPES 同源）：帧事件流里高亮
@@ -160,9 +155,9 @@ const jumpToEnd = () => {
 const onSliderInput = () => { if (playing.value) stopPlayback() }
 onBeforeUnmount(stopPlayback)
 
-// ================= 地图绘制（与 MapView.vue 同源，v0.8 抽共享渲染层） =================
-// 以下绘制代码复制自 MapView.vue 的 draw()，数据源由全局 state 换成本组件
-// 的局部 state ref；交互仅保留平移/缩放/跟随，去掉 move_to / 采集等对局动作。
+// ================= 地图绘制（走 ../render 共享渲染层） =================
+// 数据源由全局 state 换成本组件的局部 state ref；交互仅保留平移/缩放/
+// 跟随，去掉 move_to / 采集等对局动作（interactions: false = 只读模式）。
 
 const shellRef = ref<HTMLDivElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -177,51 +172,8 @@ const selfHex = computed<Hex | null>(() => {
   return o ? { q: o.self.pos.q, r: o.self.pos.r } : null
 })
 
-interface MarkerVm { q: number; r: number; glyph: string; color?: string; diamond?: boolean }
-const markers = computed<MarkerVm[]>(() => {
-  const out: MarkerVm[] = []
-  const seen = new Set<string>()
-  for (const e of state.value?.observation?.entities ?? []) {
-    const k = hexKey(e.pos)
-    if (seen.has(k)) continue
-    seen.add(k)
-    if (e.kind === 'resource') {
-      out.push({ q: e.pos.q, r: e.pos.r, glyph: '', color: essenceColor(e.essence), diamond: true })
-    } else {
-      out.push(e.kind === 'fragment'
-        ? { q: e.pos.q, r: e.pos.r, glyph: '💎' }
-        : { q: e.pos.q, r: e.pos.r, glyph: '❓', color: essenceColor(e.essence) })
-    }
-  }
-  for (const en of state.value?.enemies ?? []) {
-    const k = hexKey(en.pos)
-    if (seen.has(k)) continue
-    seen.add(k)
-    out.push({ q: en.pos.q, r: en.pos.r, glyph: '❓', color: essenceColorByName(en.essence) })
-  }
-  return out
-})
-
-const exploredSet = computed(() => {
-  const s = new Set<string>()
-  for (const p of state.value?.explored ?? []) s.add(`${p.q},${p.r}`)
-  return s
-})
-const visibleSet = computed(() => {
-  const s = new Set<string>()
-  for (const p of state.value?.observation?.visible ?? []) s.add(`${p.q},${p.r}`)
-  return s
-})
-const exploredCellMap = computed(() => {
-  const m = new Map<string, { essence?: number; danger?: boolean; passable?: boolean }>()
-  for (const p of state.value?.explored ?? []) m.set(`${p.q},${p.r}`, p)
-  return m
-})
-const orderTarget = computed<Hex | null>(() => state.value?.order ?? null)
-
 // 出生点：从第一帧重演结果的自观测记下（回放没有服务端 spawn 字段）
 const spawnPos = ref<Hex | null>(null)
-const spawnCell = computed<Hex | null>(() => spawnPos.value)
 watch(state, (sv) => {
   if (!spawnPos.value && sv?.observation && sv.turn <= 1) {
     spawnPos.value = { q: sv.observation.self.pos.q, r: sv.observation.self.pos.r }
@@ -244,133 +196,36 @@ watch(recording, () => {
   // 渲染要等第一帧重演回来，selfHex watch 会居中
 })
 
-function hexPath(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
-  ctx.beginPath()
-  const pts = hexCorners(x, y, r)
-  ctx.moveTo(pts[0].x, pts[0].y)
-  for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y)
-  ctx.closePath()
-}
-
 function draw() {
   const canvas = canvasRef.value
   const ctx = canvas?.getContext('2d')
   if (!canvas || !ctx) return
-  const { width, height } = vp.value
-  const c = cam.value
-  const s = HEX_SIZE * c.zoom
-  const r = s * 0.96
-
-  ctx.fillStyle = FOG.unexplored
-  ctx.fillRect(0, 0, width, height)
-  if (s < 3) return
-
-  const explored = exploredSet.value
-  const visible = visibleSet.value
-  const cells = exploredCellMap.value
-  const order = orderTarget.value
-  const spawn = spawnCell.value
-
-  for (const h of visibleHexes(c, vp.value, HEX_SIZE)) {
-    const fog = fogOf(h, explored, visible)
-    if (fog === 'unexplored') continue
-    const w = hexCenter(h, HEX_SIZE)
-    const p = worldToScreen(w.x, w.y, c, vp.value)
-    hexPath(ctx, p.x, p.y, r)
-    if (fog === 'visible') {
-      const cell = cells.get(hexKey(h))
-      ctx.fillStyle = cell?.essence != null ? essenceColor(cell.essence) : FOG.visible
-      ctx.fill()
-      ctx.strokeStyle = HEX_BORDER
-      ctx.lineWidth = 1
-      ctx.stroke()
-      if (cell?.danger) {
-        ctx.strokeStyle = FIRE
-        ctx.lineWidth = 2
-        hexPath(ctx, p.x, p.y, r - 1.5)
-        ctx.stroke()
-        ctx.lineWidth = 1.2
-        const half = r * 0.45
-        for (let i = -1; i <= 1; i++) {
-          ctx.beginPath()
-          ctx.moveTo(p.x - half, p.y + i * half * 0.7)
-          ctx.lineTo(p.x + half, p.y + i * half * 0.7 - half * 0.6)
-          ctx.stroke()
-        }
-      }
-    } else {
-      ctx.globalAlpha = 0.45
-      ctx.fillStyle = FOG.remembered
-      ctx.fill()
-      ctx.globalAlpha = 1
-      ctx.strokeStyle = HEX_BORDER
-      ctx.lineWidth = 1
-      ctx.stroke()
-    }
+  const st = state.value
+  const o = st?.observation ?? null
+  // 已探索键集 + 地形记忆（explored 元素带 essence/danger 时按五行上色/火纹）
+  const explored = new Set<string>()
+  const cells = new Map<string, ExploredCell>()
+  for (const p of st?.explored ?? []) {
+    const k = `${p.q},${p.r}`
+    explored.add(k)
+    cells.set(k, p)
   }
-
-  if (order) {
-    const w = hexCenter(order, HEX_SIZE)
-    const p = worldToScreen(w.x, w.y, c, vp.value)
-    hexPath(ctx, p.x, p.y, r - 2)
-    ctx.setLineDash([5, 3])
-    ctx.strokeStyle = ACCENT
-    ctx.lineWidth = 2
-    ctx.stroke()
-    ctx.setLineDash([])
-  }
-
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  const glyph = Math.max(9, Math.min(40, s * 1.05))
-  ctx.font = `${glyph}px system-ui, sans-serif`
-  const at = (h: Hex) => {
-    const w = hexCenter(h, HEX_SIZE)
-    return worldToScreen(w.x, w.y, c, vp.value)
-  }
-  if (spawn) {
-    const p = at(spawn)
-    ctx.font = `${glyph * 0.85}px system-ui, sans-serif`
-    ctx.fillStyle = WATER
-    ctx.fillText('⌂', p.x, p.y + glyph * 0.04)
-    ctx.font = `${glyph}px system-ui, sans-serif`
-  }
-  for (const m of markers.value) {
-    const p = at({ q: m.q, r: m.r })
-    if (m.diamond) {
-      const d = r * 0.52
-      ctx.beginPath()
-      ctx.moveTo(p.x, p.y - d)
-      ctx.lineTo(p.x + d, p.y)
-      ctx.lineTo(p.x, p.y + d)
-      ctx.lineTo(p.x - d, p.y)
-      ctx.closePath()
-      ctx.fillStyle = m.color ?? ACCENT
-      ctx.fill()
-      ctx.strokeStyle = HEX_BORDER
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-      continue
-    }
-    if (m.color) {
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, r * 0.62, 0, Math.PI * 2)
-      ctx.strokeStyle = m.color
-      ctx.lineWidth = 2
-      ctx.stroke()
-    }
-    ctx.fillText(m.glyph, p.x, p.y + glyph * 0.06)
-  }
-  if (selfHex.value) {
-    const p = at(selfHex.value)
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, r * 0.66, 0, Math.PI * 2)
-    ctx.strokeStyle = SELF_RING
-    ctx.lineWidth = 2
-    ctx.stroke()
-    ctx.font = `${glyph * 1.1}px system-ui, sans-serif`
-    ctx.fillText('🤖', p.x, p.y + glyph * 0.06)
-  }
+  drawWorld({
+    ctx,
+    view: {
+      self: o?.self ?? null,
+      visible: o?.visible ?? [],
+      entities: o?.entities ?? [],
+      enemies: st?.enemies ?? [],
+    },
+    explored,
+    cells,
+    camera: cam.value,
+    viewport: vp.value,
+    size: HEX_SIZE,
+    markers: { spawn: spawnPos.value, order: st?.order ?? null },
+    interactions: false,
+  })
 }
 
 let raf = 0

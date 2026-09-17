@@ -18,6 +18,12 @@ import (
 // 导行，Form 由 hash 定。怪物在 chunk 首次参与激活圈时懒激活，激活事
 // 件（"spawn"）进事件流（PendingSpawns）。
 //
+// 行为模板 (v0.8 WPC, world_genesis §5.1 Tier 1)：懒激活怪物按
+// hash(seed,"temper",qc,rc) 分配 wanderer/sentinel/predator
+// （MonsterTemper，50/30/20），模板经 PendingSpawn.Temper 交给 match
+// （match.monsterAct 按模板分派）；出生环 3 只手摆怪物固定 wanderer
+// （保底温和开局，与 v0.6 平衡结论一致）。
+//
 // 资源晶簇 (v0.5 WPA 经济循环)：每 chunk 用 hash(seed,"res",qc,rc) 决定
 // 是否出晶簇——概率曲线与怪物同斜率、高 0.35 截距（v04ResChance），任
 // 何深度采集都比遭遇更常见；essence 取该 chunk 主导行（"看地貌知资
@@ -123,9 +129,11 @@ func V04(seed uint64) *Pack {
 		FragmentPos:  frag,
 		UnknownSpawn: engine.Hex{Q: -8, R: 0}, // 西位：与 Fragment 相背（出生 chunk 豁免区内，必可通行）
 		MonsterSpawns: []MonsterSpec{
-			{Essence: engine.Fire, Form: 80, Pos: engine.Hex{Q: 0, R: 8}},   // 东南位
-			{Essence: engine.Metal, Form: 60, Pos: engine.Hex{Q: 0, R: -8}}, // 西北位
-			{Essence: engine.Earth, Form: 70, Pos: engine.Hex{Q: -8, R: 8}}, // 西南位
+			// 出生环 3 只固定 wanderer（v0.8 WPC：保底温和开局，与
+			// v0.6 平衡结论一致；变体模板只出现在懒激活种群）。
+			{Essence: engine.Fire, Form: 80, Pos: engine.Hex{Q: 0, R: 8}, Temper: TemperWanderer},   // 东南位
+			{Essence: engine.Metal, Form: 60, Pos: engine.Hex{Q: 0, R: -8}, Temper: TemperWanderer}, // 西北位
+			{Essence: engine.Earth, Form: 70, Pos: engine.Hex{Q: -8, R: 8}, Temper: TemperWanderer}, // 西南位
 		},
 		Materials: map[engine.Essence]int{
 			engine.Earth: 3, engine.Wood: 3, engine.Metal: 2, engine.Water: 2,
@@ -142,19 +150,52 @@ func V04(seed uint64) *Pack {
 // 键，World 被 GC 后地址复用会让新对局继承旧激活状态（怪物不激活、
 // 重放被破坏），该设计已于 WP5 评审后废除。
 
+// —— v0.8 WPC 行为模板 (world_genesis §5.1 Tier 1：行为模板 + 参数变体)
+// ——
+//
+// 三模板：游荡者 wanderer（基线）/ 哨卫 sentinel / 掠食者 predator。
+// 分配规则：手摆怪物（出生环 3 只）固定 wanderer（保底温和开局，与
+// v0.6 平衡结论一致）；懒激活怪物按 hash(seed,"temper",qc,rc) 分配
+// （MonsterTemper：50/30/20）——纯函数、自带 seed、不消耗 match Rng。
+// 行为分派在 match.monsterAct（按模板出 Intent，走同一条物理链，
+// world_genesis §5.2 铁律：无特权 AI、无特例物理）。
+const (
+	TemperWanderer = "wanderer"
+	TemperSentinel = "sentinel"
+	TemperPredator = "predator"
+)
+
+// MonsterTemper returns the behaviour template of a lazily-activated mob
+// at chunk (qc, rc)：游荡者 50% / 哨卫 30% / 掠食者 20%（hash 决定）。
+// 纯函数 (seed, qc, rc)：可重复调用、结果逐位一致 (design §2.5)。
+func MonsterTemper(seed uint64, qc, rc int) string {
+	r := engine.Hash01(strconv.FormatUint(seed, 10), "temper", qc, rc)
+	switch {
+	case r < 0.50:
+		return TemperWanderer
+	case r < 0.80:
+		return TemperSentinel
+	default:
+		return TemperPredator
+	}
+}
+
 // MobSpec is one chunk's lazily-activated mob specification (不含落点——
 // 落点依赖激活时刻的占位状态，由 PendingSpawns 在激活 tick 决定).
 type MobSpec struct {
 	Essence engine.Essence
 	Form    int
+	Temper  string // v0.8 WPC 行为模板（MonsterTemper hash 分配）
 }
 
 // PendingSpawn is one lazily-activated chunk mob. match 负责把 Entity
 // 交给 World.Spawn，并把 Event（回填 Entity 为新实体 id 后）并入该回合
-// 的事件流——见文件头【match 接入点】.
+// 的事件流——见文件头【match 接入点】。Temper 随行：match 在 Spawn 后
+// 按它登记该实体的行为模板（v0.8 WPC，见文件头）.
 type PendingSpawn struct {
 	Entity *engine.Entity
 	Event  engine.Event
+	Temper string
 }
 
 // chunkCenter is the center cell of chunk (qc, rc)——深度以 chunk 中心
@@ -197,8 +238,9 @@ func MonsterSpawnsFor(seed uint64, qc, rc int) *MobSpec {
 		return nil // 本 chunk 无怪
 	}
 	return &MobSpec{
-		Essence: v04DominantEssence(seed, qc, rc), // essence 取该 chunk 主导行
+		Essence: v04DominantEssence(seed, qc, rc),                   // essence 取该 chunk 主导行
 		Form:    60 + int(engine.Hash01(ss, "mob-form", qc, rc)*21), // Form 由 hash 定：60..80
+		Temper:  MonsterTemper(seed, qc, rc),                        // v0.8 WPC：模板按 hash 分配
 	}
 }
 
@@ -245,6 +287,7 @@ func PendingSpawns(w *engine.World, playerPos engine.Hex, activated map[[2]int]b
 							Type: "spawn",
 							Text: fmt.Sprintf("懒激活：%s 行妖物现形于 (%d,%d)", ms.Essence, pos.Q, pos.R),
 						},
+						Temper: ms.Temper,
 					}
 				}
 			}

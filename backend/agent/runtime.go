@@ -61,6 +61,8 @@ func triggerSection(reason string) string {
 		b.WriteString("这是心跳反思（开局或连续多 tick 无新事件）：回顾目标与计划是否仍然成立，更新认知摘要；若无必要改变，保持原订单即可。")
 	case reason == "combat":
 		b.WriteString("这是战斗回合：交战期间每个 tick 都会唤醒你。优先判断还击、撤退或调整作用强度。")
+		b.WriteString("本次响应 JSON 额外携带可选字段 \"battle_note\"：≤50 字、第一人称的战术意图解说")
+		b.WriteString("（如\"它金甲厚重，我改打它的水行储气\"），会直接展示给玩家——只说判断与意图，不复述事件。")
 	case reason == "encounter":
 		b.WriteString("首次感知到敌对实体：先评估威胁（五行、距离、其质），再决定接近、绕行或备战。")
 	case strings.HasPrefix(reason, "threshold:"):
@@ -97,30 +99,33 @@ func (a *LLMAgent) DecideTriggered(obs *engine.Observation) []engine.Intent {
 		{"role": "system", "content": a.systemPrompt() + triggerSection(reason)},
 		{"role": "user", "content": string(raw)},
 	}, 0.2)
-	intents, cognition := parseDecision(content)
+	intents, cognition, battleNote := parseDecision(content)
 	if cognition != nil {
 		a.last = cognition
 	}
+	a.lastBattleNote = battleNote // 每轮覆盖：本轮未携带即为空，不残留
 	return intents
 }
 
-// parseDecision parses one LLM decision reply ("```json" 包裹容错).
-func parseDecision(content string) ([]engine.Intent, *Cognition) {
+// parseDecision parses one LLM decision reply ("```json" 包裹容错)，
+// 一并返回可选的 battle_note（战斗解说，combat 触发时才有意义）.
+func parseDecision(content string) ([]engine.Intent, *Cognition, string) {
 	content = strings.TrimSpace(content)
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
 	content = strings.TrimSuffix(content, "```")
 	content = strings.TrimSpace(content)
 	if content == "" {
-		return nil, nil
+		return nil, nil, ""
 	}
 	var parsed struct {
-		Intents   []engine.Intent `json:"intents"`
-		Cognition *Cognition      `json:"cognition"`
+		Intents    []engine.Intent `json:"intents"`
+		Cognition  *Cognition      `json:"cognition"`
+		BattleNote string          `json:"battle_note"`
 	}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
 		log.Printf("[llm] unparseable intents: %v: %.200s", err, content)
-		return nil, nil
+		return nil, nil, ""
 	}
-	return parsed.Intents, parsed.Cognition
+	return parsed.Intents, parsed.Cognition, strings.TrimSpace(parsed.BattleNote)
 }

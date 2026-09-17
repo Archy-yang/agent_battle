@@ -125,6 +125,10 @@ export interface StateView {
   // 克关系战术预览：感知内每个敌人的"我的火 → 它的本源"落区推算
   // （与 enemies 同感知边界，信息边界不变）
   tactics?: TacticsView[]
+  // ---- 战斗解说追加字段（backend/match/api.go StateView 已实现，旧对局下为 undefined） ----
+  // combat 触发的 LLM 战术解说（Agent 的话，≤50 字第一人称）。它们同时
+  // 以 type "commentary" 混在 events 展示流里；此字段供单独消费。
+  commentary?: Event[]
 }
 
 // M3.4：感知范围内的一名敌对实体（backend EnemyView）。

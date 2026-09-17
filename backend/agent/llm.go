@@ -54,6 +54,9 @@ type LLMAgent struct {
 	persona  string
 	lessons  []string
 	last     *Cognition
+	// lastBattleNote is the combat battle_note from the most recent
+	// decision ("": 最近一次响应未携带该字段——每轮覆盖，不残留).
+	lastBattleNote string
 }
 
 // NewLLM creates an LLM-backed decision maker.
@@ -148,19 +151,27 @@ func (a *LLMAgent) Decide(obs *engine.Observation) []engine.Intent {
 		return nil
 	}
 	var parsed struct {
-		Intents   []engine.Intent `json:"intents"`
-		Cognition *Cognition      `json:"cognition"`
+		Intents    []engine.Intent `json:"intents"`
+		Cognition  *Cognition      `json:"cognition"`
+		BattleNote string          `json:"battle_note"`
 	}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
 		log.Printf("[llm] unparseable intents: %v: %.200s", err, content)
+		a.lastBattleNote = ""
 		return nil
 	}
 	a.last = parsed.Cognition
+	a.lastBattleNote = strings.TrimSpace(parsed.BattleNote)
 	return parsed.Intents
 }
 
 // LastCognition returns the cognition from the most recent decision.
 func (a *LLMAgent) LastCognition() *Cognition { return a.last }
+
+// LastBattleNote returns the battle_note from the most recent decision:
+// ≤50 字的第一人称战术意图，match 层在 combat 触发时将其作为一条
+// commentary 事件追加进战斗文字流（"" = 响应未携带该字段）。
+func (a *LLMAgent) LastBattleNote() string { return a.lastBattleNote }
 
 // Ask answers a player question in the agent's own voice, grounded in
 // the current observation and recent events (player_agent_relationship

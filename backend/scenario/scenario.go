@@ -29,6 +29,10 @@ type MonsterSpec struct {
 	Essence engine.Essence
 	Form    int // 形 60..80
 	Pos     engine.Hex
+	// Temper is the v0.8 WPC behaviour template (world_genesis §5.1
+	// Tier 1)：TemperWanderer | TemperSentinel | TemperPredator。空值
+	// 回落 TemperWanderer（基线，旧包 V02/MVP 行为兼容）。
+	Temper string
 }
 
 // Terrain returns the cell at h via the pack's terrain pure function.
@@ -76,9 +80,9 @@ func MVP(seed uint64) *Pack {
 			}
 			return engine.Cell{Essence: engine.Earth, Passable: true} // 外环土性
 		},
-		PlayerSpawn:  engine.Hex{Q: 0, R: 10},  // (X,Y)=(10,10)：外环土性
-		FragmentPos:  engine.Hex{Q: 0, R: 5},   // (X,Y)=(5,5)：危险区深处，出生距 5
-		UnknownSpawn: engine.Hex{Q: 4, R: 3},   // (X,Y)=(11,3)：东部
+		PlayerSpawn:  engine.Hex{Q: 0, R: 10}, // (X,Y)=(10,10)：外环土性
+		FragmentPos:  engine.Hex{Q: 0, R: 5},  // (X,Y)=(5,5)：危险区深处，出生距 5
+		UnknownSpawn: engine.Hex{Q: 4, R: 3},  // (X,Y)=(11,3)：东部
 		Materials: map[engine.Essence]int{
 			engine.Earth: 2, engine.Wood: 2, engine.Metal: 1, engine.Water: 1,
 		},

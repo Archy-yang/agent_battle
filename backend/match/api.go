@@ -57,6 +57,11 @@ type StateView struct {
 	// LLMCalls is the number of pilot decision invocations this match
 	// (LLM pilot 下即 LLM 调用数). WP3 预算验收口径：一局 ≤ 50.
 	LLMCalls int `json:"llm_calls"`
+	// Commentary is the 战斗解说: the LLM pilot's combat battle_notes as
+	// separate events. 它们同时以 Type "commentary" 混在 Events 展示流里
+	// （前端渲染为助手气泡）；这里供需要单独消费的客户端。不进引擎事件
+	// 判定，也不进录像帧的 ResultingEvents（重放不重跑 LLM，无此流）.
+	Commentary []engine.Event `json:"commentary"`
 }
 
 // EnemyView is one hostile entity as the player perceives it.
@@ -145,6 +150,10 @@ func (m *Match) View() *StateView {
 		"whisper": CostWhisper, "guide": CostGuide, "deeplink": CostDeepLink,
 		"information": CostInform, "pause": CostPause, "predict_reward": PredictReward,
 	}
+	commentary := m.Commentary
+	if commentary == nil {
+		commentary = []engine.Event{}
+	}
 	materials := map[string]int{}
 	for e, n := range m.W.Materials["player"] {
 		materials[e.String()] = n
@@ -190,6 +199,7 @@ func (m *Match) View() *StateView {
 		Tactics:     m.Tactics(),
 		LastTrigger: m.lastTrigger,
 		LLMCalls:    m.llmCalls,
+		Commentary:  commentary,
 	}
 }
 

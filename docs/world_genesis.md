@@ -250,6 +250,7 @@ v0.1 的手工地图也按这四步的原则画。
 ```text
 Tier 0  手摆实体         场景包直接定义 + Logic 驱动           v0.1
 Tier 1  Logic 脚本种群   行为模板 + 参数变体（游荡者/哨卫/掠食者） v0.1–0.2
+        （v0.8 已实现三模板，见 match.monsterAct）
 Tier 2  程序化生成表     按地形偏向 × 阴阳周期 × 威胁曲线撒      v0.2
 Tier 3  LLM 设计敌人    LLM 产 Blueprint + Logic              未来
         → 引擎静态校验 → 试跑平衡 → 绑版本 → 进场景包
