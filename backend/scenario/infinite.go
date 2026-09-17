@@ -17,18 +17,29 @@ import (
 // 导行，Form 由 hash 定。怪物在 chunk 首次参与激活圈时懒激活，激活事
 // 件（"spawn"）进事件流（PendingSpawns）。
 //
+// 资源晶簇 (v0.5 WPA 经济循环)：每 chunk 用 hash(seed,"res",qc,rc) 决定
+// 是否出晶簇——概率曲线与怪物同斜率、高 0.35 截距（v04ResChance），任
+// 何深度采集都比遭遇更常见；essence 取该 chunk 主导行（"看地貌知资
+// 源"）；出生 3×3 chunk 全部落空时 (0,0) 强制出一簇（开局保底，判定仍
+// 是 seed 的纯函数）。晶簇与怪物走同一条懒激活通道（ChunkSpawn.Resource，
+// 激活事件同为 "spawn"、文本区分）；玩家对同格晶簇发 transfer → match
+// 层结算采集（"gather" 事件、物料入库）——晶簇不阻挡移动（engine
+// EntityAt 对 Kind "resource" 透明）。
+//
 // 【match 接入点】match 持有"已激活 chunk 集合"（确定性状态，进重放
 // 语义），每回合推进时调用
 //
 //	for _, cs := range scenario.PendingSpawns(m.W, player.Pos, m.activatedChunks) {
 //	    m.activatedChunks[[2]int{cs.QC, cs.RC}] = true
-//	    if cs.Spawn == nil {
-//	        continue // 该 chunk 已覆盖但无怪
+//	    for _, ps := range []*scenario.PendingSpawn{cs.Spawn, cs.Resource} {
+//	        if ps == nil {
+//	            continue // 该 chunk 已覆盖但无此物
+//	        }
+//	        e := m.W.Spawn(ps.Entity)
+//	        ev := ps.Event
+//	        ev.Entity = e.ID // 实体 id 在 Spawn 后才存在
+//	        evs = append(evs, ev)
 //	    }
-//	    e := m.W.Spawn(cs.Spawn.Entity)
-//	    ev := cs.Spawn.Event
-//	    ev.Entity = e.ID // 实体 id 在 Spawn 后才存在
-//	    evs = append(evs, ev)
 //	}
 //
 // 并把返回的事件并入该回合事件流。PendingSpawns 是纯函数：不修改
@@ -190,14 +201,17 @@ func MonsterSpawnsFor(seed uint64, qc, rc int) *MobSpec {
 // ChunkSpawn is one newly-covered chunk's lazy-activation result of a
 // tick. Spawn == nil 表示该 chunk 覆盖到位但无怪——它同样必须记入调用
 // 方的 activated 集合（"只激活一次"是对 chunk 而非对怪成立的）.
+// Resource 同理装晶簇（v0.5 WPA）：Spawn 只装怪物、Resource 只装晶簇，
+// 同 chunk 同 tick 可以两者皆有（晶簇落点避开同 tick 的怪物落点）.
 type ChunkSpawn struct {
-	QC, RC int
-	Spawn  *PendingSpawn
+	QC, RC   int
+	Spawn    *PendingSpawn
+	Resource *PendingSpawn
 }
 
 // PendingSpawns walks the 3×3 activation circle around playerPos（与出
 // 生豁免区同构）and returns every chunk not yet in activated，连同其怪
-// 物（若有）。
+// 物与晶簇（若有，v0.5 WPA）。
 //
 // 纯函数：不修改 activated；同一 (world 状态, playerPos, activated)
 // 重复调用结果逐位一致。跨对局零状态——world 指针不参与任何判定，
@@ -216,14 +230,28 @@ func PendingSpawns(w *engine.World, playerPos engine.Hex, activated map[[2]int]b
 				continue // 调用方已激活过该 chunk
 			}
 			cs := ChunkSpawn{QC: qc, RC: rc}
+			mobPos := engine.Hex{}
 			if ms := MonsterSpawnsFor(w.Seed, qc, rc); ms != nil {
 				if pos, ok := v04MobCell(w, w.Seed, qc, rc, playerPos, frag); ok {
+					mobPos = pos
 					cs.Spawn = &PendingSpawn{
 						Entity: v04BuildMob(pos, ms.Essence, ms.Form),
 						Event: engine.Event{
 							Tick: w.Tick,
 							Type: "spawn",
 							Text: fmt.Sprintf("懒激活：%s 行妖物现形于 (%d,%d)", ms.Essence, pos.Q, pos.R),
+						},
+					}
+				}
+			}
+			if rs := ResourceSpawnsFor(w.Seed, qc, rc); rs != nil {
+				if pos, ok := v04ResCell(w, w.Seed, qc, rc, playerPos, frag, mobPos); ok {
+					cs.Resource = &PendingSpawn{
+						Entity: v04BuildResource(pos, rs.Essence),
+						Event: engine.Event{
+							Tick: w.Tick,
+							Type: "spawn",
+							Text: fmt.Sprintf("懒激活：%s 行晶簇显化于 (%d,%d)", rs.Essence, pos.Q, pos.R),
 						},
 					}
 				}
@@ -292,4 +320,113 @@ func v04BuildMob(pos engine.Hex, ess engine.Essence, form int) *engine.Entity {
 	m.AddComponent(engine.CMotor, engine.Wood)    // 灵机
 	m.AddComponent(engine.CEmitter, engine.Fire)  // 离火
 	return m
+}
+
+// —— 资源晶簇懒激活 (v0.5 WPA 经济循环：采集到物料的供给线) ——
+//
+// 与怪物同一套"纯函数 + 调用方持状态"模式：ResourceSpawnsFor 对应
+// MonsterSpawnsFor（(seed, chunk) → 规格，hash 自带 seed、不消耗 match
+// Rng、可重复调用），落点选取与 PendingSpawns 的激活圈行走完全复用。
+// 晶簇规格只有 essence——Integrity 恒 1，采一次即空。
+
+// ResourceSpec is one chunk's lazily-activated resource crystal spec
+// （不含落点——与 MobSpec 同理，落点由 v04ResCell 在激活 tick 决定）.
+type ResourceSpec struct {
+	Essence engine.Essence
+}
+
+// chunkDepth is a chunk's depth: chunk 中心到出生 chunk 中心的 HexDist.
+func chunkDepth(qc, rc int) int {
+	return engine.HexDist(chunkCenter(qc, rc), chunkCenter(0, 0))
+}
+
+// v04ResChance is the per-chunk crystal probability as a function of
+// depth：p = min(0.85, 0.45 + 0.012·d)——与怪物曲线（0.10 + 0.012·d，
+// 上限 0.60）同斜率、高 0.35 截距：任何深度晶簇概率都高于出怪，采集
+// 是常规事件而非遭遇.
+func v04ResChance(depth int) float64 {
+	p := 0.45 + 0.012*float64(depth)
+	if p > 0.85 {
+		p = 0.85
+	}
+	return p
+}
+
+// v04BirthResRolled reports whether any of the 9 birth chunks rolled a
+// crystal by hash（只看原始掷点、不含保底强制项——递归自由）.
+func v04BirthResRolled(seed uint64) bool {
+	ss := strconv.FormatUint(seed, 10)
+	for qc := -1; qc <= 1; qc++ {
+		for rc := -1; rc <= 1; rc++ {
+			if engine.Hash01(ss, "res", qc, rc) < v04ResChance(chunkDepth(qc, rc)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ResourceSpawnsFor returns the chunk's lazily-activated crystal spec,
+// or nil when the chunk rolls none：纯函数 (seed, qc, rc)——hash 自带
+// seed，不消耗 match Rng，可重复调用、结果逐位一致 (design §2.5).
+// essence 取该 chunk 主导行（"看地貌知资源"，与怪物同规）。开局保底：
+// 出生 3×3 chunk 原始掷点全落空时 (0,0) 强制出一簇——判定仍是 seed 的
+// 纯函数（v04BirthResRolled 只重算 9 个 hash，无状态、跨调用一致）.
+func ResourceSpawnsFor(seed uint64, qc, rc int) *ResourceSpec {
+	ss := strconv.FormatUint(seed, 10)
+	hit := engine.Hash01(ss, "res", qc, rc) < v04ResChance(chunkDepth(qc, rc))
+	if !hit && qc == 0 && rc == 0 && !v04BirthResRolled(seed) {
+		hit = true
+	}
+	if !hit {
+		return nil
+	}
+	return &ResourceSpec{Essence: v04DominantEssence(seed, qc, rc)}
+}
+
+// v04CellTaken reports whether any world entity stands at p. 晶簇不阻挡
+// 移动、World.EntityAt 对 Kind "resource" 透明，故占位判定直接扫实体表
+// （map 遍历只做存在性判定，与序无关，确定性不受影响）.
+func v04CellTaken(w *engine.World, p engine.Hex) bool {
+	for _, e := range w.Entities {
+		if e.Pos == p {
+			return true
+		}
+	}
+	return false
+}
+
+// v04ResCell picks the crystal's cell: chunk 内可通行、非玩家位、非
+// Fragment 位、无任何实体占据、不与 avoid（同 chunk 同 tick 的怪物落
+// 点）重叠的格子中按 hash 选取（固定行枚举序 → 确定性）.
+func v04ResCell(w *engine.World, seed uint64, qc, rc int, playerPos, frag, avoid engine.Hex) (engine.Hex, bool) {
+	ss := strconv.FormatUint(seed, 10)
+	var cand []engine.Hex
+	for j := 0; j < engine.ChunkSize; j++ {
+		for i := 0; i < engine.ChunkSize; i++ {
+			p := engine.Hex{Q: qc*engine.ChunkSize + i, R: rc*engine.ChunkSize + j}
+			if p == playerPos || p == frag || p == avoid || !w.At(p).Passable || v04CellTaken(w, p) {
+				continue
+			}
+			cand = append(cand, p)
+		}
+	}
+	if len(cand) == 0 {
+		return engine.Hex{}, false
+	}
+	idx := int(engine.Hash01(ss, "res-pos", qc, rc) * float64(len(cand)))
+	if idx >= len(cand) {
+		idx = len(cand) - 1
+	}
+	return cand[idx], true
+}
+
+// v04BuildResource assembles one resource crystal: 世界所有物（Owner
+// "world"），Integrity 1、无组件——不可动、不可感、采一次即空；不阻
+// 挡移动（engine EntityAt 对 Kind "resource" 透明，见 world.go）.
+func v04BuildResource(pos engine.Hex, ess engine.Essence) *engine.Entity {
+	return &engine.Entity{
+		Pos: pos, Kind: "resource", Owner: "world", Essence: ess,
+		Integrity: 1, MaxIntegrity: 1,
+	}
 }

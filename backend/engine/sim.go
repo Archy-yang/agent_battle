@@ -9,9 +9,11 @@ const MaxIntentsPerTick = 2
 // Intent is one proposed action. Agents return intents; the engine
 // decides reality (world_rule §12). Only primitive intents exist —
 // "attack"/"build" are NOT intents (world_rule §14): attacking is
-// activating an Emitter, building is assembling a Blueprint.
+// activating an Emitter, building is assembling a Blueprint (equip 与
+// assemble 同属装配类意图：assemble 造新实体，equip 把组件装进自己
+// 身体).
 type Intent struct {
-	Type      string      `json:"type"` // move|move_to|activate|transfer|inspect|connect|disconnect|assemble
+	Type      string      `json:"type"` // move|move_to|activate|transfer|inspect|connect|disconnect|assemble|equip
 	Target    EntityID    `json:"target,omitempty"`
 	To        *Hex        `json:"to,omitempty"`
 	Component ComponentID `json:"component,omitempty"`
@@ -130,6 +132,8 @@ func (w *World) resolve(e *Entity, in Intent, evs *[]Event) {
 		w.resolveDisconnect(e, in, evs)
 	case "assemble":
 		w.resolveAssemble(e, in, evs)
+	case "equip":
+		w.resolveEquip(e, in, evs)
 	default:
 		w.emit(evs, e, "intent_rejected", "未知意图 %q", in.Type)
 	}
@@ -418,6 +422,86 @@ func (w *World) resolveAssemble(e *Entity, in Intent, evs *[]Event) {
 	}
 	w.Spawn(d)
 	w.emit(evs, e, "assemble", "组装完成：%s @ %v", describeDevice(d), pos)
+}
+
+// v0.5 经济循环（装备自身·武装反击）：equip 意图消耗物料，把组件
+// 直接装进自己身体。与 assemble 的分野：assemble 造新实体（需要躯壳
+// + 储气），equip 只加装非核心组件——躯壳与储气是身体的根，v0.5 不
+// 开放更换（Frame/Battery 不可 equip）。装上即生效：装上离火即
+// HasEmitter，可 activate 反击；重复安装同类组件不叠加（v0.1 单组件
+// 语义，第二个感识不扩大感知半径）.
+const (
+	// EquipStrength is the fixed 阳性输出强度 of one equip action:
+	// 耗气 EnergyCost(EquipStrength)（=3 气/次），生热
+	// HeatGain(EquipStrength).
+	EquipStrength = 300
+	// MaxBodyComponents is the body's 复杂度预算（world_rule §15 同
+	// assemble）：躯壳 + 储气 + 已装组件总数 ≤ 8.
+	MaxBodyComponents = 8
+)
+
+// equipable reports whether t may be mounted onto one's own body by the
+// equip intent. Frame/Battery 是身体的根（躯壳、储气），不可 equip.
+func equipable(t ComponentType) bool {
+	switch t {
+	case CMotor, CSensor, CProcessor, CEmitter, CStorage, CCooling:
+		return true
+	}
+	return false
+}
+
+// resolveEquip mounts Blueprint components directly onto the acting
+// entity's body: 物料消耗与 assemble 同规则（库存、复杂度 ≤8、恰好无
+// 躯壳/储气要求），但不需要躯壳与储气——身体自带（world_rule §15：
+// LLM 负责设计，Engine 负责实现）.
+func (w *World) resolveEquip(e *Entity, in Intent, evs *[]Event) {
+	bp := in.Blueprint
+	if len(bp) == 0 {
+		w.emit(evs, e, "intent_rejected", "equip 蓝图不能为空")
+		return
+	}
+	if len(e.Components)+len(bp) > MaxBodyComponents {
+		w.emit(evs, e, "intent_rejected", "超出身体复杂度预算（≤%d 组件）", MaxBodyComponents)
+		return
+	}
+	for _, s := range bp {
+		if !equipable(s.Type) {
+			w.emit(evs, e, "intent_rejected", "%s 是身体之根，不可 equip", s.Type)
+			return
+		}
+	}
+	cost := EnergyCost(EquipStrength)
+	if e.Battery < cost {
+		w.emit(evs, e, "intent_rejected", "储气不足（需 %d，余 %d）", cost, e.Battery)
+		return
+	}
+	// 物料按本源合计验收，all-or-nothing（与 assemble 同规则；本源
+	// 未显式给出时取组件默认本源）.
+	need := map[Essence]int{}
+	essences := make([]Essence, len(bp))
+	for i, s := range bp {
+		ess := DefaultEssence(s.Type)
+		if s.Essence != nil {
+			ess = *s.Essence
+		}
+		essences[i] = ess
+		need[ess]++
+	}
+	inv := w.Materials[e.Owner]
+	for ess, n := range need {
+		if inv[ess] < n {
+			w.emit(evs, e, "intent_rejected", "物料不足：%s", ess)
+			return
+		}
+	}
+	// commit：扣气、生热、扣料、装上即生效
+	e.Battery -= cost
+	e.Heat += HeatGain(EquipStrength)
+	for i, s := range bp {
+		inv[essences[i]]--
+		e.AddComponent(s.Type, essences[i])
+		w.emit(evs, e, "equip", "装备 %s(%s)，仓库消耗 %s×1", s.Type, essences[i], essences[i])
+	}
 }
 
 func describeDevice(d *Entity) string {

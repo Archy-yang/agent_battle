@@ -133,7 +133,10 @@ type Match struct {
 	profile     *profile.Store
 	unknownDir  engine.Hex
 	lastEvs     []engine.Event
-	lastIntents []engine.Intent
+	// lastGatherEvs 是上一 tick 采集结算生成的分类器镜像事件（gather →
+	// pickup，见 resolveGathers）；只进 classifyTick 的喂入，不进事件流.
+	lastGatherEvs []engine.Event
+	lastIntents   []engine.Intent
 }
 
 // New creates a match of scenario/mvp-0.1. The pilot is the LLM agent
@@ -189,9 +192,13 @@ func (m *Match) Tick(intents []engine.Intent) {
 		return
 	}
 	acts := m.monstersAct()
-	acts[m.PlayerID] = intents
+	// v0.5 WPA 经济循环：指向晶簇的 transfer 不进引擎（引擎 resolveTransfer
+	// 只认 fragment），在 match 层于推进后结算采集
+	order, gathers := m.splitGathers(intents)
+	acts[m.PlayerID] = order
 	evs := m.W.Advance(acts)
-	evs = append(evs, m.lazySpawns()...) // v0.4 怪物懒激活进事件流
+	evs = append(evs, m.resolveGathers(gathers)...)
+	evs = append(evs, m.lazySpawns()...) // v0.4 怪物/晶簇懒激活进事件流
 	m.lastEvs = evs
 	m.lastIntents = intents
 	m.Events = append(m.Events, evs...)
@@ -207,9 +214,9 @@ func (m *Match) Tick(intents []engine.Intent) {
 
 // lazySpawns runs the v0.4 chunk lazy-activation protocol
 // (scenario/infinite.go 文件头【match 接入点】): 在玩家所在 chunk 的 3×3
-// 激活圈内覆盖尚未激活的 chunk，把出怪 chunk 的激活事件（Entity 回填为
-// 新实体 id 后）并入本回合事件流，并把覆盖到的 chunk 键记入
-// activatedChunks（无论是否出怪——"只激活一次"对 chunk 成立）。
+// 激活圈内覆盖尚未激活的 chunk，把出怪/出晶簇 chunk 的激活事件（Entity
+// 回填为新实体 id 后）并入本回合事件流，并把覆盖到的 chunk 键记入
+// activatedChunks（无论是否出怪/晶簇——"只激活一次"对 chunk 成立）。
 // PendingSpawns 是纯函数，激活判定状态完全由 m.activatedChunks 持有，
 // 懒激活是 (seed, chunk, activated 演化) 的确定结果，重放不受影响
 // (design §2.5)。仅 v0.4 包接线。
@@ -227,13 +234,75 @@ func (m *Match) lazySpawns() []engine.Event {
 	var evs []engine.Event
 	for _, cs := range scenario.PendingSpawns(m.W, p.Pos, m.activatedChunks) {
 		m.activatedChunks[[2]int{cs.QC, cs.RC}] = true
-		if cs.Spawn == nil {
-			continue // 覆盖到位但该 chunk 无怪
+		for _, ps := range []*scenario.PendingSpawn{cs.Spawn, cs.Resource} {
+			if ps == nil {
+				continue // 覆盖到位但该 chunk 无此物
+			}
+			e := m.W.Spawn(ps.Entity)
+			ev := ps.Event
+			ev.Entity = e.ID // 实体 id 在 Spawn 后才存在
+			evs = append(evs, ev)
 		}
-		e := m.W.Spawn(cs.Spawn.Entity)
-		ev := cs.Spawn.Event
-		ev.Entity = e.ID // 实体 id 在 Spawn 后才存在
-		evs = append(evs, ev)
+	}
+	return evs
+}
+
+// splitGathers partitions the player's intents into engine-bound intents
+// and resource-gather requests：transfer 指向 Kind "resource" 的实体时，
+// 引擎 resolveTransfer 会以"只能搬取元气结晶"拒绝（engine 冻结）——晶
+// 簇采集在 match 层结算，剥离后不进引擎。指向 fragment 的 transfer 与
+// 其余意图原样放行。
+func (m *Match) splitGathers(intents []engine.Intent) (rest, gathers []engine.Intent) {
+	for _, in := range intents {
+		if in.Type == "transfer" {
+			if t := m.W.Entities[in.Target]; t != nil && t.Kind == "resource" {
+				gathers = append(gathers, in)
+				continue
+			}
+		}
+		rest = append(rest, in)
+	}
+	return rest, gathers
+}
+
+// resolveGathers settles the stripped gather requests（在 Advance 之后结
+// 算：晶簇可能被本 tick 的溢出波及形散，先推进后采集）. 成功：实体从
+// 世界移除、物料入库（w.Materials["player"]）、事件 "gather"。
+//
+// 同时为事件分类器生成 pickup 镜像事件（m.lastGatherEvs）：events.go 冻
+// 结，resource 触发通道只认 Type "pickup" 的 pickupSeen 去抖——镜像让
+// 首次采集晶簇与首次拾取结晶协同共用同一个"首次拾取"。镜像只进
+// classifyTick 的喂入，不进事件流与观察。
+func (m *Match) resolveGathers(gathers []engine.Intent) []engine.Event {
+	m.lastGatherEvs = nil
+	var evs []engine.Event
+	for _, in := range gathers {
+		p := m.W.Entities[m.PlayerID]
+		if p == nil {
+			return evs // 形散：无从采集
+		}
+		res := m.W.Entities[in.Target]
+		switch {
+		case res == nil || res.Kind != "resource":
+			evs = append(evs, engine.Event{Tick: m.W.Tick, Type: "intent_rejected",
+				Entity: p.ID, Text: "晶簇已消散，无从采集"})
+		case res.Pos != p.Pos:
+			evs = append(evs, engine.Event{Tick: m.W.Tick, Type: "intent_rejected",
+				Entity: p.ID, Text: "必须站在晶簇所在格"})
+		default:
+			ess := res.Essence
+			delete(m.W.Entities, res.ID)
+			inv := m.W.Materials["player"]
+			if inv == nil {
+				inv = map[engine.Essence]int{}
+				m.W.Materials["player"] = inv
+			}
+			inv[ess]++
+			evs = append(evs, engine.Event{Tick: m.W.Tick, Type: "gather", Entity: p.ID,
+				Text: fmt.Sprintf("采集 %s×1，仓库存料 %d", ess, inv[ess])})
+			m.lastGatherEvs = append(m.lastGatherEvs,
+				engine.Event{Tick: m.W.Tick, Type: "pickup", Entity: p.ID})
+		}
 	}
 	return evs
 }
@@ -289,16 +358,25 @@ func (m *Match) TickAuto() {
 }
 
 // classifyTick feeds the classifier with the facts of the tick just
-// ended (m.lastEvs 是上一回合 Advance 产出、尚未被任何决策消费的事件流).
+// ended（真实事件流 + 采集的 pickup 镜像，见 resolveGathers）.
 func (m *Match) classifyTick() string {
 	return m.cls.Classify(ClassifyInput{
 		Tick:            m.W.Tick,
 		PlayerID:        m.PlayerID,
-		Events:          m.lastEvs,
+		Events:          m.classifierEvents(),
 		Self:            m.W.Entities[m.PlayerID],
 		VisibleHostiles: m.visibleHostiles(),
 		InCombat:        m.InCombat(),
 	})
+}
+
+// classifierEvents is the classifier's feed for the last tick: the real
+// event stream plus the gather→pickup mirror events.
+func (m *Match) classifierEvents() []engine.Event {
+	if len(m.lastGatherEvs) == 0 {
+		return m.lastEvs
+	}
+	return append(append([]engine.Event{}, m.lastEvs...), m.lastGatherEvs...)
 }
 
 // visibleHostiles lists the hostile ids inside the player's current
@@ -435,6 +513,8 @@ func (m *Match) classifyIntents() string {
 		case "transfer":
 			return "pickup"
 		case "assemble":
+			return "assemble"
+		case "equip": // WPB：equip 是装配类意图（与 assemble 同级），预测口径并入同类创造行为
 			return "assemble"
 		case "activate":
 			if c := player.Component(in.Component); c != nil {

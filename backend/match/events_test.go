@@ -445,3 +445,22 @@ func TestV04TriggerSequenceDeterminism(t *testing.T) {
 		t.Fatalf("事件流不一致：\n--- A ---\n%s\n--- B ---\n%s", ev1, ev2)
 	}
 }
+
+// —— v0.5 WPB：equip 进预测口径（装配类意图 → "assemble"）——
+
+func TestClassifyEquipAsAssemble(t *testing.T) {
+	w := engine.NewWorldTerrain(1, nil)
+	p := &engine.Entity{
+		Kind: "agent", Owner: "player", Essence: engine.Wood,
+		Integrity: 100, MaxIntegrity: 100, Battery: 100, MaxBattery: 100,
+	}
+	w.Spawn(p)
+	m := &Match{W: w, PlayerID: p.ID}
+	m.lastIntents = []engine.Intent{{
+		Type:      "equip",
+		Blueprint: []engine.CompSpec{{Type: engine.CEmitter}},
+	}}
+	if got := m.classifyIntents(); got != "assemble" {
+		t.Fatalf("equip 预测口径 = %q, want %q", got, "assemble")
+	}
+}

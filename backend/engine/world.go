@@ -313,13 +313,14 @@ func (w *World) At(p Hex) *Cell {
 // （未来天空/虚空层）留的桩.
 func (w *World) InBounds(Hex) bool { return true }
 
-// EntityAt returns an entity at p that blocks movement (fragments do
-// not block), or nil. Iteration order is deterministic for v0.1: the
-// lowest entity id wins.
+// EntityAt returns an entity at p that blocks movement (fragments and
+// v0.5 WPA 资源晶簇 do not block——晶簇与 fragment 同类：走过、站上皆可，
+// 采集由 match 层对 transfer 的扩展结算), or nil. Iteration order is
+// deterministic for v0.1: the lowest entity id wins.
 func (w *World) EntityAt(p Hex) *Entity {
 	var found *Entity
 	for id, e := range w.Entities {
-		if e.Pos != p || e.Kind == "fragment" {
+		if e.Pos != p || e.Kind == "fragment" || e.Kind == "resource" {
 			continue
 		}
 		if found == nil || id < found.ID {

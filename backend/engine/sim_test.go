@@ -377,3 +377,137 @@ func TestMoveToRejectsUnreachable(t *testing.T) {
 		t.Errorf("rejected order must not move, pos = %v", p.Pos)
 	}
 }
+
+// ---- v0.5 经济循环：equip 意图（装备自身·武装反击）----
+
+// newBareAgentWorld builds a world whose player has no Emitter: 躯壳 +
+// 储气 + 灵机 three roots, ready to equip 离火 for the counterattack.
+func newBareAgentWorld() (*World, *Entity) {
+	w := NewWorldTerrain(42, nil)
+	p := &Entity{
+		Pos: Hex{1, 1}, Kind: "agent", Owner: "player", Essence: Wood,
+		Integrity: 100, MaxIntegrity: 100, Battery: 100, MaxBattery: 100,
+	}
+	p.AddComponent(CFrame, Wood)
+	p.AddComponent(CBattery, Earth)
+	p.AddComponent(CMotor, Wood)
+	w.Spawn(p)
+	return w, p
+}
+
+// equip 消耗物料并生效：装离火 → HasEmitter，可 activate 反击假想敌。
+func TestEquipInstallsEmitterAndEnablesCounterattack(t *testing.T) {
+	w, p := newBareAgentWorld()
+	w.Materials["player"] = map[Essence]int{Fire: 1}
+	evs := w.Advance(map[EntityID][]Intent{p.ID: {{Type: "equip", Blueprint: []CompSpec{{Type: CEmitter}}}}})
+	if p.FindComponent(CEmitter) == nil {
+		t.Fatalf("emitter not installed, events %+v", evs)
+	}
+	if p.Battery != 97 { // 100 - EnergyCost(300) = 3
+		t.Errorf("battery = %d, want 97", p.Battery)
+	}
+	if w.Materials["player"][Fire] != 0 {
+		t.Errorf("fire material = %d, want 0", w.Materials["player"][Fire])
+	}
+	if len(evs) == 0 || evs[0].Type != "equip" || evs[0].Text != "装备 离火(火)，仓库消耗 火×1" {
+		t.Errorf("equip event = %+v", evs)
+	}
+	// 装上即生效：下一 tick activate 反击相邻假想敌（木躯壳，火不克木，
+	// 中性 ×0.5：400×0.5/10 = 20 伤）。
+	foe := &Entity{Pos: Hex{2, 1}, Kind: "agent", Owner: "unknown", Essence: Wood, Integrity: 60, MaxIntegrity: 60, Battery: 60, MaxBattery: 60}
+	w.Spawn(foe)
+	em := p.FindComponent(CEmitter)
+	evs = w.Advance(map[EntityID][]Intent{p.ID: {{Type: "activate", Component: em.ID, Target: foe.ID, Power: 400}}})
+	if !hasEvent(evs, "attack") {
+		t.Fatalf("counterattack did not land, events %+v", evs)
+	}
+	if foe.Integrity != 40 {
+		t.Errorf("foe integrity = %d, want 40", foe.Integrity)
+	}
+}
+
+// Frame/Battery 是身体之根，不可 equip。
+func TestEquipRejectsFrameAndBattery(t *testing.T) {
+	w, p := newBareAgentWorld()
+	w.Materials["player"] = map[Essence]int{Metal: 5, Earth: 5}
+	before := len(p.Components)
+	for _, ct := range []ComponentType{CFrame, CBattery} {
+		evs := w.Advance(map[EntityID][]Intent{p.ID: {{Type: "equip", Blueprint: []CompSpec{{Type: ct}}}}})
+		if len(evs) == 0 || evs[0].Type != "intent_rejected" {
+			t.Errorf("%s should be rejected, got %+v", ct, evs)
+		}
+	}
+	if len(p.Components) != before {
+		t.Errorf("components changed: %d → %d", before, len(p.Components))
+	}
+	if w.Materials["player"][Metal] != 5 || w.Materials["player"][Earth] != 5 {
+		t.Errorf("materials consumed on rejection: %+v", w.Materials["player"])
+	}
+}
+
+// 物料不足拒绝（all-or-nothing：两个组件同需 火×1 而库存只有 1 → 全拒）。
+func TestEquipRejectsInsufficientMaterials(t *testing.T) {
+	w, p := newBareAgentWorld()
+	w.Materials["player"] = map[Essence]int{Fire: 1}
+	evs := w.Advance(map[EntityID][]Intent{p.ID: {{Type: "equip", Blueprint: []CompSpec{{Type: CEmitter}, {Type: CEmitter}}}}})
+	if len(evs) == 0 || evs[0].Type != "intent_rejected" {
+		t.Fatalf("should be rejected, got %+v", evs)
+	}
+	if p.FindComponent(CEmitter) != nil {
+		t.Errorf("component installed despite rejection")
+	}
+	if w.Materials["player"][Fire] != 1 {
+		t.Errorf("fire = %d, want 1 (all-or-nothing)", w.Materials["player"][Fire])
+	}
+}
+
+// 身体复杂度预算：组件总数 ≤8（含躯壳与储气）。
+func TestEquipRejectsOverComplexityBudget(t *testing.T) {
+	w, p := newBareAgentWorld()
+	w.Materials["player"] = map[Essence]int{Water: 5, Earth: 5}
+	for _, ct := range []ComponentType{CStorage, CCooling, CProcessor, CSensor, CStorage} { // 3 + 5 = 8
+		p.AddComponent(ct, Earth)
+	}
+	evs := w.Advance(map[EntityID][]Intent{p.ID: {{Type: "equip", Blueprint: []CompSpec{{Type: CCooling}}}}})
+	if len(evs) == 0 || evs[0].Type != "intent_rejected" {
+		t.Errorf("9th component should be rejected, got %+v", evs)
+	}
+	if len(p.Components) != 8 {
+		t.Errorf("components = %d, want 8", len(p.Components))
+	}
+	// 蓝图合计也计入预算：7 组件身体 + 双件蓝图 = 9 → 拒
+	w2, q := newBareAgentWorld()
+	w2.Materials["player"] = map[Essence]int{Water: 5, Earth: 5}
+	for _, ct := range []ComponentType{CStorage, CCooling, CProcessor, CSensor} { // 3 + 4 = 7
+		q.AddComponent(ct, Earth)
+	}
+	evs = w2.Advance(map[EntityID][]Intent{q.ID: {{Type: "equip", Blueprint: []CompSpec{{Type: CCooling}, {Type: CStorage}}}}})
+	if len(evs) == 0 || evs[0].Type != "intent_rejected" {
+		t.Errorf("7+2=9 should be rejected, got %+v", evs)
+	}
+}
+
+// 装第二个感识不叠加感知半径（v0.1 单组件语义）：半径仍 4 → 61 格。
+func TestEquipSecondSensorDoesNotStackPerception(t *testing.T) {
+	w, p := newTestWorld() // 自带一个感识
+	w.Materials["player"] = map[Essence]int{Water: 1}
+	evs := w.Advance(map[EntityID][]Intent{p.ID: {{Type: "equip", Blueprint: []CompSpec{{Type: CSensor}}}}})
+	if len(evs) == 0 || evs[0].Type != "equip" {
+		t.Fatalf("second sensor should install, got %+v", evs)
+	}
+	sensors := 0
+	for _, c := range p.Components {
+		if c.Type == CSensor {
+			sensors++
+		}
+	}
+	if sensors != 2 {
+		t.Fatalf("sensors = %d, want 2", sensors)
+	}
+	s := p.FindComponent(CSensor)
+	w.Advance(map[EntityID][]Intent{p.ID: {{Type: "activate", Component: s.ID}}})
+	obs := w.Observe(p.ID, nil)
+	if len(obs.Visible) != 61 { // radius 4 → 3·16+12+1
+		t.Errorf("visible = %d, want 61 (半径不叠加)", len(obs.Visible))
+	}
+}
