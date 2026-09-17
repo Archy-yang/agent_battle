@@ -45,16 +45,50 @@ export interface Observation {
   events: Event[]
 }
 
+export type GuidanceKind = 'whisper' | 'guide' | 'deeplink' | 'information'
+
 export interface Guidance {
   turn: number
   kind: string
   text: string
 }
 
+// LLM 每回合自我报告的显式认知摘要
+export interface Cognition {
+  goal: string
+  plan: string
+  known: string
+  suspicions: string
+  risk: string
+  confidence: number
+}
+
+export interface Prediction {
+  turn: number
+  choice: string
+  resolved: boolean
+  actual?: string
+  hit: boolean
+}
+
+export interface QAEntry {
+  turn: number
+  question: string
+  answer: string
+}
+
+export interface Review {
+  summary: string
+  lessons: string[]
+}
+
+export type PredictChoice = 'move' | 'sense' | 'attack' | 'pickup' | 'assemble' | 'wait'
+
 export interface StateView {
   id: string
   seed: number
   pack: string
+  pilot: string
   status: 'running' | 'won' | 'lost' | 'timeout'
   turn: number
   turn_limit: number
@@ -62,6 +96,13 @@ export interface StateView {
   explored: Vec2[]
   events: Event[]
   guidance: Guidance[]
+  influence: number
+  costs: Record<string, number>
+  cognition: Cognition | null
+  predictions: Prediction[]
+  pending: Prediction | null
+  qa: QAEntry[]
+  review: Review | null
 }
 
 const ESSENCE_NAMES = ['木', '火', '土', '金', '水'] as const
@@ -72,11 +113,13 @@ const ESSENCE_COLORS = ['#4a9', '#e55', '#cb6', '#ccc', '#59d'] as const
 
 export const essenceColor = (e: number): string => ESSENCE_COLORS[e] ?? '#888'
 
+// body 传 undefined 表示 GET；传 null 表示无 body 的 POST（如 pause）。
 export async function api<T>(path: string, body?: unknown): Promise<T> {
+  const hasBody = body !== undefined
   const res = await fetch(path, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    method: hasBody ? 'POST' : 'GET',
+    headers: hasBody && body !== null ? { 'Content-Type': 'application/json' } : undefined,
+    body: hasBody && body !== null ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
