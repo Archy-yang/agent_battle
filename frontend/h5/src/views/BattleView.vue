@@ -10,10 +10,10 @@ import {
   predictBusy, predictError, predict,
   costOf, choiceLabel,
   step, runToEnd,
-  triggerLabel,
+  triggerLabel, isRivalEnemy,
 } from '../state'
 import { essenceName, essenceColor, essenceColorByName } from '../api'
-import type { TacticsView } from '../api'
+import type { EnemyView, TacticsView } from '../api'
 import type { BattleStateView } from '../types-battle'
 
 // ---- 视图（战斗扩展字段，旧契约下为 undefined → 走空态渲染） ----
@@ -82,6 +82,17 @@ const ZONE_COLORS: Record<string, string> = {
   中性: '#8d95a1',
 }
 const zoneColor = (z: string): string => ZONE_COLORS[z] ?? '#8d95a1'
+
+// ---- v0.9 敌对 Agent（rival）----
+// rival 与怪物同列表渲染（enemies 已含 rival），此处只做区分呈现：
+// 「Rival」徽标（金色描边）+ integrity 仪表。max_integrity 来自
+// StateView.rival（后端并行开发中可能缺失 → 退化为满格仪表 + 只显形值）。
+const rivalMaxIntegrity = (e: EnemyView): number => {
+  const r = bv.value?.rival
+  return r && r.id === e.id && r.max_integrity > 0 ? r.max_integrity : e.integrity
+}
+const rivalIntegrityPct = (e: EnemyView): number => pct(e.integrity ?? 0, rivalMaxIntegrity(e))
+const isRivalFoe = (e: EnemyView): boolean => isRivalEnemy(e)
 </script>
 
 <template>
@@ -133,10 +144,16 @@ const zoneColor = (z: string): string => ZONE_COLORS[z] ?? '#8d95a1'
         >
           <div class="foe-head">
             <b :style="{ color: essenceColor(e.essence) }">{{ essenceName(e.essence) }}系 #{{ e.id }}</b>
+            <span v-if="isRivalFoe(e)" class="rival-badge">Rival</span>
             <span v-if="e.distance <= 1" class="engage">接战中</span>
             <span v-else class="dist">{{ e.distance }} 格</span>
           </div>
           <div class="foe-stats">本源 {{ essenceName(e.essence) }} · 形 {{ e.integrity }} · 热 {{ e.heat }}</div>
+          <!-- v0.9 rival integrity 仪表（怪物卡没有；max 缺失时退化为满格） -->
+          <div v-if="isRivalFoe(e)" class="foe-meter">
+            <div class="track"><div class="fill" :style="{ width: rivalIntegrityPct(e) + '%', background: 'var(--earth)' }"></div></div>
+            <span class="mval">形 {{ e.integrity }}/{{ rivalMaxIntegrity(e) }}</span>
+          </div>
           <!-- v0.6 克关系战术预览：引擎演算的落区推算（无离火 → 提示行） -->
           <div v-if="tacticOf(e.id)" class="tactic">
             <template v-if="tacticOf(e.id)!.my_essence">
@@ -152,10 +169,15 @@ const zoneColor = (z: string): string => ZONE_COLORS[z] ?? '#8d95a1'
       </div>
     </div>
 
-    <!-- v0.5 战斗反馈：最近 LLM 触发原因 + 本局调用计数 -->
+    <!-- v0.5 战斗反馈：最近 LLM 触发原因 + 本局调用计数（v0.9 追加 rival 对称触发） -->
     <div class="trigger-row">
       <span class="tl-label">触发原因</span>
       <b class="tl-value">{{ triggerLabel(view?.last_trigger) }}</b>
+      <template v-if="view?.rival_trigger">
+        <span class="tl-sep">·</span>
+        <span class="tl-label">敌手触发</span>
+        <b class="tl-value rival-tl">{{ triggerLabel(view.rival_trigger) }}</b>
+      </template>
       <span class="tl-sep">·</span>
       <span>本局 LLM 判断 {{ view?.llm_calls ?? 0 }} 次</span>
     </div>
@@ -326,6 +348,19 @@ const zoneColor = (z: string): string => ZONE_COLORS[z] ?? '#8d95a1'
   border: 1px solid var(--fire); border-radius: 8px; padding: 0 6px;
 }
 .foe-stats { color: #aab2bd; margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+/* ---- v0.9 rival 区分：金色描边徽标 + integrity 仪表 ---- */
+.rival-badge {
+  color: var(--accent); font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.5px;
+  border: 1px solid var(--accent); border-radius: 8px; padding: 0 6px;
+  background: rgba(201, 164, 74, 0.08);
+}
+.foe-meter { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.foe-meter .track { flex: 1; height: 6px; border-radius: 3px; background: #0c0f13; border: 1px solid var(--border); overflow: hidden; }
+.foe-meter .fill { height: 100%; border-radius: 3px; transition: width .25s ease; }
+.foe-meter .mval { font-size: 11px; color: #aab2bd; min-width: 48px; font-variant-numeric: tabular-nums; }
+.trigger-row .tl-value.rival-tl { color: var(--earth); border-color: #6a5426; }
 
 /* ---- v0.6 克关系战术预览行 ---- */
 .tactic {

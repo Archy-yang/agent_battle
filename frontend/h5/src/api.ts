@@ -129,6 +129,25 @@ export interface StateView {
   // combat 触发的 LLM 战术解说（Agent 的话，≤50 字第一人称）。它们同时
   // 以 type "commentary" 混在 events 展示流里；此字段供单独消费。
   commentary?: Event[]
+  // ---- v0.9 追加字段（敌对 Agent / rival，backend 并行开发中，旧对局下为 undefined） ----
+  // rival 的状态视图（感知内或已知信息；不可见/未实现时为 null 或 undefined）
+  rival?: RivalView | null
+  // rival 最近一次触发原因（对称于 last_trigger；可能 undefined）
+  rival_trigger?: string
+}
+
+// v0.9：敌对 Agent（rival）状态视图（backend StateView.rival）。
+// rival = LLM/脚本驱动的敌对 Agent 实体（kind:"agent"、owner:"rival"），
+// 走与玩家对称的 AgentProtocol。essence 服务端可能下发数字索引或五行
+// 中文名（两套视图现状不一致），前端按 number | string 容错处理。
+// 所有字段均可能缺失（旧对局 / 后端未上线），消费方必须 ?? 兜底。
+export interface RivalView {
+  id: number
+  pos: Hex
+  essence: number | string
+  integrity: number
+  max_integrity: number
+  heat: number
 }
 
 // M3.4：感知范围内的一名敌对实体（backend EnemyView）。
@@ -139,6 +158,9 @@ export interface EnemyView {
   essence: string // 五行中文名：木/火/土/金/水
   integrity: number
   heat: number
+  // v0.9：实体归属；rival = 敌对 Agent。旧后端不下发（undefined），
+  // 归属判定须配合 StateView.rival.id 匹配兜底。
+  owner?: string
 }
 
 // v0.6：克关系战术预览卡（backend TacticsView）。

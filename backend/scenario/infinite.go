@@ -141,6 +141,109 @@ func V04(seed uint64) *Pack {
 	}
 }
 
+// —— v0.9 敌对 Agent（rival）：scenario/infinite-0.5 ——
+//
+// V04 的世界 + 一具敌对 Agent 身体。三铁律 (docs/world_genesis.md §5.2)
+// 在包层的落实：敌人是 Entity（与普通怪物同一条 Genesis 装配链，无特例
+// 物理）；敌人没有特权 AI（本包只造身体，智能由 match 侧经 DecisionMaker
+// 挂接，见 match/rival.go）；敌人是诚实的（Sensor/Emitter 组件如实登记，
+// 金甲必有回波）。
+
+// TemperRival marks the hand-placed rival in a pack's MonsterSpawns.
+// match 侧据此把它从普通怪物升级为 rival：身体升级（PromoteRival）+
+// 挂 DecisionMaker 与独立 EventClassifier。
+const TemperRival = "rival"
+
+// V05TurnLimit is the v0.5 turn limit (与 V04TurnLimit 同为 60).
+const V05TurnLimit = V04TurnLimit
+
+// RivalSpawnFor computes the rival's birth cell from the seed：玩家对角
+// ——取 Fragment 12 向的相反方向（构造上与 Fragment 相背：玩家向
+// Fragment 进发，rival 从对角合围），HexDist(出生点, rival) ∈ 10..14。
+// 纯函数 (seed, 地形)：落点遇顽石、或撞上 Fragment/taken 中的已占格
+// （Unknown、出生环怪物）时沿同方向逐步内移重试——确定性可重放.
+func RivalSpawnFor(seed uint64, frag engine.Hex, passable func(engine.Hex) bool, taken map[engine.Hex]bool) engine.Hex {
+	ss := strconv.FormatUint(seed, 10)
+	k := int(engine.Hash01(ss, "rival-dir", 0, 0)*12) % 12
+	u := fragmentDirs12()[k]
+	for d := 10 + int(engine.Hash01(ss, "rival-dist", 0, 0)*5); d >= 6; d-- { // 10..14，受阻内移
+		pos := engine.Hex{Q: -u.Q * (d / 2), R: -u.R * (d / 2)} // 对角 = Fragment 方向的反向（-u 仍在 12 向环上）
+		if d%2 == 1 {                                           // 奇数距离以"再向外一步"补足（与 FragmentFor 同构）
+			origin := engine.Hex{}
+			for _, dir := range engine.HexDirs {
+				if engine.HexDist(pos.Add(dir), origin) == d {
+					pos = pos.Add(dir)
+					break
+				}
+			}
+		}
+		if pos != frag && !taken[pos] && passable(pos) {
+			return pos
+		}
+	}
+	return engine.Hex{Q: -u.Q * 5, R: -u.R * 5} // 兜底：HexDist 10（V04 顽石极稀疏，实际不可达此分支）
+}
+
+// RivalSpecIndex returns the index of the rival spec (TemperRival) in
+// the pack's MonsterSpawns, or -1 when the pack has no rival.
+func RivalSpecIndex(p *Pack) int {
+	for i := range p.MonsterSpawns {
+		if p.MonsterSpawns[i].Temper == TemperRival {
+			return i
+		}
+	}
+	return -1
+}
+
+// PromoteRival upgrades the hand-placed monster into the rival body in
+// place：Sensor 加身（感识可开，半径 1→4）、储气扩容（追击预算）。其余
+// ——躯壳/储气/灵机/离火、形——与普通怪物同构（铁律一：敌人是 Entity，
+// Intent → Engine 同一条物理链）。
+func PromoteRival(w *engine.World, id engine.EntityID) engine.EntityID {
+	e := w.Entities[id]
+	if e == nil {
+		return 0
+	}
+	e.AddComponent(engine.CSensor, engine.Water)
+	e.Battery, e.MaxBattery = 100, 100
+	return id
+}
+
+// V05 is 场景包 #4：scenario/infinite-0.5 = V04 的世界 + 一具敌对
+// Agent（rival，world_genesis §5.2 敌人走 Agent Protocol）。rival 出生
+// 在玩家对角（HexDist 10~14，与 Fragment 相背），五行与玩家错开——玩家
+// 木架、rival 金甲（金克木，天然克制关系制造张力）；形 100，组件
+// Frame+Battery+Motor+Emitter（火）+Sensor。其余（地形、Fragment、
+// Unknown、出生环三 wanderer、懒激活）与 V04 逐位一致。
+func V05(seed uint64) *Pack {
+	p := V04(seed)
+	p.Name = "scenario/infinite-0.5"
+	p.TurnLimit = V05TurnLimit
+	taken := map[engine.Hex]bool{p.UnknownSpawn: true}
+	for _, ms := range p.MonsterSpawns {
+		taken[ms.Pos] = true
+	}
+	pos := RivalSpawnFor(seed, p.FragmentPos, p.Passable, taken)
+	p.MonsterSpawns = append(p.MonsterSpawns, MonsterSpec{
+		Essence: engine.Metal, Form: 100, Pos: pos, Temper: TemperRival,
+	})
+	return p
+}
+
+// GenesisV05 instantiates the v0.5 world and additionally returns the
+// rival's entity id (0 when the pack has no rival spec)；rival 身体在
+// 返回前完成升级（PromoteRival）。match 侧对任意包走同一升级协议
+// （newMatch 按 RivalSpecIndex 识别），本函数供包级消费者/测试使用.
+func GenesisV05(seed uint64) (*engine.World, engine.EntityID, engine.EntityID, engine.EntityID, []engine.EntityID, engine.EntityID) {
+	p := V05(seed)
+	w, player, unknown, frag, monsters := p.Genesis()
+	rival := engine.EntityID(0)
+	if idx := RivalSpecIndex(p); idx >= 0 && idx < len(monsters) {
+		rival = PromoteRival(w, monsters[idx])
+	}
+	return w, player, unknown, frag, monsters, rival
+}
+
 // —— 怪物懒激活 (design §2.4/§2.5) ——
 //
 // 原则：纯函数 + 调用方持状态。某 chunk 是否已激活由调用方（match 的

@@ -46,6 +46,16 @@ type StateView struct {
 	// Enemies lists the hostile entities inside the player's perception
 	// radius (4 with the sensor on, 1 with it off).
 	Enemies []EnemyView `json:"enemies"`
+	// RivalTrigger is the rival's most recent EventClassifier trigger
+	// reason（v0.9，对称于 LastTrigger 的 rival 侧）: arrive | encounter |
+	// resource | threshold:* | heartbeat | combat | guidance. Empty
+	// string = rival 尚无触发（含本包无 rival 的情形）.
+	RivalTrigger string `json:"rival_trigger"`
+	// Rival is the v0.9 敌对 Agent 状态摘要（world_genesis §5.2）: 仅当
+	// rival 实体在玩家感知半径内时非 nil 且为实时数据——信息边界与
+	// Enemies/Tactics 同源（visibleHostiles），雾后位置不剧透。nil =
+	// rival 不在感知内 / 本包无 rival / rival 已形散.
+	Rival *RivalSummary `json:"rival"`
 	// Tactics is the v0.6 克关系战术预览: one card per hostile inside
 	// the same perception radius as Enemies (world_laws §5 克曲线的公开
 	// 推论——落区由引擎演算，不扩大信息边界).
@@ -72,6 +82,24 @@ type EnemyView struct {
 	Essence   string          `json:"essence"`
 	Integrity int             `json:"integrity"`
 	Heat      int             `json:"heat"`
+	// Owner is the entity's归属 (v0.9): "rival"（敌对 Agent，走 Agent
+	// Protocol）| "monster"（WPC 怪物）| "unknown"（Unknown Agent）。
+	// rival 实体由怪物升级而来（scenario.PromoteRival），底层 Owner 仍是
+	// "monster"——对玩家视图改标 "rival"，前端 isRivalEnemy 据此区分
+	// rival 与普通怪物.
+	Owner string `json:"owner"`
+}
+
+// RivalSummary is the v0.9 rival 状态摘要 (StateView.rival): 实时数据仅
+// 在感知内可见（信息边界见 StateView.Rival）。Essence 为五行中文名，
+// 与 EnemyView.Essence 同一编码.
+type RivalSummary struct {
+	ID           engine.EntityID `json:"id"`
+	Pos          engine.Hex      `json:"pos"`
+	Essence      string          `json:"essence"`
+	Integrity    int             `json:"integrity"`
+	MaxIntegrity int             `json:"max_integrity"`
+	Heat         int             `json:"heat"`
 }
 
 // Registry is an in-memory match registry (v0.1 single-process; the
@@ -89,7 +117,7 @@ func NewRegistry(prof *profile.Store) *Registry {
 }
 
 // Create starts a new match. scenarioName selects the pack — "mvp"
-// (default), "v02" or "v04"; the variadic keeps old call sites
+// (default), "v02", "v04" or "v05"; the variadic keeps old call sites
 // unchanged. An unknown scenario name yields nil (callers turn that
 // into a client-facing error). seed 0 → fixed default.
 func (r *Registry) Create(seed uint64, scenarioName ...string) *Match {
@@ -110,6 +138,8 @@ func (r *Registry) Create(seed uint64, scenarioName ...string) *Match {
 		m = NewV02("", seed, r.profile)
 	case "v04":
 		m = NewV04("", seed, r.profile)
+	case "v05":
+		m = NewV05("", seed, r.profile)
 	default: // 未知场景：不落库，交由调用方报错
 		return nil
 	}
@@ -160,6 +190,7 @@ func (m *Match) View() *StateView {
 	}
 	var order *engine.Hex
 	enemies := []EnemyView{}
+	var rival *RivalSummary
 	player := m.W.Entities[m.PlayerID]
 	if player != nil {
 		if player.OrderTo != nil { // 持久订单（M3.0）：直接读实体
@@ -171,35 +202,46 @@ func (m *Match) View() *StateView {
 			if e == nil {
 				continue
 			}
+			owner := e.Owner
+			if id == m.RivalID { // v0.9：rival 由怪物升级而来，底层 Owner 仍是 "monster"，视图改标 "rival"
+				owner = "rival"
+				rival = &RivalSummary{
+					ID: id, Pos: e.Pos, Essence: e.Essence.String(),
+					Integrity: e.Integrity, MaxIntegrity: e.MaxIntegrity, Heat: e.Heat,
+				}
+			}
 			enemies = append(enemies, EnemyView{
 				ID: id, Pos: e.Pos, Distance: engine.HexDist(player.Pos, e.Pos),
 				Essence:   e.Essence.String(),
 				Integrity: e.Integrity, Heat: e.Heat,
+				Owner: owner,
 			})
 		}
 	}
 	return &StateView{
 		ID: m.ID, Seed: m.Seed, Pack: m.PackName, Pilot: m.PilotName,
 		Status: m.Status, Turn: m.W.Tick, TurnLimit: m.TurnLimit,
-		Influence:   m.Influence,
-		Observation: obs,
-		Cognition:   m.Cognition,
-		Explored:    explored,
-		Events:      m.Events,
-		Guidance:    m.Guidance,
-		Predictions: preds,
-		Pending:     m.pending,
-		QA:          qa,
-		Review:      m.ReviewRes,
-		Costs:       costs,
-		Materials:   materials,
-		Order:       order,
-		InCombat:    m.InCombat(),
-		Enemies:     enemies,
-		Tactics:     m.Tactics(),
-		LastTrigger: m.lastTrigger,
-		LLMCalls:    m.llmCalls,
-		Commentary:  commentary,
+		Influence:    m.Influence,
+		Observation:  obs,
+		Cognition:    m.Cognition,
+		Explored:     explored,
+		Events:       m.Events,
+		Guidance:     m.Guidance,
+		Predictions:  preds,
+		Pending:      m.pending,
+		QA:           qa,
+		Review:       m.ReviewRes,
+		Costs:        costs,
+		Materials:    materials,
+		Order:        order,
+		InCombat:     m.InCombat(),
+		Enemies:      enemies,
+		Rival:        rival,
+		RivalTrigger: m.LastRivalTrigger(),
+		Tactics:      m.Tactics(),
+		LastTrigger:  m.lastTrigger,
+		LLMCalls:     m.llmCalls,
+		Commentary:   commentary,
 	}
 }
 

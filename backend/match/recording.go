@@ -27,12 +27,15 @@ const replayDefaultSeed = 20260917
 
 // Frame is one recorded tick (v0.7): 该 tick 实际进入引擎的玩家侧意图
 // 与随之产生的事件。Auto 标记 pilot 自动决策（TickAuto）；回放只消费
-// PlayerIntents，Auto 仅为审计/前端播发器所需。
+// PlayerIntents 与 RivalIntents，Auto 仅为审计/前端播发器所需。
+// v0.9：RivalIntents 是 rival 该 tick 实际进入引擎的意图——rival 与
+// 玩家同规则（不重跑任何 pilot，LLM rival 亦然），回放按记录重演.
 type Frame struct {
 	Tick            int64           `json:"tick"`
-	PlayerIntents   []engine.Intent `json:"player_intents"`        // Tick 调用的原样记录
-	Auto            bool            `json:"auto"`                  // 是否 pilot 自动决策
-	ResultingEvents []engine.Event  `json:"resulting_events"`      // 该 tick 产生的事件（回放校验基准）
+	PlayerIntents   []engine.Intent `json:"player_intents"`   // Tick 调用的原样记录
+	RivalIntents    []engine.Intent `json:"rival_intents"`    // v0.9：rival 该 tick 进入引擎的意图
+	Auto            bool            `json:"auto"`             // 是否 pilot 自动决策
+	ResultingEvents []engine.Event  `json:"resulting_events"` // 该 tick 产生的事件（回放校验基准）
 }
 
 // Recording is one full match's replay record (world_genesis §7)：
@@ -77,11 +80,11 @@ type ReplayRequest struct {
 // canonical pack names onto the match constructors, so a Recording is
 // replayable whichever spelling its Scenario field carries.
 var replayConstructors = map[string]func(string, uint64, *profile.Store) *Match{
-	"mvp":                New,
-	"v02":                NewV02,
-	"v04":                NewV04,
-	"scenario/mvp-0.1":   New,
-	"scenario/v02-0.2":   NewV02,
+	"mvp":                   New,
+	"v02":                   NewV02,
+	"v04":                   NewV04,
+	"scenario/mvp-0.1":      New,
+	"scenario/v02-0.2":      NewV02,
 	"scenario/infinite-0.4": NewV04,
 }
 
@@ -109,8 +112,9 @@ func Replay(rec *Recording, untilTick int64) (*Match, error) {
 		m.ID = rec.ID + "/replay"
 	}
 	m.Pilot, m.PilotName = nil, "replay" // 绝不咨询 pilot，更不重跑 LLM
+	m.RivalPilot = nil                   // v0.9：rival 同规则——绝不重跑，意图按帧记录重演
 	m.rec = nil                          // 回放局自身不录像
-	if untilTick <= 0 { // 缺省：重演到录像尽头
+	if untilTick <= 0 {                  // 缺省：重演到录像尽头
 		if n := len(rec.Frames); n > 0 {
 			untilTick = rec.Frames[n-1].Tick
 		}
@@ -122,7 +126,7 @@ func Replay(rec *Recording, untilTick int64) (*Match, error) {
 		if f.Tick != m.W.Tick+1 {
 			return nil, fmt.Errorf("replay: 帧序断裂：帧 tick %d，期望 %d", f.Tick, m.W.Tick+1)
 		}
-		m.Tick(f.PlayerIntents)
+		m.TickWith(f.PlayerIntents, f.RivalIntents) // v0.9：rival 意图按帧记录重演
 		if !slices.Equal(m.lastEvs, f.ResultingEvents) {
 			return nil, fmt.Errorf("%w（tick %d 事件流分歧）", ErrReplayMismatch, f.Tick)
 		}

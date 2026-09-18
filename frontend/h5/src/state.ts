@@ -1,7 +1,7 @@
 // 全局共享状态 + 对局动作：所有视图组件只通过本模块通信，不在 view 里重复 fetch 逻辑。
 import { computed, ref, watch } from 'vue'
 import {
-  api, essenceName,
+  api, essenceColor, essenceColorByName, essenceName,
   type BlueprintSpec, type ExploredCell, type GuidanceKind, type Hex,
   type PredictChoice, type StateView,
 } from './api'
@@ -449,3 +449,54 @@ export async function pause() {
     predictBusy.value = false
   }
 }
+
+// ---------- v0.9 敌对 Agent（rival） ----------
+// rival = LLM/脚本驱动的敌对 Agent 实体（kind:"agent"、owner:"rival"）。
+// 后端并行开发中：observation.entities / enemies / state.rival 三处都可能
+// 尚未携带 rival，本模块统一收敛为只读投影，消费方（MapView/BattleView）
+// 不重复判定；所有字段 undefined 时投影为空，页面照常渲染。
+
+// rival 本源 → 语义色：数字索引走五行色表，中文名走名字色表，缺省中性灰。
+export const rivalEssenceColor = (essence?: number | string): string =>
+  typeof essence === 'number' ? essenceColor(essence) : essenceColorByName(essence ?? '')
+
+// 归属判定：owner 字段缺失的旧契约下，用 StateView.rival.id 匹配兜底。
+export const isRivalEnemy = (e: { id: number; owner?: string }): boolean => {
+  if (e.owner != null) return e.owner === 'rival'
+  return view.value?.rival != null && view.value.rival.id === e.id
+}
+
+// 感知内的 rival 目击列表（observation.entities 优先，enemies 兜底；
+// 同格去重）。空 = 感知内没有 rival（或后端未下发）。
+export interface RivalSighting {
+  key: string
+  pos: Hex
+  color: string
+}
+export const rivalSightings = computed<RivalSighting[]>(() => {
+  const out: RivalSighting[] = []
+  const seen = new Set<string>()
+  const push = (pos: Hex | undefined, essence: number | string | undefined) => {
+    if (!pos) return
+    const k = `${pos.q},${pos.r}`
+    if (seen.has(k)) return
+    seen.add(k)
+    out.push({ key: k, pos, color: rivalEssenceColor(essence) })
+  }
+  for (const e of view.value?.observation?.entities ?? []) {
+    if (e.owner === 'rival') push(e.pos, e.essence)
+  }
+  for (const en of view.value?.enemies ?? []) {
+    if (isRivalEnemy(en)) push(en.pos, en.essence)
+  }
+  return out
+})
+
+// rival 是否在感知内（地图「⚠ 敌对 Agent 在场」横幅 / 对战页徽标依据）
+export const rivalInSight = computed(() => rivalSightings.value.length > 0)
+
+// StateView.rival 投影（感知内或已知信息；不可见/未实现为 null）
+export const rivalState = computed(() => view.value?.rival ?? null)
+
+// rival 最近触发原因（对称 last_trigger；可能 undefined）
+export const rivalTrigger = computed(() => view.value?.rival_trigger)

@@ -83,6 +83,16 @@ type Review struct {
 // chunk lazy-activation protocol run (scenario/infinite.go).
 const v04PackName = "scenario/infinite-0.4"
 
+// v05PackName selects the v0.5 pack: V04 的世界 + 敌对 Agent（rival），
+// 懒激活协议同样运行（V05 基于同一套 chunk 纯函数）。
+const v05PackName = "scenario/infinite-0.5"
+
+// isInfinitePack reports whether the pack runs the chunk lazy-activation
+// protocol（v0.4 起的无限世界包共用一套 PendingSpawns 纯函数）.
+func isInfinitePack(name string) bool {
+	return name == v04PackName || name == v05PackName
+}
+
 // Match is one session of one scenario pack.
 type Match struct {
 	ID        string
@@ -96,12 +106,24 @@ type Match struct {
 	UnknownID  engine.EntityID
 	FragmentID engine.EntityID
 	// MonsterIDs lists the hand-placed monsters (v0.2); empty for mvp.
-	// （v0.8：懒激活怪物不进本列表——维持 v0.4~v0.7 的静默置景；其
-	// 行为模板仍按激活 hash 登记进 minds，见 lazySpawns。）
+	// （v0.9：懒激活怪战斗化——激活怪也并入本列表按 minds 三模板行事，
+	// 见 lazySpawns；rival 在列表内但不走 monsterAct，由自己的
+	// DecisionMaker 驱动，见 rival.go。）
 	MonsterIDs []engine.EntityID
 
 	Pilot     agent.DecisionMaker
 	PilotName string // "llm" | "scripted"
+
+	// —— v0.9 敌对 Agent（rival, world_genesis §5.2 敌人走 Agent
+	// Protocol）—— RivalID 是 rival 实体 id（0 = 本包无 rival）；
+	// RivalPilot 与玩家 Pilot 完全同接口（rivalPilot = DecisionMaker），
+	// ScriptedRival 先行、LLM rival 经同一接入点挂入；rivalCls 是 rival
+	// 专属 EventClassifier 实例（与 m.cls 状态互不污染）；rivalTriggerLog
+	// 记录 rival 侧每次触发原因（观测/测试口径）。
+	RivalID         engine.EntityID
+	RivalPilot      rivalPilot
+	rivalCls        *EventClassifier
+	rivalTriggerLog []string
 
 	Status string
 
@@ -179,6 +201,13 @@ func NewV04(id string, seed uint64, prof *profile.Store) *Match {
 	return newMatch(id, seed, prof, scenario.V04(seed))
 }
 
+// NewV05 creates a match of scenario/infinite-0.5: V04 的世界 + 敌对
+// Agent（rival，world_genesis §5.2）。rival 的智能由 ScriptedRival 驱动
+// （玩家侧 LLM 配置不影响它）；LLM rival 经 Match.RivalPilot 挂入.
+func NewV05(id string, seed uint64, prof *profile.Store) *Match {
+	return newMatch(id, seed, prof, scenario.V05(seed))
+}
+
 func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) *Match {
 	w, player, unknown, frag, monsters := pack.Genesis()
 	m := &Match{
@@ -195,6 +224,7 @@ func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) 
 
 		activatedChunks: map[[2]int]bool{},                           // v0.4 懒激活：调用方持状态
 		rec:             &Recording{Seed: seed, Scenario: pack.Name}, // v0.7 录像：每 tick 一帧
+		rivalCls:        NewEventClassifier(),                        // v0.9 rival 独立分类器（无 rival 时闲置）
 	}
 	// v0.8 WPC：手摆怪物按 pack 声明登记行为模板（空/未知值回落
 	// wanderer 基线，旧包 V02/MVP 行为兼容），锚点即出生位。
@@ -205,6 +235,15 @@ func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) 
 			t = normalizeTemper(pack.MonsterSpawns[i].Temper)
 		}
 		m.minds[id] = &monsterMind{temper: t, anchor: pack.MonsterSpawns[i].Pos}
+	}
+	// v0.9 rival：TemperRival 标记的手摆实体升级为敌对 Agent——身体升级
+	// （scenario.PromoteRival：Sensor 加身、储气扩容）、挂 DecisionMaker
+	// （与玩家 pilot 同接口）与独立 EventClassifier（rivalCls 已建）。
+	// rival 的 id 保持 in MonsterIDs：玩家侧的遭遇/战斗/战术预览把它
+	// 当普通敌对实体（铁律三：敌人是诚实的）。
+	if idx := scenario.RivalSpecIndex(pack); idx >= 0 && idx < len(monsters) {
+		m.RivalID = scenario.PromoteRival(m.W, monsters[idx])
+		m.RivalPilot = NewScriptedRival(pack.MonsterSpawns[idx].Pos, pack.PlayerSpawn, pack.Passable)
 	}
 	if cfg := agent.LLMFromEnv(); cfg != nil {
 		p := agent.NewLLM(*cfg)
@@ -219,27 +258,50 @@ func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) 
 	return m
 }
 
-// Tick advances one turn with explicit player intents.
+// LastRivalTrigger returns the rival's most recent trigger reason
+// (rivalTriggerLog 的末项；rival 从未触发或本包无 rival 为 "")——
+// View.rival_trigger 的唯一读取口 (v0.9，对称于 lastTrigger).
+func (m *Match) LastRivalTrigger() string {
+	if len(m.rivalTriggerLog) == 0 {
+		return ""
+	}
+	return m.rivalTriggerLog[len(m.rivalTriggerLog)-1]
+}
+
+// Tick advances one turn with explicit player intents. rival 意图由其
+// 独立的事件驱动调度在本 tick 现算（scheduleRival，v0.9）。
 func (m *Match) Tick(intents []engine.Intent) {
+	m.TickWith(intents, m.scheduleRival())
+}
+
+// TickWith advances one turn with explicit intents for both the player
+// and the rival。回放走这里：rival 用录像帧记录的 rival_intents（与玩家
+// 同规则——不重跑任何 pilot，LLM rival 亦然，world_genesis §7）；对局内
+// 则由 Tick 先经 scheduleRival 现算。
+func (m *Match) TickWith(intents, rivalIntents []engine.Intent) {
 	defer func() { m.autoTick = false }() // 帧记完后复位（含提前返回路径）
 	if m.Status != StatusRunning {
 		return
 	}
 	acts := m.monstersAct()
+	if m.RivalID != 0 && len(rivalIntents) > 0 { // v0.9 rival：意图进同一条物理链
+		acts[m.RivalID] = rivalIntents
+	}
 	// v0.5 WPA 经济循环：指向晶簇的 transfer 不进引擎（引擎 resolveTransfer
 	// 只认 fragment），在 match 层于推进后结算采集
 	order, gathers := m.splitGathers(intents)
 	acts[m.PlayerID] = order
 	evs := m.W.Advance(acts)
 	evs = append(evs, m.resolveGathers(gathers)...)
-	evs = append(evs, m.lazySpawns()...) // v0.4 怪物/晶簇懒激活进事件流
+	evs = append(evs, m.lazySpawns()...) // v0.4/v0.5 怪物/晶簇懒激活进事件流
 	m.lastEvs = evs
 	m.lastIntents = intents
 	m.Events = append(m.Events, evs...)
-	if m.rec != nil { // v0.7 录像：每 tick 一帧（意图原样快照 + 事件基准）
+	if m.rec != nil { // v0.7 录像：每 tick 一帧（意图原样快照 + 事件基准；v0.9 起 rival 意图同规）
 		m.rec.Frames = append(m.rec.Frames, Frame{
 			Tick:            m.W.Tick,
 			PlayerIntents:   append([]engine.Intent(nil), intents...),
+			RivalIntents:    append([]engine.Intent(nil), rivalIntents...),
 			Auto:            m.autoTick,
 			ResultingEvents: append([]engine.Event(nil), evs...),
 		})
@@ -263,7 +325,7 @@ func (m *Match) Tick(intents []engine.Intent) {
 // 懒激活是 (seed, chunk, activated 演化) 的确定结果，重放不受影响
 // (design §2.5)。仅 v0.4 包接线。
 func (m *Match) lazySpawns() []engine.Event {
-	if m.PackName != v04PackName {
+	if !isInfinitePack(m.PackName) {
 		return nil
 	}
 	p := m.W.Entities[m.PlayerID]
@@ -285,12 +347,13 @@ func (m *Match) lazySpawns() []engine.Event {
 			ev.Entity = e.ID // 实体 id 在 Spawn 后才存在
 			if e.Kind == "monster" {
 				// v0.8 WPC：懒激活怪物登记行为模板（激活 hash 分配、
-				// 锚点即现身格）。本版只登记不驱行为（与 v0.4~v0.7
-				// 一致，懒激活怪保持静默置景）——模板随实体就位，为
-				// 后续战斗化铺路（届时把 e.ID 并入 MonsterIDs 即战斗化，
-				// 见 balance 实测：战斗化后 recording_test 的 seed 7
-				// 会在 t=10 早夭，须连同重采样一起做）。
+				// 锚点即现身格）。
 				m.minds[e.ID] = &monsterMind{temper: normalizeTemper(ps.Temper), anchor: e.Pos}
+				// v0.9 懒怪战斗化：激活怪并入 MonsterIDs——自本版起懒激活
+				// 怪按 minds 三模板行事（v0.4~v0.7 的静默置景退役）。副作用
+				// 已知并已处置：recording_test 依赖的"scripted 跑满 60 回合"
+				// seed 随之失效，已同步重采样（见 recording_test.go）。
+				m.MonsterIDs = append(m.MonsterIDs, e.ID)
 			}
 			evs = append(evs, ev)
 		}
@@ -732,6 +795,9 @@ func (m *Match) monstersAct() map[engine.EntityID][]engine.Intent {
 		acts[m.UnknownID] = a
 	}
 	for _, id := range m.MonsterIDs {
+		if id == m.RivalID {
+			continue // v0.9 rival 走自己的 DecisionMaker（scheduleRival），不归三模板
+		}
 		if a := m.monsterAct(id); len(a) > 0 {
 			acts[id] = a
 		}

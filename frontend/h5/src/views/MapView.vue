@@ -16,10 +16,11 @@ import {
   predictBusy, predictError, predict, pause,
   newMatch, step, runToEnd, sendMoveTo, sendTransfer, waitOneTurn, flashHint, mapHint,
   requestBattleNav, FOG,
+  rivalSightings, rivalInSight,
   derivedCognition, costOf, choiceLabel,
 } from '../state'
 import { type Hex } from '../api'
-import { hexCenter, hexKey, pickHex, zoomAt, type Camera } from '../hex'
+import { hexCenter, hexKey, pickHex, zoomAt, worldToScreen, type Camera } from '../hex'
 import { drawWorld, DEFAULT_HEX_SIZE } from '../render'
 
 // ---- 常量 ----
@@ -57,6 +58,20 @@ function centerOnSelf() {
   invalidate()
 }
 
+// ---- v0.9 敌对 Agent（rival）----
+// rival 的 👺 标记走 DOM 覆盖层而非 canvas 绘制层（../render 不含 rival
+// 语义）：drawWorld 收到的实体先滤掉 rival，再按相机投影叠在画布上，
+// 与 ❓ 未知体 / 怪物区分。后端未下发 rival 时列表为空，零渲染。
+const rivalOverlays = computed(() =>
+  rivalSightings.value.map((m) => {
+    const w = hexCenter(m.pos, HEX_SIZE)
+    const p = worldToScreen(w.x, w.y, cam.value, vp.value)
+    // 随缩放的描边圆尺寸，钳制在可读区间
+    const s = Math.max(16, Math.min(48, HEX_SIZE * cam.value.zoom * 1.15))
+    return { ...m, x: p.x, y: p.y, s }
+  }),
+)
+
 // 换局：恢复跟随并居中；每回合 self 移动且跟随开启时居中
 watch(selfHex, () => { if (follow.value) centerOnSelf() })
 watch(() => view.value?.id, () => { follow.value = true; centerOnSelf() })
@@ -72,9 +87,10 @@ function draw() {
     ctx,
     view: {
       self: o?.self ?? null,
+      // rival 由 DOM 覆盖层单独渲染成 👺，不进 canvas 实体层（避免画成 ❓）
       visible: o?.visible ?? [],
-      entities: o?.entities ?? [],
-      enemies: view.value?.enemies ?? [],
+      entities: (o?.entities ?? []).filter((e) => e.owner !== 'rival'),
+      enemies: (view.value?.enemies ?? []).filter((en) => en.owner !== 'rival'),
     },
     explored: exploredSet.value,
     cells: exploredCellMap.value,
@@ -254,6 +270,12 @@ onBeforeUnmount(() => {
         <button class="go-battle" @click="requestBattleNav()">前往对战</button>
       </div>
 
+      <!-- v0.9 敌对 Agent 在场横幅（感知内有 rival；金色系与遭遇横幅的火色区分） -->
+      <div v-if="rivalInSight" class="rival-banner">
+        <span>⚠ 敌对 Agent 在场</span>
+        <button class="go-battle" @click="requestBattleNav()">前往对战</button>
+      </div>
+
       <!-- 六边形无限地图：单 canvas，拖拽平移 / 滚轮·双指缩放 / 点选下单 -->
       <div ref="shellRef" class="canvas-shell">
         <canvas
@@ -264,6 +286,17 @@ onBeforeUnmount(() => {
           @pointercancel="onPointerUp"
           @dblclick="onDblClick"
         />
+        <!-- v0.9 rival 覆盖层：👺 + 五行色描边（随相机投影，canvas-shell 裁剪越界） -->
+        <div
+          v-for="m in rivalOverlays"
+          :key="m.key"
+          class="rival-marker"
+          :style="{
+            left: m.x + 'px', top: m.y + 'px',
+            width: m.s + 'px', height: m.s + 'px',
+            fontSize: m.s * 0.52 + 'px', borderColor: m.color,
+          }"
+        >👺</div>
         <div v-if="!follow" class="follow-badge">已解除跟随 · 双击恢复</div>
       </div>
 
@@ -273,6 +306,7 @@ onBeforeUnmount(() => {
         <span><i class="sw" :style="{ background: FOG.visible }" />感知内</span>
         <span><i class="sw sw-order" />移动订单</span>
         <span class="res-leg">◆ 晶簇（站上去采集）</span>
+        <span class="rival-leg">👺 敌对 Agent</span>
         <span class="tip">
           拖拽平移 · 滚轮/双指缩放（0.5~2.0） · 点击已探索格下达移动订单（每回合自动走一格） · 双击恢复跟随
         </span>
@@ -436,6 +470,26 @@ onBeforeUnmount(() => {
   background: #2a1d20; color: var(--fire); font-size: 13px; font-weight: 600;
 }
 .go-battle { padding: 3px 10px; font-size: 12px; }
+
+/* ---- v0.9 敌对 Agent 在场横幅（复用遭遇横幅骨架，金色系区分） ---- */
+.rival-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; margin-bottom: 8px;
+  border: 1px solid #6a5426; border-radius: var(--radius);
+  background: #262014; color: var(--accent); font-size: 13px; font-weight: 600;
+}
+
+/* ---- v0.9 rival 覆盖层标记：👺 + 五行色描边圆 ---- */
+.rival-marker {
+  position: absolute;
+  display: flex; align-items: center; justify-content: center;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--metal); border-radius: 50%;
+  background: rgba(15, 18, 22, 0.25);
+  pointer-events: none; /* 点击穿透到画布拾取 */
+  line-height: 1;
+}
+.legend .rival-leg { color: var(--accent); }
 
 /* ---- 画布容器：单 canvas 无限地图 ---- */
 .canvas-shell {

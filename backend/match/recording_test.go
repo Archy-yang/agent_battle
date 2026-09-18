@@ -113,8 +113,14 @@ func assertReplayMatches(t *testing.T, rec *Recording, untilTick int64,
 // TestRecordingReplayV04: 一局 60 回合（scripted pilot）→ 重放到
 // 15/30/60 三个采样点，状态与事件流逐项一致；录像经 JSON 往返后仍可
 // 精确重演（API 契约自证）。
+//
+// seed 42 依据（v0.9 懒怪战斗化重采样）：原 seed 7 的 scripted pilot 在
+// 战斗化的懒激活怪围攻下 t=10 早夭（v0.8 起已知，见 match.go lazySpawns
+// 注释）；1..400 升序扫描（scripted TickAuto、无夹具）中 6/11/16/29/42…
+// 均跑满 60 回合，取项目惯用 seed 42——timeout 终局、60 帧完整、
+// 重放窗口不缺角。
 func TestRecordingReplayV04(t *testing.T) {
-	m := NewV04("rec", 7, nil) // seed 7：scripted pilot 恰好跑满 60 回合（timeout）
+	m := NewV04("rec", 42, nil) // seed 42：scripted pilot 恰好跑满 60 回合（timeout）
 	rec, wantState, wantEvents := runAndSnapshot(t, m, 60, map[int64]bool{15: true, 30: true, 60: true})
 
 	if m.W.Tick != 60 {
