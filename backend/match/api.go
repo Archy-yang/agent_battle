@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"sync"
 
 	"agentbattle/backend/agent"
@@ -67,6 +69,11 @@ type StateView struct {
 	// LLMCalls is the number of pilot decision invocations this match
 	// (LLM pilot 下即 LLM 调用数). WP3 预算验收口径：一局 ≤ 50.
 	LLMCalls int `json:"llm_calls"`
+	// RivalLLMCalls is the rival pilot's decision invocation count this
+	// match（v1.0 LLM rival 下即对手侧 LLM 调用数）——与 LLMCalls 分开的
+	// 独立预算口径（同一触发阈值、各算各的账）。scripted rival / 重放局
+	// 恒为 0.
+	RivalLLMCalls int `json:"rival_llm_calls"`
 	// Commentary is the 战斗解说: the LLM pilot's combat battle_notes as
 	// separate events. 它们同时以 Type "commentary" 混在 Events 展示流里
 	// （前端渲染为助手气泡）；这里供需要单独消费的客户端。不进引擎事件
@@ -102,18 +109,43 @@ type RivalSummary struct {
 	Heat         int             `json:"heat"`
 }
 
-// Registry is an in-memory match registry (v0.1 single-process; the
-// interface is the seam where persistence later attaches).
+// Registry is an in-memory match registry (v0.1 single-process). WP-B
+// 起 dir 非空时接上持久化：每局落盘 `<dir>/<id>.json`，启动扫描元信息，
+// Get 首次访问时经确定性重演惰性恢复（persistence.go）.
 type Registry struct {
 	mu      sync.Mutex
 	matches map[string]*Match
 	profile *profile.Store
 	next    int
+
+	// —— 持久化（WP-B）—— dir 为空 = 纯内存（不落盘）。
+	dir     string
+	writeMu sync.Mutex // 落盘文件写串行化（tmp+rename 原子替换）
+	pending map[string]*persistedMatch
 }
 
 // NewRegistry creates an empty registry bound to the creator profile.
 func NewRegistry(prof *profile.Store) *Registry {
 	return &Registry{matches: map[string]*Match{}, profile: prof}
+}
+
+// NewRegistryPersisted creates a registry backed by the match directory
+// dir（worldd flag -matches，默认 "matches"；空串退化为纯内存）。启动
+// 即扫描目录加载元信息；对局本体惰性恢复——Get 首次访问时才重演，启
+// 动不为此付出代价。目录不可建则降级为纯内存并 log.
+func NewRegistryPersisted(prof *profile.Store, dir string) *Registry {
+	r := NewRegistry(prof)
+	if dir == "" {
+		return r
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("matches: 落盘目录不可用（%v），本次运行不持久化", err)
+		return r
+	}
+	r.dir = dir
+	r.pending = map[string]*persistedMatch{}
+	r.loadPersisted()
+	return r
 }
 
 // Create starts a new match. scenarioName selects the pack — "mvp"
@@ -147,14 +179,36 @@ func (r *Registry) Create(seed uint64, scenarioName ...string) *Match {
 	m.ID = fmt.Sprintf("m%04d", r.next)
 	m.Explored[m.Spawn] = true
 	r.matches[m.ID] = m
+	if r.dir != "" { // WP-B：新局即刻落盘（tick 之前重启不丢档）
+		m.persist = r.persistMatch
+		r.persistMatch(m)
+	}
 	return m
 }
 
-// Get returns the match with the given id, or nil.
+// Get returns the match with the given id, or nil. 存量对局在此惰性恢
+// 复：首次访问时经确定性重演重建（persistence.go restoreMatch）——重演
+// 不一致或文件损坏的失败只尝试一次，跳过该对局（返回 nil），不阻塞
+// 其它对局.
 func (r *Registry) Get(id string) *Match {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.matches[id]
+	if m, ok := r.matches[id]; ok {
+		return m
+	}
+	pm, ok := r.pending[id]
+	if !ok {
+		return nil
+	}
+	delete(r.pending, id)
+	m, err := r.restoreMatch(pm)
+	if err != nil {
+		log.Printf("matches: 对局 %s 恢复失败，跳过：%v", id, err)
+		return nil
+	}
+	m.persist = r.persistMatch
+	r.matches[id] = m
+	return m
 }
 
 // View builds the client-facing state of a match.
@@ -221,27 +275,28 @@ func (m *Match) View() *StateView {
 	return &StateView{
 		ID: m.ID, Seed: m.Seed, Pack: m.PackName, Pilot: m.PilotName,
 		Status: m.Status, Turn: m.W.Tick, TurnLimit: m.TurnLimit,
-		Influence:    m.Influence,
-		Observation:  obs,
-		Cognition:    m.Cognition,
-		Explored:     explored,
-		Events:       m.Events,
-		Guidance:     m.Guidance,
-		Predictions:  preds,
-		Pending:      m.pending,
-		QA:           qa,
-		Review:       m.ReviewRes,
-		Costs:        costs,
-		Materials:    materials,
-		Order:        order,
-		InCombat:     m.InCombat(),
-		Enemies:      enemies,
-		Rival:        rival,
-		RivalTrigger: m.LastRivalTrigger(),
-		Tactics:      m.Tactics(),
-		LastTrigger:  m.lastTrigger,
-		LLMCalls:     m.llmCalls,
-		Commentary:   commentary,
+		Influence:     m.Influence,
+		Observation:   obs,
+		Cognition:     m.Cognition,
+		Explored:      explored,
+		Events:        m.Events,
+		Guidance:      m.Guidance,
+		Predictions:   preds,
+		Pending:       m.pending,
+		QA:            qa,
+		Review:        m.ReviewRes,
+		Costs:         costs,
+		Materials:     materials,
+		Order:         order,
+		InCombat:      m.InCombat(),
+		Enemies:       enemies,
+		Rival:         rival,
+		RivalTrigger:  m.LastRivalTrigger(),
+		Tactics:       m.Tactics(),
+		LastTrigger:   m.lastTrigger,
+		LLMCalls:      m.llmCalls,
+		RivalLLMCalls: m.rivalLLMCalls,
+		Commentary:    commentary,
 	}
 }
 

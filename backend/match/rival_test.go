@@ -23,7 +23,11 @@ package match
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"agentbattle/backend/agent"
@@ -377,5 +381,277 @@ func TestV04HasNoRival(t *testing.T) {
 	m.Tick(nil)
 	if len(m.rivalTriggerLog) != 0 {
 		t.Fatalf("rival scheduler fired on a rival-less match: %v", m.rivalTriggerLog)
+	}
+}
+
+// —— v1.0 LLM rival ——
+
+// rivalFake is the shared fake chat endpoint for LLM-rival tests：同一
+// OpenAI 兼容端点同时服务玩家与 rival 两个 pilot，按 system prompt 里的
+// 身份关键字（"敌对 Agent"）分流应答；全部请求体捕获供断言（对手人格
+// prompt 内容、触发语境、重放零调用）。httptest 的 handler 在响应读毕
+// 前必然返回，捕获无需加锁.
+type rivalFake struct {
+	srv           *httptest.Server
+	bodies        []string
+	rivalCount    int
+	playerContent string
+	rivalContent  string
+}
+
+func newRivalFakeLLM(t *testing.T) *rivalFake {
+	t.Helper()
+	f := &rivalFake{}
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		buf, _ := io.ReadAll(req.Body)
+		body := string(buf)
+		isRival := strings.Contains(body, "敌对 Agent")
+		f.bodies = append(f.bodies, body)
+		if isRival {
+			f.rivalCount++
+		}
+		content := f.playerContent
+		if isRival {
+			content = f.rivalContent
+		}
+		resp := map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": content}}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(f.srv.Close)
+	return f
+}
+
+// total returns all requests served so far.
+func (f *rivalFake) total() int { return len(f.bodies) }
+
+// lastRivalBody returns the most recent rival-side request body.
+func (f *rivalFake) lastRivalBody() string {
+	for i := len(f.bodies) - 1; i >= 0; i-- {
+		if strings.Contains(f.bodies[i], "敌对 Agent") {
+			return f.bodies[i]
+		}
+	}
+	return ""
+}
+
+// assertBodyHas fails unless body contains every fragment.
+func assertBodyHas(t *testing.T, body string, where string, wants ...string) {
+	t.Helper()
+	for _, w := range wants {
+		if !strings.Contains(body, w) {
+			t.Fatalf("%s: body missing %q:\n%.400s", where, w, body)
+		}
+	}
+}
+
+// TestRivalLLMParse: RivalLLM 解析对手决策（intents + cognition +
+// battle_note）；对手人格 prompt 携带敌对身份、v1.0 人格与触发语境；
+// 未携带/不可解析的响应覆盖为空，不残留.
+func TestRivalLLMParse(t *testing.T) {
+	const note = "它形已残，我加力收割"
+	f := newRivalFakeLLM(t)
+	f.rivalContent = decisionJSON(t,
+		[]map[string]any{{"type": "move_to", "to": map[string]any{"q": 1, "r": 0}}},
+		map[string]any{"goal": "夺取结晶", "confidence": 0.8}, note)
+	r := agent.NewRivalLLM(agent.LLMConfig{BaseURL: f.srv.URL, Model: "fake"})
+
+	intents := r.DecideTriggered(&engine.Observation{Tick: 3}, TriggerCombat)
+	if len(intents) != 1 || intents[0].Type != "move_to" || intents[0].To == nil || intents[0].To.Q != 1 {
+		t.Fatalf("intents = %+v, want one move_to {1,0}", intents)
+	}
+	if got := r.LastBattleNote(); got != note {
+		t.Fatalf("LastBattleNote = %q, want %q", got, note)
+	}
+	if c := r.LastCognition(); c == nil || c.Goal != "夺取结晶" || c.Confidence != 0.8 {
+		t.Fatalf("LastCognition = %+v, want goal 夺取结晶 @0.8", c)
+	}
+	assertBodyHas(t, f.lastRivalBody(), "rival prompt",
+		"敌对 Agent", // 敌对身份
+		"冷酷的机会主义者：评估克制关系，劣势时撤退，优先偷袭受伤目标", // v1.0 人格
+		"trigger=combat", // 触发语境（triggerSection）
+		"金怕火",            // 与玩家对称的法则摘要
+		"battle_note")    // 战斗解说协议
+
+	// 下一轮未携带 battle_note → 覆盖为空.
+	f.rivalContent = decisionJSON(t, nil, map[string]any{"goal": "再探", "confidence": 0.5}, "")
+	_ = r.DecideTriggered(&engine.Observation{Tick: 4}, TriggerHeartbeat)
+	if got := r.LastBattleNote(); got != "" {
+		t.Fatalf("absent field kept stale note %q", got)
+	}
+
+	// 不可解析的响应 → 同样清空.
+	f.rivalContent = "这不是 JSON"
+	_ = r.DecideTriggered(&engine.Observation{Tick: 5}, TriggerCombat)
+	if got := r.LastBattleNote(); got != "" {
+		t.Fatalf("unparseable reply kept stale note %q", got)
+	}
+}
+
+// TestV05LLMRivalWiringAndReplay: 环境有 LLM 配置时 V05 的 rival 接
+// RivalLLM——rival 触发时调假端点（对手 prompt + 触发语境）、意图进引擎
+// 并逐帧录像、rival_llm_calls 独立计数、combat 的 battle_note 以
+// Entity = RivalID 对称进解说流；含 LLM rival 的局录像重放零重跑
+// （rival 意图按帧重演，重放局不伪造解说）.
+func TestV05LLMRivalWiringAndReplay(t *testing.T) {
+	const rivalNote = "它木躯怕火，我贴脸全功率烧"
+	f := newRivalFakeLLM(t)
+	f.playerContent = decisionJSON(t, nil,
+		map[string]any{"goal": "取晶", "confidence": 0.5}, "我先避开它的锋芒")
+	f.rivalContent = decisionJSON(t,
+		[]map[string]any{{"type": "move_to", "to": map[string]any{"q": 0, "r": 0}}},
+		map[string]any{"goal": "摧毁玩家", "confidence": 0.9}, rivalNote)
+
+	t.Setenv("AGENTBATTLE_LLM_BASE_URL", f.srv.URL)
+	m := NewV05("llmrival", 7, nil)
+	if m.PilotName != "llm" {
+		t.Fatalf("PilotName = %q, want llm", m.PilotName)
+	}
+	if _, ok := m.RivalPilot.(*rivalLLMPilot); !ok {
+		t.Fatalf("RivalPilot = %T, want *rivalLLMPilot", m.RivalPilot)
+	}
+	if m.rivalCls == nil { // 与玩家相同的 classifier 默认（触发阈值对称）
+		t.Fatal("rival classifier missing")
+	}
+
+	// 受控接敌：场上只剩 rival，且贴到玩家相邻格 → 双方分类器都裁 combat.
+	banishOthers(t, m)
+	p := m.W.Entities[m.PlayerID]
+	rival := m.W.Entities[m.RivalID]
+	placed := false
+	for _, dir := range engine.HexDirs {
+		cand := p.Pos.Add(dir)
+		if m.W.At(cand).Passable && m.W.EntityAt(cand) == nil {
+			rival.Pos = cand
+			placed = true
+			break
+		}
+	}
+	if !placed {
+		t.Fatal("could not stage the rival adjacent to the player")
+	}
+
+	for i := 0; i < 3; i++ {
+		m.TickAuto()
+	}
+	if m.rivalLLMCalls == 0 {
+		t.Fatal("rival was never consulted — scheduleRival did not wake the LLM rival")
+	}
+	if got := m.View().RivalLLMCalls; got != m.rivalLLMCalls {
+		t.Fatalf("View().RivalLLMCalls = %d, want %d", got, m.rivalLLMCalls)
+	}
+	if f.rivalCount == 0 {
+		t.Fatal("fake endpoint never saw a rival-side request")
+	}
+	// 对手 prompt：敌对身份 + v1.0 人格 + 触发语境进入 user payload.
+	assertBodyHas(t, f.lastRivalBody(), "rival request",
+		"敌对 Agent", "冷酷的机会主义者", "trigger=combat")
+
+	// rival 意图进引擎：帧里原样记录其 move_to 订单.
+	rivalFrames := 0
+	for _, fr := range m.rec.Frames {
+		if len(fr.RivalIntents) > 0 {
+			rivalFrames++
+			if fr.RivalIntents[0].Type != "move_to" {
+				t.Fatalf("rival intent = %+v, want move_to", fr.RivalIntents[0])
+			}
+		}
+	}
+	if rivalFrames == 0 {
+		t.Fatal("no frame records LLM-rival intents")
+	}
+
+	// 对称解说：rival 与玩家各一条 commentary（Entity 区分归属）.
+	var rivalC, playerC *engine.Event
+	for i := range m.Commentary {
+		ev := &m.Commentary[i]
+		switch ev.Entity {
+		case m.RivalID:
+			rivalC = ev
+		case m.PlayerID:
+			playerC = ev
+		}
+	}
+	if rivalC == nil || rivalC.Text != rivalNote {
+		t.Fatalf("rival commentary = %+v, want %q by rival", rivalC, rivalNote)
+	}
+	if playerC == nil {
+		t.Fatal("player commentary missing — asymmetric commentary")
+	}
+	assertNoCommentaryIn(t, m.lastEvs, "engine event stream (lastEvs)")
+	for _, fr := range m.rec.Frames {
+		assertNoCommentaryIn(t, fr.ResultingEvents, "recorded frame")
+	}
+	t.Logf("LLM rival：3 tick 内 rival 调用 %d 次（假端点 rival 请求 %d 次），rival 解说 %q 进流",
+		m.rivalLLMCalls, f.rivalCount, rivalNote)
+}
+
+// TestV05LLMRivalReplayZeroRerun: 含 LLM rival 的真实 V05 局（无任何
+// 夹具——重演局由构造函数原样重建）录像重放逐帧一致（重演不重跑
+// rival/玩家 LLM，rival 意图按帧记录重演），假端点零请求，重放局不伪造
+// 解说、不再调度 rival.
+func TestV05LLMRivalReplayZeroRerun(t *testing.T) {
+	f := newRivalFakeLLM(t)
+	f.playerContent = decisionJSON(t, nil, map[string]any{"goal": "取晶", "confidence": 0.5}, "")
+	f.rivalContent = decisionJSON(t,
+		[]map[string]any{{"type": "move_to", "to": map[string]any{"q": 0, "r": 0}}},
+		map[string]any{"goal": "摧毁玩家", "confidence": 0.9}, "先贴上去再说")
+
+	t.Setenv("AGENTBATTLE_LLM_BASE_URL", f.srv.URL)
+	m := NewV05("llmreplay", 7, nil)
+	if _, ok := m.RivalPilot.(*rivalLLMPilot); !ok {
+		t.Fatalf("RivalPilot = %T, want *rivalLLMPilot", m.RivalPilot)
+	}
+	for i := 0; i < 6; i++ {
+		m.TickAuto()
+	}
+	rivalFrames := 0
+	for _, fr := range m.rec.Frames {
+		if len(fr.RivalIntents) > 0 {
+			rivalFrames++
+		}
+	}
+	if m.rivalLLMCalls == 0 || f.rivalCount == 0 || rivalFrames == 0 {
+		t.Fatalf("vacuous run: rivalCalls=%d rivalRequests=%d rivalFrames=%d",
+			m.rivalLLMCalls, f.rivalCount, rivalFrames)
+	}
+
+	rec := m.Recording()
+	before := f.total()
+	rm, err := Replay(rec, m.W.Tick)
+	if err != nil {
+		t.Fatalf("replay of LLM-rival recording: %v", err)
+	}
+	if f.total() != before {
+		t.Fatalf("replay re-ran the LLM: %d → %d requests", before, f.total())
+	}
+	if len(rm.Commentary) != 0 {
+		t.Fatalf("replay fabricated %d commentary events; LLM must not be re-run", len(rm.Commentary))
+	}
+	if rm.RivalPilot != nil || len(rm.rivalTriggerLog) != 0 {
+		t.Fatal("replay match consulted the rival pilot — recorded intents were not replayed verbatim")
+	}
+	// rival 意图按帧重演的自证：Replay 逐帧比对 ResultingEvents（任何分
+	// 歧即 ErrReplayMismatch，上方 err == nil 已通过）。
+	t.Logf("含 LLM rival 的 %d 帧录像零重跑重演（重放期间假端点 %d 次请求），rival 意图帧 %d",
+		len(rec.Frames), f.total()-before, rivalFrames)
+}
+
+// TestV05RivalFallbackScripted: 无 LLM 环境时 V05 回退 ScriptedRival
+// （v0.9 现状不破）；rival 侧零 LLM 计数.
+func TestV05RivalFallbackScripted(t *testing.T) {
+	t.Setenv("AGENTBATTLE_LLM_BASE_URL", "") // 显式无 LLM 环境
+	m := NewV05("fallback", 7, nil)
+	if _, ok := m.RivalPilot.(*ScriptedRival); !ok {
+		t.Fatalf("RivalPilot = %T, want *ScriptedRival without LLM env", m.RivalPilot)
+	}
+	if m.PilotName != "scripted" {
+		t.Fatalf("PilotName = %q, want scripted", m.PilotName)
+	}
+	m.TickAuto()
+	if m.rivalLLMCalls != 0 || m.View().RivalLLMCalls != 0 {
+		t.Fatalf("scripted rival counted %d LLM calls, want 0", m.rivalLLMCalls)
 	}
 }

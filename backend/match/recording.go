@@ -114,7 +114,19 @@ func Replay(rec *Recording, untilTick int64) (*Match, error) {
 	m.Pilot, m.PilotName = nil, "replay" // 绝不咨询 pilot，更不重跑 LLM
 	m.RivalPilot = nil                   // v0.9：rival 同规则——绝不重跑，意图按帧记录重演
 	m.rec = nil                          // 回放局自身不录像
-	if untilTick <= 0 {                  // 缺省：重演到录像尽头
+	if err := replayFrames(m, rec, untilTick); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// replayFrames is the shared redrive core（WP-B：POST /api/replay 与对局
+// 恢复共用同一条重演路径）——把 match m 逐帧重演到 untilTick（缺省 0 =
+// 录像尽头），逐帧校验重演事件与记录的 ResultingEvents。调用方负责把
+// m 的 pilot/rival pilot/录像置空（绝不重跑 LLM）。帧序断裂、事件流
+// 分歧（ErrReplayMismatch）或 until_tick 越界均返回错误。
+func replayFrames(m *Match, rec *Recording, untilTick int64) error {
+	if untilTick <= 0 { // 缺省：重演到录像尽头
 		if n := len(rec.Frames); n > 0 {
 			untilTick = rec.Frames[n-1].Tick
 		}
@@ -124,15 +136,15 @@ func Replay(rec *Recording, untilTick int64) (*Match, error) {
 			break
 		}
 		if f.Tick != m.W.Tick+1 {
-			return nil, fmt.Errorf("replay: 帧序断裂：帧 tick %d，期望 %d", f.Tick, m.W.Tick+1)
+			return fmt.Errorf("replay: 帧序断裂：帧 tick %d，期望 %d", f.Tick, m.W.Tick+1)
 		}
 		m.TickWith(f.PlayerIntents, f.RivalIntents) // v0.9：rival 意图按帧记录重演
 		if !slices.Equal(m.lastEvs, f.ResultingEvents) {
-			return nil, fmt.Errorf("%w（tick %d 事件流分歧）", ErrReplayMismatch, f.Tick)
+			return fmt.Errorf("%w（tick %d 事件流分歧）", ErrReplayMismatch, f.Tick)
 		}
 	}
 	if last := int64(len(rec.Frames)); last > 0 && rec.Frames[last-1].Tick < untilTick {
-		return nil, fmt.Errorf("replay: until_tick %d 超出录像范围（最后一帧 tick %d）", untilTick, rec.Frames[last-1].Tick)
+		return fmt.Errorf("replay: until_tick %d 超出录像范围（最后一帧 tick %d）", untilTick, rec.Frames[last-1].Tick)
 	}
-	return m, nil
+	return nil
 }

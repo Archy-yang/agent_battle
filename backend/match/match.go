@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"agentbattle/backend/agent"
 	"agentbattle/backend/engine"
@@ -124,8 +125,22 @@ type Match struct {
 	RivalPilot      rivalPilot
 	rivalCls        *EventClassifier
 	rivalTriggerLog []string
+	// rivalLLMCalls 是 rival 侧 pilot 决策调用计数（v1.0 LLM rival 下即
+	// LLM 调用数）——与玩家 llmCalls 分开的独立预算口径。scripted rival
+	// 不经桥接器，恒为 0；重放局不装配 rival pilot，亦不增长.
+	rivalLLMCalls int
+	// rivalNote is the rival's pending battle_note：桥接器在引擎推进前
+	// 置入（combat 触发），Tick 在帧记录后经 flushRivalCommentary 落进
+	// 解说流——与玩家 pilotTick 的时序对称（先推进、后解说）.
+	rivalNote string
 
 	Status string
+
+	// CreatedAt is the match's creation time（持久化元信息，persistence.go）.
+	CreatedAt time.Time
+	// persist is the persistence hook（WP-B）：Registry 注入，每次对局
+	// 推进或经济侧变更后同步落盘；nil = 不落盘（回放局/内存注册表）.
+	persist func(*Match)
 
 	Explored map[engine.Hex]bool
 	Events   []engine.Event
@@ -202,8 +217,10 @@ func NewV04(id string, seed uint64, prof *profile.Store) *Match {
 }
 
 // NewV05 creates a match of scenario/infinite-0.5: V04 的世界 + 敌对
-// Agent（rival，world_genesis §5.2）。rival 的智能由 ScriptedRival 驱动
-// （玩家侧 LLM 配置不影响它）；LLM rival 经 Match.RivalPilot 挂入.
+// Agent（rival，world_genesis §5.2）。rival 的智能与玩家同构接通（v1.0）：
+// LLMFromEnv() 非空时 rival 挂 RivalLLM（对手人格 prompt，见
+// agent/rival_llm.go），否则 ScriptedRival——调度、感知、录像、重放各层
+// 对两种实现无差别（rival.go 接入点）。
 func NewV05(id string, seed uint64, prof *profile.Store) *Match {
 	return newMatch(id, seed, prof, scenario.V05(seed))
 }
@@ -225,6 +242,7 @@ func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) 
 		activatedChunks: map[[2]int]bool{},                           // v0.4 懒激活：调用方持状态
 		rec:             &Recording{Seed: seed, Scenario: pack.Name}, // v0.7 录像：每 tick 一帧
 		rivalCls:        NewEventClassifier(),                        // v0.9 rival 独立分类器（无 rival 时闲置）
+		CreatedAt:       time.Now(),                                  // WP-B 持久化元信息
 	}
 	// v0.8 WPC：手摆怪物按 pack 声明登记行为模板（空/未知值回落
 	// wanderer 基线，旧包 V02/MVP 行为兼容），锚点即出生位。
@@ -251,6 +269,12 @@ func newMatch(id string, seed uint64, prof *profile.Store, pack *scenario.Pack) 
 			p.SetProfile(prof.P.PersonaText(), prof.P.EnabledLessons())
 		}
 		m.Pilot, m.PilotName = p, "llm"
+		// v1.0 LLM rival：有 rival 的包（V05）把同一 LLM 配置接给对手——
+		// 敌人走同一 Agent Protocol 与同一事件驱动调度（rivalCls），桥接
+		// 器负责触发语境注入、独立计数与 battle_note 对称解说.
+		if m.RivalID != 0 {
+			m.RivalPilot = &rivalLLMPilot{m: m, r: agent.NewRivalLLM(*cfg)}
+		}
 	} else {
 		m.Pilot = agent.NewScripted(pack.PlayerSpawn, pack.FragmentPos, pack.Passable)
 		m.PilotName = "scripted"
@@ -269,9 +293,66 @@ func (m *Match) LastRivalTrigger() string {
 }
 
 // Tick advances one turn with explicit player intents. rival 意图由其
-// 独立的事件驱动调度在本 tick 现算（scheduleRival，v0.9）。
+// 独立的事件驱动调度在本 tick 现算（scheduleRival，v0.9）；帧记录后
+// 冲刷 rival 的战斗解说（v1.0，与玩家 pilotTick 的时序对称）；最后
+// 落盘（WP-B 持久化钩子，persistence.go）。
 func (m *Match) Tick(intents []engine.Intent) {
+	m.tickAdvance(intents)
+	m.persistNow()
+}
+
+// tickAdvance is Tick's advance body without the persistence tail: the
+// TickAuto 路径复用它，让一个 auto tick（推进 + 双侧解说）只在 TickAuto
+// 末尾统一落盘一次；重演（Replay/恢复）也走 TickWith，绝不触发落盘.
+func (m *Match) tickAdvance(intents []engine.Intent) {
 	m.TickWith(intents, m.scheduleRival())
+	m.flushRivalCommentary()
+}
+
+// flushRivalCommentary records the rival's pending battle_note as one
+// commentary event with Entity = RivalID（对手也在战斗文字流里"出声"，
+// v1.0 对称解说）。调用时机在 TickWith（帧已记录）之后：不进引擎事件流
+// 与录像帧——rival 的话也不是世界事实。形散后不再解说.
+func (m *Match) flushRivalCommentary() {
+	note := m.rivalNote
+	m.rivalNote = ""
+	if note != "" {
+		m.recordCommentary(note, m.RivalID)
+	}
+}
+
+// rivalLLMPilot bridges the LLM rival into the frozen rival scheduler
+// (rival.go scheduleRival)：它以 rivalPilot（= agent.DecisionMaker）+
+// orderPilot 的身份挂在 Match.RivalPilot 上，被唤醒时——
+//   - 从 rivalTriggerLog 末项取本轮触发原因（scheduleRival 恰在唤醒前
+//     追加），以参数注入 RivalLLM（对手版触发语境）；
+//   - 独立计数 rivalLLMCalls（与玩家 llmCalls 分开的预算口径）；
+//   - combat 触发时暂存 battle_note，Tick 冲刷为 Entity = RivalID 的
+//     commentary（对称解说）。
+//
+// 调度、感知边界、录像、重放各层对桥接器与 ScriptedRival 无差别.
+type rivalLLMPilot struct {
+	m *Match
+	r *agent.RivalLLM
+}
+
+func (p *rivalLLMPilot) Decide(obs *engine.Observation) []engine.Intent {
+	return p.decide(obs)
+}
+
+func (p *rivalLLMPilot) DecideOrder(obs *engine.Observation) []engine.Intent {
+	return p.decide(obs)
+}
+
+func (p *rivalLLMPilot) decide(obs *engine.Observation) []engine.Intent {
+	m := p.m
+	reason := m.LastRivalTrigger() // 唤醒即有值：scheduleRival 先记 log 再调 pilot
+	m.rivalLLMCalls++
+	intents := p.r.DecideTriggered(obs, reason)
+	if reason == TriggerCombat {
+		m.rivalNote = p.r.LastBattleNote() // TickWith 后由 flushRivalCommentary 落流
+	}
+	return intents
 }
 
 // TickWith advances one turn with explicit intents for both the player
@@ -439,15 +520,16 @@ func (m *Match) TickAuto() {
 	if m.Status != StatusRunning {
 		return
 	}
-	m.autoTick = true // 本 tick 由 pilot 自动决策（录像 Auto 标记）
-	if m.pauseNext {  // 紧急暂停：Agent 本回合待命（strage_1 影响表）
+	defer m.persistNow() // WP-B：整个 auto tick（含解说/复盘）结束后落盘一次
+	m.autoTick = true    // 本 tick 由 pilot 自动决策（录像 Auto 标记）
+	if m.pauseNext {     // 紧急暂停：Agent 本回合待命（strage_1 影响表）
 		m.pauseNext = false
-		m.Tick(nil)
+		m.tickAdvance(nil)
 		return
 	}
 	trigger := m.classifyTick()
 	if trigger == "" { // 执行层：0 次调用
-		m.Tick(nil)
+		m.tickAdvance(nil)
 		return
 	}
 	m.lastTrigger = trigger
@@ -460,10 +542,10 @@ func (m *Match) TickAuto() {
 	}
 	obs := m.W.Observe(m.PlayerID, m.lastEvs)
 	if op, ok := m.Pilot.(orderPilot); ok {
-		m.Tick(op.DecideOrder(obs))
+		m.tickAdvance(op.DecideOrder(obs))
 		return
 	}
-	m.Tick(m.Pilot.Decide(obs))
+	m.tickAdvance(m.Pilot.Decide(obs))
 }
 
 // pilotTick is TickAuto's LLM branch: wake the pilot for this trigger,
@@ -473,12 +555,12 @@ func (m *Match) pilotTick(la *agent.LLMAgent, trigger string) {
 	la.SetGuidance(m.guidanceNotes())
 	la.SetTrigger(trigger)
 	obs := m.W.Observe(m.PlayerID, m.lastEvs)
-	m.Tick(la.DecideTriggered(obs))
+	m.tickAdvance(la.DecideTriggered(obs))
 	if c := la.LastCognition(); c != nil {
 		m.Cognition = c
 	}
 	if trigger == TriggerCombat { // 战斗解说：Agent 的话流入战斗文字流
-		m.recordCommentary(la.LastBattleNote())
+		m.recordCommentary(la.LastBattleNote(), m.PlayerID)
 	}
 }
 
@@ -486,18 +568,19 @@ func (m *Match) pilotTick(la *agent.LLMAgent, trigger string) {
 const battleNoteMax = 50
 
 // recordCommentary appends one battle_note to the display stream as a
-// Type "commentary" event. 调用时机在 Tick（帧已记录）之后：引擎事件流
+// Type "commentary" event, attributed to entity by（v1.0：玩家与 rival
+// 共用一条入口——对称解说）. 调用时机在 Tick（帧已记录）之后：引擎事件流
 // lastEvs 与录像帧的 ResultingEvents 均不受影响——commentary 是 Agent 的
 // 话，不是世界事实，重放（不重跑 LLM）也无须再生它. 形散后不再解说.
-func (m *Match) recordCommentary(note string) {
+func (m *Match) recordCommentary(note string, by engine.EntityID) {
 	note = strings.TrimSpace(note)
-	if note == "" || m.W.Entities[m.PlayerID] == nil {
+	if note == "" || m.W.Entities[by] == nil {
 		return
 	}
 	if r := []rune(note); len(r) > battleNoteMax {
 		note = string(r[:battleNoteMax])
 	}
-	ev := engine.Event{Tick: m.W.Tick, Type: "commentary", Entity: m.PlayerID, Text: note}
+	ev := engine.Event{Tick: m.W.Tick, Type: "commentary", Entity: by, Text: note}
 	m.Events = append(m.Events, ev)
 	m.Commentary = append(m.Commentary, ev)
 }
@@ -569,6 +652,7 @@ func (m *Match) AddGuidance(kind, text string) error {
 	m.Influence -= cost
 	m.Guidance = append(m.Guidance, Guidance{Turn: m.W.Tick, Kind: kind, Text: text})
 	m.cls.ArmGuidance() // Guidance 层：下一 tick 必触发一次（design §3.1）
+	m.persistNow()      // WP-B：经济侧变更即时落盘（tick 之前重启不丢干预）
 	return nil
 }
 
@@ -583,6 +667,7 @@ func (m *Match) Pause() error {
 	m.Influence -= CostPause
 	m.pausedOnce = true
 	m.pauseNext = true
+	m.persistNow()
 	return nil
 }
 
@@ -600,10 +685,12 @@ func (m *Match) Predict(choice string) error {
 	}
 	if m.pending != nil && !m.pending.Resolved {
 		m.pending.Choice = choice // 覆盖未结算的预测
+		m.persistNow()
 		return nil
 	}
 	m.pending = &Prediction{Turn: m.W.Tick, Choice: choice}
 	m.Predictions = append(m.Predictions, m.pending)
+	m.persistNow()
 	return nil
 }
 
@@ -618,6 +705,7 @@ func (m *Match) Ask(question string) (string, error) {
 		return "", errors.New("Agent 暂时无法回答")
 	}
 	m.QA = append(m.QA, QA{Turn: m.W.Tick, Question: question, Answer: ans})
+	m.persistNow()
 	return ans, nil
 }
 

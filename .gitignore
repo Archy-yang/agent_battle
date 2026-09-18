@@ -7,3 +7,6 @@ backend/*.out
 frontend/h5/node_modules/
 backend/llm.env
 backend/profile.json
+
+# WP-B 对局落盘（worldd -matches，默认 backend/matches）
+backend/matches/

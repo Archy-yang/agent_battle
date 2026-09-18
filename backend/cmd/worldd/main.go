@@ -52,13 +52,15 @@ func loadEnvFile(path string) {
 func main() {
 	config := flag.String("config", "llm.env", "env file (KEY=VALUE) loaded at startup")
 	profilePath := flag.String("profile", "profile.json", "creator profile (agent 养成档案)")
+	matchesDir := flag.String("matches", "matches", "对局落盘目录（相对工作目录；空串关闭持久化）")
 	flag.Parse()
 	if *config != "" {
 		loadEnvFile(*config)
 	}
 	prof := profile.Load(*profilePath)
 
-	reg := match.NewRegistry(prof)
+	// WP-B：对局落盘 + 重启后经确定性重演惰性恢复（match/persistence.go）.
+	reg := match.NewRegistryPersisted(prof, *matchesDir)
 
 	mux := http.NewServeMux()
 

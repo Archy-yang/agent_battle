@@ -10,7 +10,7 @@ import {
   predictBusy, predictError, predict,
   costOf, choiceLabel,
   step, runToEnd,
-  triggerLabel, isRivalEnemy,
+  triggerLabel, isRivalEnemy, rivalState,
 } from '../state'
 import { essenceName, essenceColor, essenceColorByName } from '../api'
 import type { EnemyView, TacticsView } from '../api'
@@ -28,8 +28,15 @@ const running = computed(() => bv.value?.status === 'running')
 const COMBAT_TYPES = new Set(['attack', 'backlash', 'spill', 'overheat', 'destroyed'])
 const isCombat = (t: string) => COMBAT_TYPES.has(t)
 // 战斗解说：combat 触发的 LLM battle_note（Agent 的话，非世界事实）——
-// 渲染为助手气泡（🤖 + 金色描边），与引擎事件区分
+// 渲染为助手气泡（🤖 + 金色描边），与引擎事件区分。
+// v1.0：rival 的 battle_note 走同一条流（Entity=rivalID）——
+// 对手的气泡用 👺 面孔 + rival 描边，"对手在想什么"一眼可辨。
 const isNote = (t: string) => t === 'commentary'
+const isRivalNote = (e: { type: string; entity?: number | string }): boolean =>
+  isNote(e.type) && e.entity != null && rivalState.value?.id != null &&
+  String(e.entity) === String(rivalState.value.id)
+const noteFace = (e: { type: string; entity?: number | string }): string =>
+  isRivalNote(e) ? '👺' : '🤖'
 const events = computed(() => (bv.value?.events ?? []).slice().reverse())
 
 // 自动滚动：最新在上 → 有新事件且用户未手动上滚时回到顶部
@@ -196,7 +203,7 @@ const isRivalFoe = (e: EnemyView): boolean => isRivalEnemy(e)
           >
             <template v-if="isNote(e.type)">
               <em>T{{ e.tick }}</em>
-              <span class="note-face" aria-hidden="true">🤖</span>
+              <span class="note-face" :class="{ rival: isRivalNote(e) }" aria-hidden="true">{{ noteFace(e) }}</span>
               <span class="note-text">{{ e.text }}</span>
             </template>
             <template v-else>
@@ -424,6 +431,9 @@ const isRivalFoe = (e: EnemyView): boolean => isRivalEnemy(e)
 .ev.note em { color: var(--earth); }
 .ev.note .note-face { flex: none; font-size: 13px; }
 .ev.note .note-text { line-height: 1.5; }
+/* 对手的解说气泡：rival 徽标描边（对方 Agent 的话，非我方） */
+.ev.note:has(.note-face.rival) { border-color: var(--fire); background: rgba(196, 74, 58, 0.08); }
+.note-face.rival { filter: saturate(1.2); }
 
 /* ---- LLM 助手 ---- */
 .assistant { display: flex; gap: 10px; align-items: flex-start; }
