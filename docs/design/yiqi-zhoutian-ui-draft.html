@@ -1,0 +1,663 @@
+<title>一炁周天</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ink:#0C1216;          /* 墨夜 · 地 */
+  --panel:#141D23;        /* 面板 */
+  --panel-2:#1B272E;      /* 升起面板 */
+  --line:#2A3941;         /* 线 */
+  --moon:#E9E4D6;         /* 月白 · 主字 */
+  --mist:#8FA096;         /* 雾灰 · 次字 */
+  --gold:#C9A454;         /* 鎏金 · 主行动/灵物 */
+  --jade:#7FB8A4;         /* 青玉 · 灵气/正向 */
+  --cinnabar:#C0523F;     /* 朱砂 · 印/警 */
+  /* 五行 */
+  --w-wood:#7FA86B; --w-fire:#C0523F; --w-earth:#C9A454;
+  --w-metal:#AEB8C0; --w-water:#6E93B8;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background:var(--ink); color:var(--moon);
+  font-family:'Noto Serif SC',serif; font-size:15px; line-height:1.7;
+  -webkit-font-smoothing:antialiased;
+}
+.page{max-width:1400px;margin:0 auto;padding:56px 32px 80px}
+h1,h2,h3,.kai{font-family:'Ma Shan Zheng',cursive;font-weight:400}
+.ui{font-family:'Noto Sans SC',sans-serif}
+
+/* ===== 页头 ===== */
+header{display:flex;align-items:flex-end;gap:28px;flex-wrap:wrap;margin-bottom:14px}
+.seal{
+  width:64px;height:64px;flex:none;border-radius:10px;background:var(--cinnabar);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Ma Shan Zheng',cursive;font-size:38px;color:#F2E9DC;
+  box-shadow:inset 0 0 0 2px rgba(242,233,220,.35), 0 4px 18px rgba(192,82,63,.25);
+  transform:rotate(-3deg);
+}
+header h1{font-size:56px;line-height:1.1;letter-spacing:6px}
+header .sub{color:var(--mist);font-size:13px;letter-spacing:2px;margin-bottom:8px}
+.intro{color:var(--mist);max-width:70ch;margin:10px 0 30px;font-size:14px}
+.intro b{color:var(--jade);font-weight:600}
+
+/* ===== 核心循环 ===== */
+.loop{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  border:1px solid var(--line);border-radius:14px;background:var(--panel);
+  padding:16px 20px;margin-bottom:44px;
+}
+.loop .kai{font-size:15px;color:var(--gold);margin-right:6px;flex:none}
+.loop .step{
+  font-family:'Noto Sans SC',sans-serif;font-size:13px;color:var(--moon);
+  border:1px solid var(--line);border-radius:999px;padding:4px 14px;background:var(--panel-2);
+  white-space:nowrap;
+}
+.loop .step.hot{border-color:var(--gold);color:var(--gold)}
+.loop .arr{color:var(--mist);font-size:12px}
+
+/* ===== 手机稿横排 ===== */
+.rail{display:flex;gap:40px;overflow-x:auto;padding:8px 4px 28px;scroll-snap-type:x proximity}
+.shot{flex:none;width:330px;scroll-snap-align:start}
+.phone{
+  width:330px;height:716px;border-radius:38px;background:#060A0D;
+  border:1px solid #33424B;padding:10px;position:relative;
+  box-shadow:0 18px 50px rgba(0,0,0,.5), inset 0 0 0 1px rgba(233,228,214,.06);
+}
+.screen{
+  width:100%;height:100%;border-radius:29px;overflow:hidden;position:relative;
+  background:linear-gradient(178deg,#10181D 0%,#0C1418 55%,#0A1114 100%);
+  display:flex;flex-direction:column;
+}
+.notch{
+  position:absolute;top:18px;left:50%;transform:translateX(-50%);
+  width:96px;height:22px;border-radius:12px;background:#060A0D;z-index:9;
+}
+.cap{margin-top:16px}
+.cap .kai{font-size:22px;letter-spacing:2px}
+.cap .no{font-family:'Noto Sans SC',sans-serif;font-size:11px;color:var(--gold);letter-spacing:3px;margin-left:10px}
+.cap p{font-size:12.5px;color:var(--mist);line-height:1.75;margin-top:6px}
+.cap p b{color:var(--moon);font-weight:600}
+
+/* —— 屏内通用 —— */
+.s-status{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:12px 22px 4px;font-family:'Noto Sans SC',sans-serif;font-size:10px;color:var(--mist);
+}
+.s-head{display:flex;justify-content:space-between;align-items:center;padding:6px 16px 8px}
+.s-head .who{display:flex;align-items:center;gap:9px}
+.s-head .avatar{
+  width:34px;height:34px;border-radius:50%;flex:none;
+  border:1px solid var(--gold);display:flex;align-items:center;justify-content:center;
+  font-family:'Ma Shan Zheng',cursive;font-size:19px;color:var(--gold);background:rgba(201,164,84,.08);
+}
+.s-head .nm{font-family:'Ma Shan Zheng',cursive;font-size:17px;letter-spacing:1px}
+.s-head .rl{font-family:'Noto Sans SC',sans-serif;font-size:10px;color:var(--mist);letter-spacing:1px}
+.s-head .mini{
+  font-family:'Noto Sans SC',sans-serif;font-size:10px;color:var(--mist);
+  border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:rgba(20,29,35,.8);
+}
+.s-body{flex:1;overflow:hidden;padding:2px 14px 8px;display:flex;flex-direction:column;gap:9px;min-height:0}
+.card{
+  border:1px solid var(--line);border-radius:14px;background:rgba(27,39,46,.66);
+  padding:10px 13px;
+}
+.card .t{
+  font-family:'Noto Sans SC',sans-serif;font-size:10px;color:var(--mist);
+  letter-spacing:2px;margin-bottom:6px;display:flex;align-items:center;gap:6px;
+}
+.card .t::before{content:"";width:5px;height:5px;border-radius:1px;background:var(--gold);transform:rotate(45deg)}
+.s-nav{
+  display:flex;border-top:1px solid var(--line);background:rgba(12,18,22,.92);
+  padding:7px 6px 14px;
+}
+.s-nav .it{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;
+  font-family:'Noto Sans SC',sans-serif;font-size:9.5px;color:var(--mist);
+}
+.s-nav .ic{
+  width:34px;height:34px;border-radius:50%;border:1px solid var(--line);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Ma Shan Zheng',cursive;font-size:17px;color:var(--mist);background:var(--panel);
+}
+.s-nav .it.on .ic{border-color:var(--gold);color:var(--gold);background:rgba(201,164,84,.1)}
+.s-nav .it.on{color:var(--gold)}
+
+/* —— 屏1 洞府 —— */
+.env{display:flex;gap:6px}
+.env .e{
+  flex:1;text-align:center;border:1px solid var(--line);border-radius:9px;
+  padding:5px 2px 4px;background:rgba(12,18,22,.5);
+}
+.env .d{width:7px;height:7px;border-radius:50%;margin:0 auto 3px}
+.env .w{font-family:'Noto Sans SC',sans-serif;font-size:9px;color:var(--mist)}
+.figure{position:relative;height:158px;flex:none;display:flex;align-items:center;justify-content:center}
+.figure svg{position:absolute;inset:0;width:100%;height:100%}
+.figure .qi{
+  font-family:'Ma Shan Zheng',cursive;font-size:64px;color:var(--jade);
+  text-shadow:0 0 26px rgba(127,184,164,.45);
+}
+.figure .st{
+  position:absolute;bottom:0;left:0;right:0;text-align:center;
+  font-family:'Noto Sans SC',sans-serif;font-size:10.5px;color:var(--mist);letter-spacing:2px;
+}
+.figure .st b{color:var(--moon);font-weight:500}
+.spin{transform-origin:150px 80px;animation:spin 46s linear infinite}
+.spin2{transform-origin:150px 80px;animation:spin 70s linear infinite reverse}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin,.spin2{animation:none}}
+.sense{flex:1;min-height:0;overflow:hidden}
+.sense .ln{display:flex;gap:8px;font-size:11.5px;line-height:1.55;padding:2.5px 0;color:var(--moon)}
+.sense .ln em{font-family:'Noto Sans SC',sans-serif;font-style:normal;font-size:9px;color:var(--jade);flex:none;padding-top:3px;font-variant-numeric:tabular-nums}
+.sense .ln.hl{color:var(--gold)}
+.voice{
+  border:1px solid rgba(201,164,84,.4);border-radius:12px;background:rgba(201,164,84,.06);
+  padding:8px 12px;font-size:11.5px;line-height:1.6;
+}
+.voice .vt{font-family:'Noto Sans SC',sans-serif;font-size:9px;color:var(--gold);letter-spacing:2px;margin-bottom:3px}
+.acts{display:flex;gap:9px;padding:2px 6px 8px}
+.acts .a{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
+.acts .c{
+  width:46px;height:46px;border-radius:50%;border:1px solid var(--line);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Ma Shan Zheng',cursive;font-size:21px;color:var(--moon);background:var(--panel-2);
+}
+.acts .a.main .c{border-color:var(--gold);color:var(--gold);box-shadow:0 0 16px rgba(201,164,84,.22)}
+.acts .w{font-family:'Noto Sans SC',sans-serif;font-size:9.5px;color:var(--mist)}
+
+/* —— 屏2 内视 —— */
+.bodymap{flex:1;display:flex;flex-direction:column;min-height:0}
+.bodymap svg{flex:1;width:100%;min-height:0}
+.node-label{font-family:'Noto Serif SC',serif;font-size:10.5px;fill:var(--moon)}
+.node-sub{font-family:'Noto Sans SC',sans-serif;font-size:8px;fill:var(--mist)}
+.meridian{stroke:#33424B;stroke-width:1.4;fill:none}
+.meridian.hurt{stroke:var(--cinnabar);stroke-dasharray:3 4;opacity:.8}
+.meridian.flow{stroke:var(--jade);stroke-width:1.8;opacity:.55}
+.acu{stroke-width:1.2}
+.acu-ring{fill:none;opacity:.35}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-family:'Noto Sans SC',sans-serif;font-size:9px;color:var(--mist);padding:0 2px 6px}
+.legend i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;vertical-align:0}
+.detail .row{display:flex;justify-content:space-between;font-size:11px;padding:2.5px 0;border-bottom:1px dashed rgba(42,57,65,.6)}
+.detail .row:last-child{border-bottom:none}
+.detail .k{color:var(--mist);font-family:'Noto Sans SC',sans-serif;font-size:10px}
+.detail .v{color:var(--moon)}
+.detail .v.jade{color:var(--jade)}
+.detail .note{font-size:9.5px;color:var(--mist);margin-top:5px;font-family:'Noto Sans SC',sans-serif}
+
+/* —— 屏3 参悟 —— */
+.tabs{display:flex;gap:8px}
+.tab{
+  font-family:'Noto Sans SC',sans-serif;font-size:11px;color:var(--mist);
+  border:1px solid var(--line);border-radius:999px;padding:4px 16px;
+}
+.tab.on{color:var(--ink);background:var(--gold);border-color:var(--gold);font-weight:700}
+.hyp .hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.hyp .hz{font-size:12.5px;line-height:1.5}
+.hyp .cf{font-family:'Noto Sans SC',sans-serif;font-size:10px;color:var(--gold);flex:none;font-variant-numeric:tabular-nums}
+.confbar{height:3px;border-radius:2px;background:rgba(42,57,65,.9);margin:7px 0 6px;overflow:hidden}
+.confbar i{display:block;height:100%;background:var(--gold)}
+.hyp .ev{font-family:'Noto Sans SC',sans-serif;font-size:9.5px;color:var(--mist);line-height:1.7}
+.hyp .ev .ok{color:var(--jade)} .hyp .ev .no{color:var(--cinnabar)}
+.tag{
+  display:inline-block;font-family:'Noto Sans SC',sans-serif;font-size:9px;
+  border-radius:4px;padding:1px 7px;margin-left:6px;vertical-align:1px;
+}
+.tag.wait{color:var(--gold);border:1px solid rgba(201,164,84,.5)}
+.tag.run{color:var(--jade);border:1px solid rgba(127,184,164,.5)}
+.exp .meta{font-family:'Noto Sans SC',sans-serif;font-size:10px;color:var(--mist);line-height:1.7}
+.prog{height:5px;border-radius:3px;background:rgba(42,57,65,.9);margin-top:7px;overflow:hidden}
+.prog i{display:block;height:70%;background:linear-gradient(90deg,var(--jade),#9CCBB9)}
+.ask{
+  border:1px solid rgba(192,82,63,.55);border-radius:12px;background:rgba(192,82,63,.07);padding:9px 12px;
+}
+.ask .at{font-family:'Noto Sans SC',sans-serif;font-size:9px;color:var(--cinnabar);letter-spacing:2px;margin-bottom:3px}
+.ask .q{font-size:11.5px;line-height:1.6}
+.ask .btns{display:flex;gap:8px;margin-top:8px}
+.ask .b{
+  flex:1;text-align:center;font-family:'Noto Sans SC',sans-serif;font-size:11px;
+  border-radius:8px;padding:5px 0;border:1px solid var(--line);color:var(--mist);
+}
+.ask .b.go{border-color:var(--gold);color:var(--gold)}
+.ask .b.halt{border-color:rgba(192,82,63,.6);color:var(--cinnabar)}
+
+/* —— 屏4 功法 —— */
+.proto .hd{display:flex;justify-content:space-between;align-items:center}
+.proto .nm{font-family:'Ma Shan Zheng',cursive;font-size:16px;letter-spacing:1px}
+.proto .lv{font-family:'Noto Sans SC',sans-serif;font-size:9px;color:var(--jade);border:1px solid rgba(127,184,164,.5);border-radius:4px;padding:1px 7px}
+.proto .path{font-family:'Noto Sans SC',sans-serif;font-size:10px;color:var(--mist);margin-top:3px}
+.proto .path b{color:var(--moon);font-weight:500}
+.kb{margin-top:8px}
+.kb .bar{display:flex;height:7px;border-radius:4px;overflow:hidden;border:1px solid var(--line)}
+.kb .bar .seg{display:block;height:100%}
+.kb .seg.v{background:var(--jade)} .kb .seg.t{background:rgba(201,164,84,.75)} .kb .seg.u{background:rgba(42,57,65,.9)}
+.kb .lb{display:flex;justify-content:space-between;font-family:'Noto Sans SC',sans-serif;font-size:8.5px;color:var(--mist);margin-top:3px}
+.proto .gr{font-size:10.5px;color:var(--mist);margin-top:7px;line-height:1.65}
+.proto .gr b{color:var(--moon);font-weight:500}
+.switch{display:flex;align-items:center;gap:7px;margin-top:9px}
+.sw{width:30px;height:16px;border-radius:9px;background:var(--jade);position:relative;flex:none}
+.sw::after{content:"";position:absolute;top:2px;right:2px;width:12px;height:12px;border-radius:50%;background:#0C1216}
+.switch .sw-t{font-family:'Noto Sans SC',sans-serif;font-size:9.5px;color:var(--jade)}
+.proto.draft{opacity:.82}
+.proto.draft .nm{color:var(--mist)}
+.proto.draft .lv{color:var(--mist);border-color:var(--line)}
+
+/* —— 屏5 本尊 —— */
+.sliders .row{display:flex;align-items:center;gap:9px;padding:3px 0}
+.sliders .sl-k{font-family:'Noto Sans SC',sans-serif;font-size:10px;color:var(--mist);flex:none;width:70px}
+.sliders .bar{flex:1;height:4px;border-radius:2px;background:rgba(42,57,65,.9);position:relative}
+.sliders .bar i{position:absolute;top:50%;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:50%;background:var(--gold);border:2px solid #0C1216}
+.sliders .sl-v{font-family:'Noto Sans SC',sans-serif;font-size:9.5px;color:var(--gold);flex:none;width:30px;text-align:right}
+.goal{font-size:12px;line-height:1.6}
+.goal .gk{font-family:'Noto Sans SC',sans-serif;font-size:9px;color:var(--mist);letter-spacing:2px;display:block;margin-bottom:3px}
+.five .frow{display:flex;align-items:center;gap:9px;padding:3.5px 0}
+.five .fk{font-family:'Noto Serif SC',serif;font-size:11.5px;flex:none;width:58px}
+.five .fbar{flex:1;height:4px;border-radius:2px;background:rgba(42,57,65,.9);overflow:hidden}
+.five .fbar i{display:block;height:100%}
+.five .fv{font-family:'Noto Sans SC',sans-serif;font-size:9px;color:var(--mist);flex:none;width:34px;text-align:right}
+.guide .chips{display:flex;gap:6px;margin-bottom:7px}
+.guide .chip{
+  font-family:'Noto Sans SC',sans-serif;font-size:9.5px;color:var(--mist);
+  border:1px solid var(--line);border-radius:999px;padding:3px 11px;
+}
+.guide .chip.on{color:var(--gold);border-color:var(--gold)}
+.guide .inp{
+  border:1px solid var(--line);border-radius:9px;background:rgba(12,18,22,.6);
+  padding:7px 11px;font-size:11px;color:var(--mist);display:flex;justify-content:space-between;align-items:center;
+}
+.guide .send{font-family:'Noto Sans SC',sans-serif;font-size:10px;color:var(--gold)}
+
+/* ===== 规范区 ===== */
+.spec{margin-top:60px}
+.spec h2{font-size:34px;letter-spacing:4px;margin-bottom:6px}
+.spec .s-sub{color:var(--mist);font-size:13px;margin-bottom:26px}
+.spec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px;margin-bottom:40px}
+.swatches{display:flex;flex-direction:column;gap:9px}
+.sw-row{display:flex;align-items:center;gap:12px}
+.sw-row .chipc{width:44px;height:30px;border-radius:8px;flex:none;border:1px solid rgba(233,228,214,.12)}
+.sw-row .nm{font-family:'Noto Sans SC',sans-serif;font-size:12px;flex:none;width:88px}
+.sw-row .use{font-family:'Noto Sans SC',sans-serif;font-size:11px;color:var(--mist)}
+.sw-row .hex{font-family:'Noto Sans SC',sans-serif;font-size:11px;color:var(--moon);margin-left:auto;font-variant-numeric:tabular-nums;opacity:.75}
+.type-spec{display:flex;flex-direction:column;gap:16px}
+.type-spec .ts .demo{font-size:26px;line-height:1.4}
+.type-spec .ts .info{font-family:'Noto Sans SC',sans-serif;font-size:11px;color:var(--mist);margin-top:2px}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;min-width:560px}
+th,td{padding:9px 16px;text-align:left;font-size:12.5px;border-bottom:1px solid var(--line)}
+th{font-family:'Noto Sans SC',sans-serif;font-size:11px;color:var(--mist);letter-spacing:1px;font-weight:500;background:rgba(27,39,46,.6)}
+td:first-child{font-family:'Noto Sans SC',sans-serif;font-size:11.5px;color:var(--jade);font-variant-numeric:tabular-nums;white-space:nowrap}
+td{color:var(--moon)}
+td .m{color:var(--mist)}
+tr:last-child td{border-bottom:none}
+.spec h3{font-size:22px;letter-spacing:2px;margin:34px 0 12px;color:var(--moon)}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);color:var(--mist);font-size:12px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+footer .kai{color:var(--gold);font-size:15px}
+</style>
+
+<div class="page">
+
+<header>
+  <div class="seal">炁</div>
+  <div>
+    <div class="sub ui">修真养成 · LLM 原生 · 手机竖屏</div>
+    <h1>一炁周天</h1>
+  </div>
+</header>
+<p class="intro">
+  你是<b>本尊</b>，屏幕里修行的是你的<b>分身</b>——一个由 LLM 驱动的修士。
+  它自己感知灵气、提出猜想、做实验、悟出功法；你定方向、断风险、决定什么值得固化。
+  引擎生产因果，分身生产知识，你生产方向。<b>所见皆感知，非世界真值。</b>
+</p>
+
+<div class="loop">
+  <span class="kai">核心循环</span>
+  <span class="step">观察</span><span class="arr">→</span>
+  <span class="step">猜想</span><span class="arr">→</span>
+  <span class="step hot">实验</span><span class="arr">→</span>
+  <span class="step">反馈</span><span class="arr">→</span>
+  <span class="step">归纳</span><span class="arr">→</span>
+  <span class="step hot">固化功法</span><span class="arr">→</span>
+  <span class="step">自动运行</span><span class="arr">→</span>
+  <span class="step">新的未知</span>
+</div>
+
+<div class="rail">
+
+  <!-- ════ 屏 1 · 洞府 ════ -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="s-status ui"><span>9:41</span><span>静室 · 灵气充裕</span></div>
+      <div class="s-head">
+        <div class="who">
+          <div class="avatar">芜</div>
+          <div><div class="nm">青芜</div><div class="rl">炼气一层 · 第 128 周天</div></div>
+        </div>
+        <div class="mini">本尊 ▾</div>
+      </div>
+      <div class="s-body">
+        <div class="env">
+          <div class="e"><span class="d" style="background:var(--w-wood)"></span><div class="w">木 浓郁</div></div>
+          <div class="e"><span class="d" style="background:var(--w-fire)"></span><div class="w">火 稀薄</div></div>
+          <div class="e"><span class="d" style="background:var(--w-earth)"></span><div class="w">土 沉滞</div></div>
+          <div class="e"><span class="d" style="background:var(--w-metal)"></span><div class="w">金 微茫</div></div>
+          <div class="e"><span class="d" style="background:var(--w-water)"></span><div class="w">水 流转</div></div>
+        </div>
+        <div class="figure">
+          <svg viewBox="0 0 300 158" aria-hidden="true">
+            <g class="spin">
+              <circle cx="150" cy="80" r="62" fill="none" stroke="rgba(127,184,164,.35)" stroke-width="1" stroke-dasharray="2 7"/>
+            </g>
+            <g class="spin2">
+              <circle cx="150" cy="80" r="48" fill="none" stroke="rgba(201,164,84,.30)" stroke-width="1" stroke-dasharray="14 9"/>
+            </g>
+            <circle cx="150" cy="80" r="37" fill="rgba(127,184,164,.05)" stroke="rgba(127,184,164,.45)" stroke-width="1"/>
+          </svg>
+          <div class="qi">炁</div>
+          <div class="st"><b>入定</b> · 吐纳中 · intensity 轻</div>
+        </div>
+        <div class="card sense">
+          <div class="t">感知</div>
+          <div class="ln"><em>T131</em><span>青关微微充盈，一线暖意自丹田升起。</span></div>
+          <div class="ln"><em>T133</em><span>牵引阻力渐增，青关似已近满。</span></div>
+          <div class="ln hl"><em>T134</em><span>胸口温热扩散，隐有火性躁动。</span></div>
+        </div>
+        <div class="voice">
+          <div class="vt">分身自述</div>
+          青关将满，我转而引气入丹田，吐纳力度降至「轻」，以免胀痛。
+        </div>
+      </div>
+      <div class="acts">
+        <div class="a"><div class="c">感</div><div class="w">感知</div></div>
+        <div class="a main"><div class="c">纳</div><div class="w">吐纳</div></div>
+        <div class="a"><div class="c">引</div><div class="w">引灵</div></div>
+        <div class="a"><div class="c">止</div><div class="w">止息</div></div>
+      </div>
+      <div class="s-nav">
+        <div class="it on"><div class="ic">府</div>洞府</div>
+        <div class="it"><div class="ic">视</div>内视</div>
+        <div class="it"><div class="ic">悟</div>参悟</div>
+        <div class="it"><div class="ic">诀</div>功法</div>
+        <div class="it"><div class="ic">尊</div>本尊</div>
+      </div>
+    </div></div>
+    <div class="cap">
+      <span class="kai">洞府 · 吐纳</span><span class="no ui">屏一 · 主界面</span>
+      <p>养成游戏的主厅：分身居中自主运行，<b>感知流</b>以定性文字滚动（唯一的现实入口），环境五行一句话带过。
+      分身自述=LLM 认知摘要。四个动作即 stage_2 的五接口，玩家按钮只下达意图，结果由引擎裁决。</p>
+    </div>
+  </div>
+
+  <!-- ════ 屏 2 · 内视 ════ -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="s-status ui"><span>9:41</span><span>内视</span></div>
+      <div class="s-head">
+        <div class="who"><div class="avatar" style="border-color:var(--jade);color:var(--jade)">视</div>
+        <div><div class="nm">身体图</div><div class="rl">八穴 · 七脉</div></div></div>
+        <div class="mini">神识一层</div>
+      </div>
+      <div class="s-body">
+        <div class="bodymap">
+          <div class="legend">
+            <span><i style="background:var(--gold)"></i>充盈</span>
+            <span><i style="background:var(--w-fire)"></i>温热</span>
+            <span><i style="background:var(--jade)"></i>平稳</span>
+            <span><i style="background:#5A6B74"></i>沉寂</span>
+            <span><i style="background:var(--cinnabar)"></i>滞涩</span>
+          </div>
+          <svg viewBox="0 0 300 330" aria-hidden="true">
+            <path class="meridian flow" d="M150 62 C150 92 150 108 150 128"/>
+            <path class="meridian flow" d="M150 168 C132 196 118 214 104 238"/>
+            <path class="meridian" d="M150 168 C168 196 182 214 196 238"/>
+            <path class="meridian hurt" d="M104 268 C96 292 92 302 88 316"/>
+            <path class="meridian" d="M196 268 C204 292 208 302 212 316"/>
+            <path class="meridian" d="M104 238 C120 250 132 258 138 330" opacity=".5"/>
+            <path class="meridian" d="M150 40 C150 48 150 54 150 58"/>
+            <path class="meridian" d="M196 238 C186 280 168 320 156 330" opacity=".5"/>
+            <!-- 穴位 -->
+            <g><circle class="acu" cx="150" cy="40" r="9" fill="#16211F" stroke="#5A6B74"/><circle class="acu-ring" cx="150" cy="40" r="14" stroke="#5A6B74"/>
+              <text class="node-label" x="150" y="20" text-anchor="middle">神庭</text><text class="node-sub" x="150" y="66" text-anchor="middle">沉寂</text></g>
+            <g><circle class="acu" cx="150" cy="128" r="10" fill="#1C1613" stroke="var(--w-fire)"/><circle class="acu-ring" cx="150" cy="128" r="16" stroke="var(--w-fire)"/>
+              <text class="node-label" x="176" y="124">青关</text><text class="node-sub" x="176" y="137">温热</text></g>
+            <g><circle class="acu" cx="150" cy="62" r="7" fill="#141F1B" stroke="var(--jade)"/>
+              <text class="node-label" x="168" y="58">中庭</text></g>
+            <g><circle class="acu" cx="104" cy="238" r="8" fill="#141F1B" stroke="var(--jade)"/>
+              <text class="node-label" x="76" y="234">阳枢</text><text class="node-sub" x="76" y="247">平稳</text></g>
+            <g><circle class="acu" cx="196" cy="238" r="8" fill="#1E1C13" stroke="var(--w-earth)"/>
+              <text class="node-label" x="224" y="234">土府</text><text class="node-sub" x="224" y="247">微胀</text></g>
+            <g><circle class="acu" cx="88" cy="316" r="8" fill="#1A1210" stroke="var(--cinnabar)"/>
+              <text class="node-label" x="60" y="312">金门</text><text class="node-sub" x="60" y="325">滞涩</text></g>
+            <g><circle class="acu" cx="212" cy="316" r="8" fill="#131A20" stroke="var(--w-water)"/>
+              <text class="node-label" x="240" y="312">玄泉</text><text class="node-sub" x="240" y="325">流转</text></g>
+            <g><circle class="acu" cx="150" cy="300" r="12" fill="#201B10" stroke="var(--gold)" stroke-width="1.6"/><circle class="acu-ring" cx="150" cy="300" r="19" stroke="var(--gold)"/>
+              <text class="node-label" x="150" y="304" text-anchor="middle" font-size="9">丹田</text>
+              <text class="node-sub" x="118" y="292">充盈欲满</text></g>
+          </svg>
+        </div>
+        <div class="card detail">
+          <div class="t">青关 · 所感</div>
+          <div class="row"><span class="k">感觉</span><span class="v">明显胀感 · 暖</span></div>
+          <div class="row"><span class="k">开度</span><span class="v">大开</span></div>
+          <div class="row"><span class="k">稳固</span><span class="v jade">稳固</span></div>
+          <div class="row"><span class="k">亲和倾向</span><span class="v">似偏木性 <span class="tag wait ui">未证实</span></span></div>
+          <div class="note">所见皆感知——数值藏在世界里，须经实验方能参悟。</div>
+        </div>
+      </div>
+      <div class="s-nav">
+        <div class="it"><div class="ic">府</div>洞府</div>
+        <div class="it on"><div class="ic">视</div>内视</div>
+        <div class="it"><div class="ic">悟</div>参悟</div>
+        <div class="it"><div class="ic">诀</div>功法</div>
+        <div class="it"><div class="ic">尊</div>本尊</div>
+      </div>
+    </div></div>
+    <div class="cap">
+      <span class="kai">内视 · 身体图</span><span class="no ui">屏二</span>
+      <p>穴位=节点、经脉=边，<b>状态只用定性词</b>（充盈/温热/滞涩），绝无数字。
+      点穴出感知卡；「似偏木性（未证实）」把假设直接钉在身体上——知识系统渗入主界面。</p>
+    </div>
+  </div>
+
+  <!-- ════ 屏 3 · 参悟 ════ -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="s-status ui"><span>9:41</span><span>参悟</span></div>
+      <div class="s-head">
+        <div class="who"><div class="avatar" style="border-color:var(--w-water);color:var(--w-water)">悟</div>
+        <div><div class="nm">参悟</div><div class="rl">假说 2 · 实验中 1</div></div></div>
+        <div class="mini">笔录</div>
+      </div>
+      <div class="s-body">
+        <div class="tabs"><span class="tab on">假说</span><span class="tab">实验录</span><span class="tab">异象</span></div>
+        <div class="card hyp">
+          <div class="hd"><span class="hz">青关偏亲木性<span class="tag wait ui">待验证</span></span><span class="cf">信 72%</span></div>
+          <div class="confbar"><i style="width:72%"></i></div>
+          <div class="ev"><span class="ok">实验 12 · 15 · 21 支持</span>　<span class="no">实验 29 存疑</span></div>
+        </div>
+        <div class="card hyp">
+          <div class="hd"><span class="hz">流量过 2.0 后青关生热陡增<span class="tag wait ui">试探中</span></span><span class="cf">信 45%</span></div>
+          <div class="confbar"><i style="width:45%"></i></div>
+          <div class="ev">仅 3 次实验，样本尚薄</div>
+        </div>
+        <div class="card exp">
+          <div class="t">对照实验 · 运行中<span class="tag run ui">第 7/10 周天</span></div>
+          <div class="meta">固定 flow = 1.5，仅改吐纳力度（轻 ⇄ 中）<br>其余一切不变——变量唯一，方能归因。</div>
+          <div class="prog"><i></i></div>
+        </div>
+        <div class="ask">
+          <div class="at">分身请示</div>
+          <div class="q">已验证区已够吐纳自足。是否探入 2.0~2.3 未知流量？有伤脉之险，若伤则数日不可行功。</div>
+          <div class="btns"><span class="b go">准 · 探入</span><span class="b">再等等</span><span class="b halt">止</span></div>
+        </div>
+      </div>
+      <div class="s-nav">
+        <div class="it"><div class="ic">府</div>洞府</div>
+        <div class="it"><div class="ic">视</div>内视</div>
+        <div class="it on"><div class="ic">悟</div>参悟</div>
+        <div class="it"><div class="ic">诀</div>功法</div>
+        <div class="it"><div class="ic">尊</div>本尊</div>
+      </div>
+    </div></div>
+    <div class="cap">
+      <span class="kai">参悟 · 知识与实验</span><span class="no ui">屏三</span>
+      <p>养成即科研：<b>假说卡</b>（置信度+正反证据）、<b>对照实验</b>（分身自主运行，玩家可旁听）、
+      <b>请示卡</b>——探入未知区的风险决策永远上浮给本尊，这是玩家的核心操作之一。</p>
+    </div>
+  </div>
+
+  <!-- ════ 屏 4 · 功法 ════ -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="s-status ui"><span>9:41</span><span>功法</span></div>
+      <div class="s-head">
+        <div class="who"><div class="avatar" style="border-color:var(--gold);color:var(--gold)">诀</div>
+        <div><div class="nm">功法</div><div class="rl">已成 1 · 草创 1</div></div></div>
+        <div class="mini">可自运行</div>
+      </div>
+      <div class="s-body">
+        <div class="card proto">
+          <div class="hd"><span class="nm">引气诀 · 一转</span><span class="lv">已验证</span></div>
+          <div class="path">路径　<b>环境 → 青关 → 下丹田</b>　·　周天 10 转</div>
+          <div class="kb">
+            <div class="bar"><span class="seg v" style="width:66%"></span><span class="seg t" style="width:12%"></span><span class="seg u" style="width:22%"></span></div>
+            <div class="lb"><span>1.5 — 已验证 — 2.0</span><span>试探 → 2.3</span><span>未知</span></div>
+          </div>
+          <div class="gr">护卫　<b>疼痛即止 · 压高减速</b>　·　惯用流量 1.8</div>
+          <div class="switch"><span class="sw"></span><span class="sw-t">自运行中 · 本局已代行 342 周天，未耗一问</span></div>
+        </div>
+        <div class="card proto draft">
+          <div class="hd"><span class="nm">青芜导引</span><span class="lv">草创</span></div>
+          <div class="path">路径　<b>丹田 → 青关 → 阳枢 → 土府 → 丹田</b></div>
+          <div class="gr">未满二十周天验证，尚不可自运行。已试 3 次，最远至第 11 周天生热失控。</div>
+        </div>
+        <div class="card">
+          <div class="t">固化之法</div>
+          <div class="meta" style="font-family:'Noto Sans SC',sans-serif;font-size:10px;color:var(--mist);line-height:1.8">
+            实验录满二十周天 · 成功率 95% 以上 · 途中最弱处仍稳——三者皆备，方可由草创入正册，自此不假分身之思。</div>
+        </div>
+      </div>
+      <div class="s-nav">
+        <div class="it"><div class="ic">府</div>洞府</div>
+        <div class="it"><div class="ic">视</div>内视</div>
+        <div class="it"><div class="ic">悟</div>参悟</div>
+        <div class="it on"><div class="ic">诀</div>功法</div>
+        <div class="it"><div class="ic">尊</div>本尊</div>
+      </div>
+    </div></div>
+    <div class="cap">
+      <span class="kai">功法 · Protocol 库</span><span class="no ui">屏四</span>
+      <p>功法卡即 Protocol：<b>知识边界条</b>（已验证/试探/未知）替代单点参数——「Runtime 消费已知」可视化为一条三段色带。
+      自运行开关点亮时=零 LLM 消耗，「未耗一问」把省钱做成荣誉。</p>
+    </div>
+  </div>
+
+  <!-- ════ 屏 5 · 本尊 ════ -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="s-status ui"><span>9:41</span><span>本尊</span></div>
+      <div class="s-head">
+        <div class="who"><div class="avatar">尊</div>
+        <div><div class="nm">本尊</div><div class="rl">塑造你的分身</div></div></div>
+        <div class="mini">历 3 局</div>
+      </div>
+      <div class="s-body">
+        <div class="card sliders">
+          <div class="t">性情</div>
+          <div class="row"><span class="sl-k">稳健 ⇄ 冒进</span><div class="bar"><i style="left:32%"></i></div><span class="sl-v">偏稳</span></div>
+          <div class="row"><span class="sl-k">专注 ⇄ 博采</span><div class="bar"><i style="left:58%"></i></div><span class="sl-v">均衡</span></div>
+          <div class="row"><span class="sl-k">自决 ⇄ 请示</span><div class="bar"><i style="left:26%"></i></div><span class="sl-v">多问</span></div>
+        </div>
+        <div class="card goal">
+          <span class="gk ui">当前方向 · 本尊所定</span>
+          「先立一门稳妥吐纳，再探火性转化——不求快，求每一次实验都有结论。」
+        </div>
+        <div class="card guide">
+          <div class="t">传音</div>
+          <div class="chips"><span class="chip">轻语</span><span class="chip on">引导</span><span class="chip">深谈</span></div>
+          <div class="inp"><span>例如：金门似有滞涩，先查明再动</span><span class="send">送 ↗</span></div>
+        </div>
+        <div class="card five">
+          <div class="t">筑基之路 · 五关</div>
+          <div class="frow"><span class="fk">循　环</span><div class="fbar"><i style="width:86%;background:var(--jade)"></i></div><span class="fv">将圆</span></div>
+          <div class="frow"><span class="fk">衡　定</span><div class="fbar"><i style="width:74%;background:var(--jade)"></i></div><span class="fv">渐衡</span></div>
+          <div class="frow"><span class="fk">自　持</span><div class="fbar"><i style="width:52%;background:var(--gold)"></i></div><span class="fv">微萌</span></div>
+          <div class="frow"><span class="fk">守　静</span><div class="fbar"><i style="width:63%;background:var(--gold)"></i></div><span class="fv">微萌</span></div>
+          <div class="frow"><span class="fk">内　化</span><div class="fbar"><i style="width:91%;background:var(--jade)"></i></div><span class="fv">将成</span></div>
+        </div>
+      </div>
+      <div class="s-nav">
+        <div class="it"><div class="ic">府</div>洞府</div>
+        <div class="it"><div class="ic">视</div>内视</div>
+        <div class="it"><div class="ic">悟</div>参悟</div>
+        <div class="it"><div class="ic">诀</div>功法</div>
+        <div class="it on"><div class="ic">尊</div>本尊</div>
+      </div>
+    </div></div>
+    <div class="cap">
+      <span class="kai">本尊 · 塑造与境界</span><span class="no ui">屏五</span>
+      <p>玩家的一亩三分：性情滑块（跨局养成，写入分身 prompt）、<b>方向卡</b>（目标由你定）、传音三级。
+      筑基五关以定性进度呈现——<b>境界=引擎里的新稳定结构</b>，不是经验条。</p>
+    </div>
+  </div>
+
+</div><!-- /rail -->
+
+<!-- ════ 视觉规范 ════ -->
+<div class="spec">
+  <h2>视觉规范</h2>
+  <p class="s-sub">墨夜为底，青玉为气，鎏金为引，朱砂为界——延续现有客户端的金色基因，整体转入仙侠夜色。</p>
+
+  <div class="spec-grid">
+    <div class="swatches">
+      <div class="sw-row"><span class="chipc" style="background:#0C1216"></span><span class="nm">墨夜</span><span class="use">全局底色</span><span class="hex">#0C1216</span></div>
+      <div class="sw-row"><span class="chipc" style="background:#1B272E"></span><span class="nm">黛石</span><span class="use">面板 / 卡片</span><span class="hex">#1B272E</span></div>
+      <div class="sw-row"><span class="chipc" style="background:#E9E4D6"></span><span class="nm">月白</span><span class="use">主文字</span><span class="hex">#E9E4D6</span></div>
+      <div class="sw-row"><span class="chipc" style="background:#8FA096"></span><span class="nm">雾灰</span><span class="use">次级文字</span><span class="hex">#8FA096</span></div>
+      <div class="sw-row"><span class="chipc" style="background:#7FB8A4"></span><span class="nm">青玉</span><span class="use">灵气 / 正向 / 自运行</span><span class="hex">#7FB8A4</span></div>
+      <div class="sw-row"><span class="chipc" style="background:#C9A454"></span><span class="nm">鎏金</span><span class="use">主行动 / 灵物 / 分身</span><span class="hex">#C9A454</span></div>
+      <div class="sw-row"><span class="chipc" style="background:#C0523F"></span><span class="nm">朱砂</span><span class="use">印章 / 风险 / 损伤</span><span class="hex">#C0523F</span></div>
+    </div>
+    <div class="type-spec">
+      <div class="ts"><div class="demo kai">一炁周天 · 筑基之路</div><div class="info ui">马善政楷 · 题字 / 屏名 / 境界 / 功法名 — 38–64px</div></div>
+      <div class="ts"><div class="demo" style="font-family:'Noto Serif SC',serif;font-size:17px">感知正文：青关微微充盈，一线暖意自丹田升起。</div><div class="info ui">思源宋 · 感知流 / 叙事文本 — 12–15px</div></div>
+      <div class="ts"><div class="demo ui" style="font-size:13px">环境灵气 · 已验证 1.5–2.0 · 信 72% · 第 128 周天</div><div class="info ui">思源黑 · 界面标签 / 数值 / 按钮 — 9–13px，数字用等宽变体</div></div>
+    </div>
+  </div>
+
+  <h3>感知映射 · 世界真值 → 屏上文字</h3>
+  <p class="s-sub" style="margin-bottom:14px">同一现实，随神识与熟练度解锁更细的措辞——感知分级是养成的一部分。</p>
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>真值区间</th><th>神识一层（初见）</th><th>神识三层（熟练）</th></tr>
+      <tr><td>压力 &lt; 0.25</td><td>无明显感觉</td><td>空明，可容新纳 <span class="m">（≈0.1）</span></td></tr>
+      <tr><td>0.25 – 0.45</td><td>轻微充盈</td><td>渐盈 <span class="m">（约三成）</span></td></tr>
+      <tr><td>0.45 – 0.65</td><td>明显胀感</td><td>胀，然尚可续引 <span class="m">（约五成）</span></td></tr>
+      <tr><td>0.65 – 0.85</td><td>强烈胀感 · 不适</td><td>满胀，阻力大增 <span class="m">（约七成）</span></td></tr>
+      <tr><td>0.85 – 1.0</td><td>疼痛</td><td>灼痛，脉将不堪 <span class="m">（九成，险）</span></td></tr>
+      <tr><td>&gt; 1.0</td><td>剧痛 · 恐有失稳之患</td><td>过载！有撕裂之危 <span class="m">（超限）</span></td></tr>
+    </table>
+  </div>
+
+  <h3>状态词表 · 界面一律用词，不用数</h3>
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>维度</th><th>五档措辞（弱 → 强）</th></tr>
+      <tr><td>开度 openness</td><td>闭 → 微开 → 半开 → 大开 → 洞开</td></tr>
+      <tr><td>稳固 stability</td><td>稳如磐石 → 稳固 → 微澜 → 不稳 → 将溃</td></tr>
+      <tr><td>五行倾向</td><td>似偏木性（未证实）→ 偏木性（已验证）</td></tr>
+      <tr><td>环境灵气</td><td>微茫 → 稀薄 → 流转 → 浓郁 → 沛然</td></tr>
+      <tr><td>损伤 damage</td><td>无损 → 隐伤 → 作痛 → 重创 → 脉裂</td></tr>
+    </table>
+  </div>
+
+  <footer>
+    <span class="kai">Engine 生产因果 · 分身生产知识 · 本尊生产方向</span>
+    <span class="ui">一炁周天 · 设计稿 v0.1 · 竖屏 390×844 · Runtime 消费已知，LLM 探索未知</span>
+  </footer>
+</div>
+
+</div>
