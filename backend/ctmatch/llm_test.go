@@ -184,7 +184,8 @@ func TestLLMBudgetAndGarbage(t *testing.T) {
 	}
 }
 
-// 思考模式配置（2026-09-19）：默认显式关闭；on 时带 reasoning_effort。
+// 思考模式配置（2026-09-19，单变量三档）：off=显式关闭（DeepSeek 系）；
+// low/high/max=始终思考型模型（glm-5.3-flash 等）的程度参数；default=不发送。
 func TestLLMThinkingPayload(t *testing.T) {
 	off := &LLMConfig{}
 	body := off.thinkingPayload()
@@ -194,18 +195,20 @@ func TestLLMThinkingPayload(t *testing.T) {
 	if _, ok := body["reasoning_effort"]; ok {
 		t.Errorf("关闭时不应带 reasoning_effort")
 	}
-	on := &LLMConfig{Thinking: "on", ThinkingEffort: "low"}
-	body = on.thinkingPayload()
-	if body["thinking"].(map[string]string)["type"] != "enabled" || body["reasoning_effort"] != "low" {
-		t.Errorf("on 应 enabled+effort，got %v", body)
+	eff := (&LLMConfig{Thinking: "low"}).thinkingPayload()
+	if eff["reasoning_effort"] != "low" {
+		t.Errorf("low 应映射 reasoning_effort，got %v", eff)
+	}
+	if d := (&LLMConfig{Thinking: "default"}).thinkingPayload(); d != nil {
+		t.Errorf("default 应不发送任何字段，got %v", d)
 	}
 	// 环境变量注入路径
 	t.Setenv("AGENTBATTLE_LLM_BASE_URL", "http://x/v1")
 	t.Setenv("AGENTBATTLE_LLM_API_KEY", "k")
 	t.Setenv("AGENTBATTLE_LLM_MODEL", "m")
-	t.Setenv("AGENTBATTLE_LLM_THINKING", "OFF") // 大小写不敏感
+	t.Setenv("AGENTBATTLE_LLM_THINKING", "LOW") // 大小写不敏感
 	cfg := LoadLLMConfig()
-	if cfg.Thinking != "off" {
+	if cfg.Thinking != "low" {
 		t.Errorf("THINKING 应归一化为小写，got %q", cfg.Thinking)
 	}
 }
