@@ -98,76 +98,6 @@ func (cur intentProfile) relaxedFrom(prev intentProfile) bool {
 }
 
 // ---------------------------------------------------------------------------
-// 校验（LLM 意图 → 会话层可落地）：引用不存在穴位/经脉或缺档位的意图
-// 就地丢弃并记入转录，避免无效意图逐 Tick 刷 InvalidIntent 事件。
-// ---------------------------------------------------------------------------
-
-func sanitizeIntents(g *cult.BodyGraph, intents []ctmatch.Intent) ([]ctmatch.Intent, []string) {
-	names := map[string]bool{}
-	for _, a := range g.Acupoints {
-		names[a.Name] = true
-	}
-	var out []ctmatch.Intent
-	var drops []string
-	drop := func(why string) { drops = append(drops, why) }
-	for _, it := range intents {
-		switch it.Kind {
-		case ctmatch.IntentSense, ctmatch.IntentStop, ctmatch.IntentHypothesis:
-			out = append(out, it)
-		case ctmatch.IntentInspect:
-			if names[it.Acupoint] {
-				out = append(out, it)
-			} else {
-				drop("inspect 未知穴位 " + it.Acupoint)
-			}
-		case ctmatch.IntentAbsorb:
-			if !names[it.Acupoint] {
-				drop("absorb 未知穴位 " + it.Acupoint)
-				continue
-			}
-			if it.Level == ctmatch.LevelUnset {
-				drop("absorb 缺档位 " + it.Acupoint)
-				continue
-			}
-			out = append(out, it)
-		case ctmatch.IntentGuide:
-			if !names[it.From] || !names[it.To] {
-				drop("guide 未知穴位 " + it.From + "→" + it.To)
-				continue
-			}
-			if channelIdx(g, it.From, it.To) < 0 {
-				drop("guide 无直接经脉 " + it.From + "→" + it.To)
-				continue
-			}
-			if it.Level == ctmatch.LevelUnset {
-				drop("guide 缺档位 " + it.From + "→" + it.To)
-				continue
-			}
-			out = append(out, it)
-		}
-	}
-	return out, drops
-}
-
-func channelIdx(g *cult.BodyGraph, from, to string) int {
-	idx := map[string]int{}
-	for i, a := range g.Acupoints {
-		idx[a.Name] = i
-	}
-	f, ok1 := idx[from]
-	t, ok2 := idx[to]
-	if !ok1 || !ok2 {
-		return -1
-	}
-	for c, ch := range g.Channels {
-		if ch.From == f && ch.To == t {
-			return c
-		}
-	}
-	return -1
-}
-
-// ---------------------------------------------------------------------------
 // 实验台
 // ---------------------------------------------------------------------------
 
@@ -388,19 +318,19 @@ func (r *spikeRun) decide(obs *cult.Observation, why string, t int64) {
 	}
 	fmt.Fprintf(r.out, "- cognition：%s\n", r.pilot.LastCognition)
 
-	sanitized, drops := sanitizeIntents(r.g, ni)
-	for _, d := range drops {
-		fmt.Fprintf(r.out, "- 丢弃意图：%s\n", d)
-	}
-	if len(sanitized) > 0 {
+	// 意图不做前置清洗：引用不存在穴位/经脉的意图交给会话层丢弃——
+	// 会话层会为被拒意图产出回执（铁律 6），分身由此得知"此路不通"。
+	// （此前在此处静默丢弃导致分身永远收不到拒绝反馈，M1 验收 A/B
+	// 两轮各 44 次 guide 全部无声蒸发，分身据此建立错误理论——已删。）
+	if len(ni) > 0 {
 		// M2：不适快照后 5 Tick 窗口内的自主放松。
 		if r.m2Armed && t > r.m2T0 && t <= r.m2T0+5 && r.m2 < 0 {
-			if profileOf(sanitized).relaxedFrom(r.m2Profile) {
+			if profileOf(ni).relaxedFrom(r.m2Profile) {
 				r.m2 = t
 				fmt.Fprintf(r.out, "- **M2 触发**：不适档后 %d Tick 内自主调整\n", t-r.m2T0)
 			}
 		}
-		r.intents = sanitized
+		r.intents = ni
 	}
 	fmt.Fprintf(r.out, "- 新意图：%s\n", intentsLine(r.intents))
 }
