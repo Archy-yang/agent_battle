@@ -39,7 +39,7 @@ watch(battleNavRequest, () => { page.value = 'battle'; mode.value = 'battle' })
 
 <template>
   <div class="wrap">
-    <header>
+    <header v-if="mode === 'battle'">
       <!-- pack 名始终读全局 view（响应式）：新对局切换场景包后标题跟随 -->
       <h1>agent_battle <small>{{ mode === 'cult' ? '一炁周天' : (view?.pack ?? '未开局') }}</small></h1>
       <nav class="nav">
@@ -68,8 +68,9 @@ watch(battleNavRequest, () => { page.value = 'battle'; mode.value = 'battle' })
       </div>
     </header>
 
-    <!-- 修炼模式：五屏（府/视/悟/诀/尊），自带外壳与导航 -->
-    <CultApp v-if="mode === 'cult'" />
+    <!-- 修炼模式：五屏（府/视/悟/诀/尊），接管整个视口（手机全屏），
+         自带顶栏与退出按钮，故全局 header 在修炼模式下隐藏 -->
+    <CultApp v-if="mode === 'cult'" @exit="mode = 'battle'" />
 
     <main class="page" v-else>
       <MapView v-if="page === 'map'" />

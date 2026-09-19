@@ -14,6 +14,11 @@ interface CultState {
   askAnswer: string
   askDegraded: string
   busy: boolean
+  // gate = 开局仪式（唤醒分身）尚未完成。开局是产品语义的一部分
+  // （设计稿：本尊入世），pilot 选择不属于玩家语义——默认请 llm，
+  // 后端未配置时自动落 script 并告知。
+  gate: boolean
+  awakening: boolean
 }
 
 export const cult = reactive<CultState>({
@@ -22,22 +27,43 @@ export const cult = reactive<CultState>({
   askAnswer: '',
   askDegraded: '',
   busy: false,
+  gate: true,
+  awakening: false,
 })
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-/** 确保修炼会话存在并开始轮询（幂等；模式切到修炼时调用）。 */
-export async function ensureCultSession(): Promise<void> {
-  if (cult.view) return
-  try {
-    cult.view = await createCultSession('script')
-    cult.error = ''
-  } catch (e) {
-    cult.error = String(e instanceof Error ? e.message : e)
-    return
-  }
+function startPolling(): void {
   if (pollTimer == null) {
     pollTimer = setInterval(() => { void refreshCult() }, 3000)
+  }
+}
+
+/** 开局仪式「唤醒分身」：建会话并开始轮询。llm 未配置时自动落脚本。 */
+export async function awaken(pilot: 'llm' | 'script', goal: string): Promise<void> {
+  if (cult.awakening) return
+  cult.awakening = true
+  try {
+    if (goal.trim()) {
+      try { localStorage.setItem('cult_self_goal', goal) } catch { /* 私有浏览态 */ }
+    }
+    try {
+      cult.view = await createCultSession(pilot)
+    } catch (e) {
+      if (pilot === 'llm' && String(e instanceof Error ? e.message : e).includes('LLM 未配置')) {
+        cult.view = await createCultSession('script')
+        cult.error = '灵机未启，以脚本分身入定（不耗调用）'
+      } else {
+        throw e
+      }
+    }
+    cult.gate = false
+    cult.error = ''
+    startPolling()
+  } catch (e) {
+    cult.error = String(e instanceof Error ? e.message : e)
+  } finally {
+    cult.awakening = false
   }
 }
 

@@ -25,12 +25,15 @@
   font-size: 15px;
   line-height: 1.7;
   -webkit-font-smoothing: antialiased;
-  min-height: calc(100vh - 120px);
-  border-radius: 14px;
-  border: 1px solid var(--line);
+  /* 手机全屏：接管整个视口（不含浏览器动态工具栏），只有 .c-body 内滚，
+     外层永不滚动——轮询刷新不再引起整页跳动 */
+  height: 100dvh;
+  border-radius: 0;
+  border: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  overscroll-behavior: contain;
 }
 .cult-root .kai { font-family: 'Ma Shan Zheng', cursive; font-weight: 400; }
 .cult-root .ui { font-family: 'Noto Sans SC', sans-serif; }
@@ -59,6 +62,45 @@
 .c-body {
   flex: 1; overflow-y: auto; padding: 2px 14px 8px;
   display: flex; flex-direction: column; gap: 9px; min-height: 0;
+}
+/* 满屏屏体（洞府）：内容自身定高，感知流内滚——外层不滚、布局不跳 */
+.c-full {
+  height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 9px;
+}
+.c-full .c-sense { flex: 1; min-height: 140px; }
+
+/* —— 开局仪式（本尊入世） —— */
+.c-gate {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px; padding: 24px 26px; text-align: center;
+}
+.c-gate .seal {
+  width: 64px; height: 64px; border-radius: 10px; background: var(--cinnabar);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Ma Shan Zheng', cursive; font-size: 38px; color: #F2E9DC;
+  box-shadow: inset 0 0 0 2px rgba(242, 233, 220, .35), 0 4px 18px rgba(192, 82, 63, .25);
+  transform: rotate(-3deg);
+}
+.c-gate h2 { font-size: 44px; letter-spacing: 6px; line-height: 1.1; font-weight: 400; color: var(--moon); }
+.c-gate .sub { color: var(--mist); font-size: 12px; max-width: 34ch; margin: 0; }
+.c-gate textarea {
+  width: 100%; resize: none; border: 1px solid var(--line); border-radius: 12px;
+  background: rgba(12, 18, 22, .6); color: var(--moon); padding: 10px 12px;
+  font-family: 'Noto Serif SC', serif; font-size: 13px; line-height: 1.6;
+}
+.c-gate textarea:focus { outline: none; border-color: var(--gold); }
+.c-gate .awaken {
+  width: 100%; padding: 12px 0; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--gold); background: rgba(201, 164, 84, .12);
+  font-family: 'Ma Shan Zheng', cursive; font-size: 22px; letter-spacing: 4px; color: var(--gold);
+}
+.c-gate .awaken:disabled { opacity: .6; }
+.c-gate .demo { font-size: 10.5px; color: var(--mist); display: flex; align-items: center; gap: 6px; }
+.c-gate .err { color: var(--cinnabar); font-size: 11px; margin: 0; }
+.c-status .back {
+  background: none; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--mist); font-family: 'Noto Sans SC', sans-serif; font-size: 10px;
+  padding: 2px 10px; cursor: pointer;
 }
 .c-card {
   border: 1px solid var(--line); border-radius: 14px; background: rgba(27, 39, 46, .66);

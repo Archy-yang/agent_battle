@@ -59,7 +59,7 @@ function doStop() { void act([{ kind: 'stop' }]) }
 </script>
 
 <template>
-  <template v-if="cult.view">
+  <div class="c-full" v-if="cult.view">
     <!-- 环境五行（定性 chips） -->
     <div class="c-env">
       <div v-for="e in cult.view.env" :key="e.element" class="e">
@@ -136,5 +136,5 @@ function doStop() { void act([{ kind: 'stop' }]) }
       <button class="a" :disabled="cult.busy" @click="openSheet('guide')"><span class="c">引</span><span class="w">引灵</span></button>
       <button class="a halt" :disabled="cult.busy" @click="doStop"><span class="c">止</span><span class="w">止息</span></button>
     </div>
-  </template>
+  </div>
 </template>
