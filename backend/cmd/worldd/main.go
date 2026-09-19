@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 
+	"agentbattle/backend/ctmatch"
 	"agentbattle/backend/engine"
 	"agentbattle/backend/match"
 	"agentbattle/backend/profile"
@@ -67,6 +68,18 @@ func main() {
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		match.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": version})
 	})
+
+	// WP-5：修炼会话 API（/api/cult/*）。感知隔离律在 API 层成立：
+	// 玩家界面载荷只有定性词/band，真值仅在 ?debug=1 下输出。
+	cultreg := ctmatch.NewCultRegistry()
+	mux.HandleFunc("POST /api/cult/session", cultreg.HandleCreate)
+	mux.HandleFunc("GET /api/cult/session/{id}", cultreg.HandleView)
+	mux.HandleFunc("POST /api/cult/session/{id}/intents", cultreg.HandleIntents)
+	mux.HandleFunc("POST /api/cult/session/{id}/ask", cultreg.HandleAsk)
+	mux.HandleFunc("POST /api/cult/session/{id}/guidance", cultreg.HandleGuidance)
+	mux.HandleFunc("POST /api/cult/session/{id}/tick", cultreg.HandleTick)
+	mux.HandleFunc("POST /api/cult/session/{id}/protocols", cultreg.HandleProtocols)
+	mux.HandleFunc("POST /api/cult/session/{id}/protocols/{name}/start", cultreg.HandleStartProtocol)
 
 	mux.HandleFunc("GET /api/match/{id}/recording", reg.ServeRecording)
 	mux.HandleFunc("POST /api/replay", match.ServeReplay)

@@ -9,6 +9,12 @@ import BattleView from './views/BattleView.vue'
 import GearView from './views/GearView.vue'
 import StatsView from './views/StatsView.vue'
 import ReplayView from './views/ReplayView.vue'
+import CultApp from './cult/CultApp.vue'
+import './cult/cult.css'
+
+// 模式切换（WP-5）：战斗 = 旧五页签（零改动）；修炼 = 新五屏（src/cult/）。
+type Mode = 'battle' | 'cult'
+const mode = ref<Mode>('battle')
 
 type Page = 'map' | 'battle' | 'gear' | 'stats' | 'replay'
 const page = ref<Page>('map')
@@ -28,22 +34,27 @@ onMounted(ensureMatch)
 // in_combat 变 false 重置武装——见 state.ts watchCombat）；用户手动返回
 // 地图后，再次遭遇会再次切换。battleNavRequest 也被地图页「前往对战」按钮复用。
 watchCombat()
-watch(battleNavRequest, () => { page.value = 'battle' })
+watch(battleNavRequest, () => { page.value = 'battle'; mode.value = 'battle' })
 </script>
 
 <template>
   <div class="wrap">
     <header>
       <!-- pack 名始终读全局 view（响应式）：新对局切换场景包后标题跟随 -->
-      <h1>agent_battle <small>{{ view?.pack ?? '未开局' }}</small></h1>
+      <h1>agent_battle <small>{{ mode === 'cult' ? '一炁周天' : (view?.pack ?? '未开局') }}</small></h1>
       <nav class="nav">
-        <button
-          v-for="p in PAGES" :key="p.key"
-          :class="{ active: page === p.key }"
-          @click="page = p.key"
-        >{{ p.label }}</button>
+        <!-- 模式切换：战斗 | 修炼 -->
+        <button :class="{ active: mode === 'battle' }" @click="mode = 'battle'">战斗</button>
+        <button :class="{ active: mode === 'cult' }" @click="mode = 'cult'">修炼</button>
+        <template v-if="mode === 'battle'">
+          <button
+            v-for="p in PAGES" :key="p.key"
+            :class="{ active: page === p.key }"
+            @click="page = p.key"
+          >{{ p.label }}</button>
+        </template>
       </nav>
-      <div class="bar" v-if="view">
+      <div class="bar" v-if="mode === 'battle' && view">
         <span>Turn {{ view.turn }}/{{ view.turn_limit }}</span>
         <span class="influence">⚡ {{ influenceText }}</span>
         <span v-if="view.pilot" class="badge" :class="'pilot-' + view.pilot">{{ view.pilot }}</span>
@@ -57,7 +68,10 @@ watch(battleNavRequest, () => { page.value = 'battle' })
       </div>
     </header>
 
-    <main class="page">
+    <!-- 修炼模式：五屏（府/视/悟/诀/尊），自带外壳与导航 -->
+    <CultApp v-if="mode === 'cult'" />
+
+    <main class="page" v-else>
       <MapView v-if="page === 'map'" />
       <BattleView v-else-if="page === 'battle'" />
       <GearView v-else-if="page === 'gear'" />

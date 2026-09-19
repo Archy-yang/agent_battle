@@ -79,6 +79,10 @@ type LLMPilot struct {
 	lastReceipts []IntentReceipt
 	lastLedger   []string
 
+	// pendingGuidance 是本尊传音（WP-5 /guidance）：消费于下次
+	// buildUserMessage，消费即清。
+	pendingGuidance []string
+
 	// LastCognition / LastError / LastRaw 是最近一次 Decide 的诊断信息
 	//（供转录与测试；不含任何密钥）。
 	LastCognition string
@@ -210,9 +214,56 @@ func (p *LLMPilot) GiveLedgerView(v []string) {
 	}
 }
 
-// buildUserMessage 组装用户消息：回执 + 证据账本 + 修行笔记（附注）+ 定性观察。
+// GiveGuidance 记一条本尊传音（WP-5：玩家文本注入下次征询载荷的
+// guidance 段；kind 只作标注——轻语/引导/深谈）。消费于下次
+// buildUserMessage（即下次 Decide），消费即清。
+func (p *LLMPilot) GiveGuidance(kind, text string) {
+	if p != nil {
+		p.pendingGuidance = append(p.pendingGuidance, kind+"："+text)
+	}
+}
+
+// askSystemPrompt 是向分身提问的应答口径：与修行同源——只凭感受与
+// 账本作答，定性、不超过八十字、绝无数字。
+const askSystemPrompt = `你是一位修士的分身，本尊此刻唤你问话。
+你只凭自己的感受（定性之词）与证据账本作答：说得出的说，说不出的直说不知。
+不许猜任何数字——数字不存在于你的世界。回答不超过八十字，只输出答话正文，不要 JSON。`
+
+// Ask 向分身提问（WP-5 /ask）：载荷 = 证据账本 + 最新定性观察 + 问题，
+// 全部定性措辞、零数字（铁律 1）。未配置或调用失败返回错误，由上层降级。
+func (p *LLMPilot) Ask(obs *Observation, ledger []string, question string) (string, error) {
+	if p == nil || p.cfg == nil {
+		return "", fmt.Errorf("LLM 未配置")
+	}
+	var b strings.Builder
+	b.WriteString("【你的证据账本】\n")
+	if len(ledger) == 0 {
+		b.WriteString("（还是空的。）\n")
+	}
+	for _, line := range ledger {
+		b.WriteString("- " + line + "\n")
+	}
+	b.WriteString("\n【当前的身体感受】\n")
+	data, err := json.Marshal(obs)
+	if err != nil {
+		data = []byte("{}")
+	}
+	b.Write(data)
+	b.WriteString("\n\n本尊问你：" + question)
+	return p.chat(askSystemPrompt, b.String())
+}
+
+// buildUserMessage 组装用户消息：传音 + 回执 + 证据账本 + 修行笔记（附注）+ 定性观察。
 func (p *LLMPilot) buildUserMessage(obs *Observation) string {
 	var b strings.Builder
+	if len(p.pendingGuidance) > 0 {
+		b.WriteString("【本尊传音】\n")
+		for _, g := range p.pendingGuidance {
+			b.WriteString("- " + g + "\n")
+		}
+		b.WriteString("\n")
+		p.pendingGuidance = nil
+	}
 	b.WriteString("【你上一组意图的回执】\n")
 	if len(p.lastReceipts) == 0 {
 		b.WriteString("（尚无回执——你还没有交出过意图。）\n")

@@ -25,7 +25,8 @@ package main
 //	go run ./cmd/cultspike -selftest -out /tmp/cultspike-selftest.md
 //	    （selftest：不调 LLM，以一组脚本意图验证世界可行性与里程碑判定）
 //
-// 本程序是世界构造的唯一定义点；LLM 的 prompt 在 ctmatch/llm.go。
+// 本程序的世界构造已抽为 ctmatch.SpikeWorld（与 /api/cult 会话同源）；
+// LLM 的 prompt 在 ctmatch/llm.go。
 
 import (
 	"bufio"
@@ -53,50 +54,8 @@ import (
 //     避免单行淤积成为纯数值陷阱。
 //   - 金门开度仅 0.30（近闭）：吸收前先感开合，是感知信息的真实用途。
 func buildWorld() *cult.World {
-	pt := func(name string, aff [cult.ElementCount]int64, cap, tp, ret int64, open, stab int64) cult.Acupoint {
-		return cult.Acupoint{
-			Name: name, Affinity: aff, Capacity: cap, Throughput: tp,
-			// open 以千分位传入（800 = 0.8）；微标度换算 ×1000（1.0 = 1e6 微）。
-			Retention: ret, Openness: open * 1000, Stability: stab,
-			Activity: [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
-		}
-	}
-	all := func(v int64) [cult.ElementCount]int64 {
-		return [cult.ElementCount]int64{v, v, v, v, v}
-	}
-	char := cult.Character{
-		Affinity:   [cult.ElementCount]int64{1250, 800, 900, 750, 1100},
-		Control:    700,
-		Perception: 500,
-		BodyGraph: cult.BodyGraph{
-			Acupoints: []cult.Acupoint{
-				pt("下丹田", all(1000), 200000, 20000, 1000, 800, 950),                                       // 0 汇点
-				pt("青关", [cult.ElementCount]int64{1200, 750, 900, 850, 1000}, 10000, 8000, 400, 800, 950), // 1 主纳
-				pt("阳枢", [cult.ElementCount]int64{1100, 900, 800, 800, 800}, 6000, 4000, 500, 500, 900),   // 2
-				pt("土府", [cult.ElementCount]int64{800, 850, 1250, 750, 800}, 8000, 5000, 800, 650, 950),   // 3
-				pt("金门", [cult.ElementCount]int64{800, 750, 800, 1300, 850}, 5000, 4000, 600, 300, 920),   // 4 近闭
-				pt("玄泉", [cult.ElementCount]int64{900, 800, 800, 800, 1200}, 7000, 4000, 700, 700, 940),   // 5
-				pt("神庭", [cult.ElementCount]int64{1050, 1050, 800, 800, 800}, 3000, 3000, 300, 900, 880),  // 6 脆
-				pt("中庭", [cult.ElementCount]int64{1000, 900, 950, 900, 950}, 9000, 6000, 500, 750, 930),   // 7 中枢
-			},
-			Channels: []cult.Channel{
-				{Name: "青关→下丹田", From: 1, To: 0, BaseConductance: 950, Throughput: 8000},
-				{Name: "青关→中庭", From: 1, To: 7, BaseConductance: 700, Throughput: 6000},
-				{Name: "中庭→下丹田", From: 7, To: 0, BaseConductance: 850, Throughput: 12000},
-				{Name: "阳枢→中庭", From: 2, To: 7, BaseConductance: 700, Throughput: 6000},
-				{Name: "土府→中庭", From: 3, To: 7, BaseConductance: 700, Throughput: 6000},
-				{Name: "金门→中庭", From: 4, To: 7, BaseConductance: 600, Throughput: 5000},
-				{Name: "玄泉→中庭", From: 5, To: 7, BaseConductance: 700, Throughput: 6000},
-				{Name: "神庭→青关", From: 6, To: 1, BaseConductance: 600, Throughput: 5000},
-			},
-		},
-	}
-	env := cult.Environment{
-		Qi:          [cult.ElementCount]int64{3600, 2400, 2400, 1800, 2400}, // 木略盛
-		Activity:    [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
-		Temperature: 1000,
-	}
-	return cult.NewWorld(char, env)
+	// 行为不变：世界构造的唯一定义点已抽至 ctmatch（SPIKE 与 HTTP 会话同源）。
+	return ctmatch.SpikeWorld()
 }
 
 // ---------------------------------------------------------------------------
