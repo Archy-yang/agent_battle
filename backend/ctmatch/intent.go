@@ -100,11 +100,12 @@ const One = 1000 // 定点 1.0（千分位，与 cult 包标度一致）
 type IntentKind int
 
 const (
-	IntentSense   IntentKind = iota // sense() 主动感知环境
-	IntentAbsorb                    // absorb(target, level)
-	IntentGuide                     // guide(from, to, element, level, amount)
-	IntentStop                      // stop() 停止一切操作
-	IntentInspect                   // inspect(target) 内视指定目标
+	IntentSense      IntentKind = iota // sense() 主动感知环境
+	IntentAbsorb                       // absorb(target, level)
+	IntentGuide                        // guide(from, to, element, level, amount)
+	IntentStop                         // stop() 停止一切操作
+	IntentInspect                      // inspect(target) 内视指定目标
+	IntentHypothesis                   // record_hypothesis(text) 登记猜想（stage_2 §26 第六接口）
 )
 
 func (k IntentKind) String() string {
@@ -119,17 +120,20 @@ func (k IntentKind) String() string {
 		return "stop"
 	case IntentInspect:
 		return "inspect"
+	case IntentHypothesis:
+		return "record_hypothesis"
 	}
 	return "unknown"
 }
 
 // Intent 是一条玩家/Agent 意图。字段按意图种类取用：
 //
-//	Sense    —— 无字段
-//	Absorb   —— Acupoint、Level
-//	Guide    —— From、To、Element、Level（或显式 Amount）
-//	Stop     —— 无字段
-//	Inspect  —— Acupoint
+//	Sense             —— 无字段
+//	Absorb            —— Acupoint、Level
+//	Guide             —— From、To、Element、Level（或显式 Amount）
+//	Stop              —— 无字段
+//	Inspect           —— Acupoint
+//	RecordHypothesis  —— Text（猜想原文）
 type Intent struct {
 	Kind     IntentKind
 	Acupoint string // Absorb 目标 / Inspect 目标（穴位名）
@@ -140,6 +144,7 @@ type Intent struct {
 	Amount   int64  // Guide 显式流量（量，千分位；0 = 用档位换算）。
 	// 显式流量是"精确控制"，属于 Control 成长后解锁的能力（§27）；
 	// L2 探索时也可以直接提交——Engine 仍决定实际结果。
+	Text string // RecordHypothesis 的猜想原文（stage_2 §26 第六接口）
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +183,10 @@ type ScriptedPilot struct {
 	Script [][]Intent // 每次 Decide 依次弹出一条；耗尽后返回 nil
 	Calls  int        // 已被征询次数（测试断言用）
 	Last   *Observation
+
+	// 会话层经可选接口给到的回执与账本视图（测试断言用）。
+	LastReceipts []IntentReceipt
+	LastLedger   []string
 }
 
 func (p *ScriptedPilot) Decide(obs *Observation) []Intent {

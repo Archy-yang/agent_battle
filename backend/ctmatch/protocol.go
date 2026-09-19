@@ -78,7 +78,9 @@ const (
 
 // Step 是协议的一个步骤。粗档位（Level）或显式参数（Intensity/Amount）
 // 二选一；Duration 是本步骤持续 Tick 数（stage_3 §25 dwell_ticks），
-// 0 表示用协议级 Cadence。
+// 0 表示用协议级 Cadence。Parallel 是同息并行组号（SPIKE 结论三
+// "纳引相位割裂"的对策，stage_2 §17 cadence 的节奏语义扩展）：非零且
+// 相邻步骤组号相同者同一息编排（吸收+引流同 Tick 生效），0 表示独立成息。
 type Step struct {
 	Kind StepKind
 
@@ -95,6 +97,7 @@ type Step struct {
 
 	Level    Level
 	Duration int
+	Parallel int // 同息并行组号（0 = 独立步骤；>0 且相邻同号 = 同息）
 }
 
 // ValidatedRange 是一条经脉单元素的已验证流量区间（stage_3 §30）。
@@ -106,11 +109,22 @@ type ValidatedRange struct {
 	Max     int64
 }
 
+// ProtocolStatus 是功法的生命周期状态（stage_2 §29 知识→功法、
+// stage_3 §29 功法验证）：实验方案（draft）→ 达标转正（validated）。
+type ProtocolStatus string
+
+const (
+	StatusDraft     ProtocolStatus = "draft"     // 实验方案：尚未通过试运行验证
+	StatusValidated ProtocolStatus = "validated" // 正法：试运行达标（stage_3 §29）
+)
+
 // Protocol 是编译后的功法：确定性、可被 Runtime 零 LLM 执行。
 type Protocol struct {
 	Name          string
-	Preconditions []Cond // 启动前检查（stage_2 §35 preconditions）
-	Steps         []Step // 动作序列；跑满一遍为一周天
+	Status        ProtocolStatus // 生命周期：draft → validated（试运行达标自动转正）
+	Preconditions []Cond         // 启动前检查（stage_2 §35 preconditions）
+	Steps         []Step         // 动作序列；跑满一遍为一周天
+	Slots         [][]int        // 同息编排：每槽是同 Tick 并行的 Step 下标组（SPIKE 结论三）
 	Guards        []Guard
 	Cadence       int // 步骤默认持续 Tick 数（stage_2 §17 cadence）
 	Cycles        int // 周天数（跑多少遍 Steps）
@@ -145,6 +159,7 @@ type yamlAbsorb struct {
 	Level     string `yaml:"level"`
 	Intensity int64  `yaml:"intensity"`
 	Duration  int    `yaml:"duration"`
+	Parallel  int    `yaml:"parallel"` // 同息并行组号（SPIKE 结论三）
 }
 
 type yamlGuide struct {
@@ -154,6 +169,7 @@ type yamlGuide struct {
 	Level    string `yaml:"level"`
 	Amount   int64  `yaml:"amount"`
 	Duration int    `yaml:"duration"`
+	Parallel int    `yaml:"parallel"` // 同息并行组号（SPIKE 结论三）
 }
 
 type yamlStep struct {
@@ -198,7 +214,7 @@ func compileYAML(y *yamlProtocol, g *cult.BodyGraph) (*Protocol, error) {
 	var errs []string
 	add := func(format string, args ...any) { errs = append(errs, fmt.Sprintf(format, args...)) }
 
-	p := &Protocol{Name: y.Protocol, Cadence: y.Cadence, Cycles: y.Cycles}
+	p := &Protocol{Name: y.Protocol, Cadence: y.Cadence, Cycles: y.Cycles, Status: StatusDraft}
 	if p.Name == "" {
 		add("protocol: name is required")
 	}
@@ -230,18 +246,20 @@ func compileYAML(y *yamlProtocol, g *cult.BodyGraph) (*Protocol, error) {
 		case s.Absorb != nil && s.Guide != nil:
 			add("actions[%d]: absorb and guide are mutually exclusive", i)
 		case s.Absorb != nil:
-			st, err := compileAbsorb(s.Absorb, nameIdx, p.Cadence)
+			st, err := compileAbsorb(s.Absorb, nameIdx)
 			if err != nil {
 				add("actions[%d]: %v", i, err)
 				continue
 			}
+			st.Parallel = s.Absorb.Parallel
 			p.Steps = append(p.Steps, st)
 		case s.Guide != nil:
-			st, err := compileGuide(s.Guide, g, nameIdx, p.Cadence)
+			st, err := compileGuide(s.Guide, g, nameIdx)
 			if err != nil {
 				add("actions[%d]: %v", i, err)
 				continue
 			}
+			st.Parallel = s.Guide.Parallel
 			p.Steps = append(p.Steps, st)
 		default:
 			add("actions[%d]: must specify absorb or guide", i)
@@ -249,6 +267,14 @@ func compileYAML(y *yamlProtocol, g *cult.BodyGraph) (*Protocol, error) {
 	}
 	if len(p.Steps) == 0 {
 		add("actions: at least one step is required")
+	}
+
+	// 同息并行编排（SPIKE 结论三：吸收-引流同息并行，化解纳引相位割裂）。
+	slots, err := buildSlots(p.Steps, p.Cadence)
+	if err != nil {
+		add("actions: %v", err)
+	} else {
+		p.Slots = slots
 	}
 
 	// Guards。
@@ -296,7 +322,7 @@ func compileYAML(y *yamlProtocol, g *cult.BodyGraph) (*Protocol, error) {
 	return p, nil
 }
 
-func compileAbsorb(a *yamlAbsorb, nameIdx map[string]int, cadence int) (Step, error) {
+func compileAbsorb(a *yamlAbsorb, nameIdx map[string]int) (Step, error) {
 	idx, ok := nameIdx[a.Target]
 	if !ok {
 		return Step{}, fmt.Errorf("absorb: unknown acupoint %q", a.Target)
@@ -318,7 +344,7 @@ func compileAbsorb(a *yamlAbsorb, nameIdx map[string]int, cadence int) (Step, er
 	return Step{Kind: StepAbsorb, PointIdx: idx, Level: lv, Intensity: a.Intensity, Duration: dur}, nil
 }
 
-func compileGuide(gd *yamlGuide, g *cult.BodyGraph, nameIdx map[string]int, cadence int) (Step, error) {
+func compileGuide(gd *yamlGuide, g *cult.BodyGraph, nameIdx map[string]int) (Step, error) {
 	from, ok := nameIdx[gd.From]
 	if !ok {
 		return Step{}, fmt.Errorf("guide: unknown acupoint %q", gd.From)
@@ -427,79 +453,123 @@ func parseElement(s string) (int, error) {
 }
 
 // ---------------------------------------------------------------------------
+// 同息并行编排（SPIKE 结论三：cadence 表达"同息并行"而非仅交替步骤）
+// ---------------------------------------------------------------------------
+
+// buildSlots 把步骤序列折成同息编排槽：Parallel==0 的步骤独立成槽；
+// 相邻同组号（>0）的步骤并入同一槽——同起同息、同 Tick 生效。
+// 同槽各步的有效持续时长必须一致，否则拒绝编译。
+func buildSlots(steps []Step, cadence int) ([][]int, error) {
+	var slots [][]int
+	for i := range steps {
+		p := steps[i].Parallel
+		if p < 0 {
+			return nil, fmt.Errorf("parallel group number must be >= 0 (step %d)", i)
+		}
+		if n := len(slots); p > 0 && n > 0 && steps[slots[n-1][0]].Parallel == p {
+			slots[n-1] = append(slots[n-1], i)
+			continue
+		}
+		slots = append(slots, []int{i})
+	}
+	for si, sl := range slots {
+		if len(sl) < 2 {
+			continue
+		}
+		d := effDuration(steps[sl[0]], cadence)
+		for _, idx := range sl[1:] {
+			if effDuration(steps[idx], cadence) != d {
+				return nil, fmt.Errorf("parallel group at slot %d: steps sharing one breath must share one duration", si)
+			}
+		}
+	}
+	return slots, nil
+}
+
+// effDuration 是步骤的有效持续 Tick 数（0 → 协议级 cadence）。
+func effDuration(s Step, cadence int) int {
+	if s.Duration == 0 {
+		return cadence
+	}
+	if s.Duration < 0 {
+		return 1
+	}
+	return s.Duration
+}
+
+// slotDuration 返回第 i 槽的有效持续 Tick 数。
+func (p *Protocol) slotDuration(i int) int {
+	if i < 0 || i >= len(p.Slots) {
+		return 1
+	}
+	return effDuration(p.Steps[p.Slots[i][0]], p.Cadence)
+}
+
+// ---------------------------------------------------------------------------
 // Runtime（L1；全自动、零 LLM，stage_2 §33）
 // ---------------------------------------------------------------------------
 
 // protocolState 是一个正在运行/暂停的 Protocol 的执行状态。
 type protocolState struct {
 	proto      *Protocol
-	step       int   // 当前步骤下标
-	tickInStep int   // 当前步骤已执行 Tick 数
+	slot       int   // 当前槽下标（同息并行组或独立步骤）
+	tickInSlot int   // 当前槽已执行 Tick 数
 	cycle      int   // 已完成的周天数
 	flowScale  int64 // Guard reduce_flow 的累积缩减（千分位，1000 = 不缩）
 	paused     bool  // 暂停（Guard stop / 出界 / 未知异常）
 	done       bool  // 跑满 Cycles
+	loopMode   bool  // AutonomousLoop（stage_3 §39）：周天无上限，Runtime 每 Tick 自推
 }
 
-// stepDuration 返回当前步骤的有效持续 Tick 数。
-func (st *protocolState) stepDuration() int {
-	d := st.proto.Steps[st.step].Duration
-	if d == 0 {
-		d = st.proto.Cadence
-	}
-	if d <= 0 {
-		d = 1
-	}
-	return d
-}
-
-// runtimeOps 产出当前 Tick 的 Ops，并推进步骤/周天游标。
-// 返回 nil Event 表示可以推进引擎；返回 Event 表示出界
+// runtimeOps 产出当前 Tick 的 Ops（同槽各步并行合流），并推进槽/周天
+// 游标。返回 nil Event 表示可以推进引擎；返回 Event 表示出界
 // （Knowledge Boundary），本 Tick 引擎不得推进。
 func (st *protocolState) runtimeOps(s *CultSession) (cult.Ops, *Event) {
 	g := &s.World.Character.BodyGraph
-	step := st.proto.Steps[st.step]
 	ops := cult.Ops{Intensity: make([]int64, len(g.Acupoints))}
 
-	switch step.Kind {
-	case StepAbsorb:
-		it := step.Intensity
-		if step.Level != LevelUnset {
-			it = IntensityForLevel(step.Level)
-		}
-		ops.Intensity[step.PointIdx] = it
-
-	case StepGuide:
-		flow := step.Amount
-		if step.Level != LevelUnset {
-			flow = FlowForLevel(step.Level, g, step.From, step.To, step.Channel)
-		}
-		flow = fpMul(flow, st.flowScale)
-		// Knowledge Boundary（stage_2 §37 / stage_3 §41）：
-		// 请求超出已验证区间 → 不尝试，暂停并升级。
-		if ev := st.checkBoundary(s, step, flow); ev != nil {
-			return ops, ev
-		}
-		req := cult.FlowRequest{Channel: step.Channel}
-		if step.Element >= 0 {
-			req.Amount[step.Element] = flow
-		} else {
-			for e := 0; e < cult.ElementCount; e++ {
-				req.Amount[e] = fpMul(flow, 200) // 混合：每元素 0.2，合计 1.0
+	for _, si := range st.proto.Slots[st.slot] {
+		step := st.proto.Steps[si]
+		switch step.Kind {
+		case StepAbsorb:
+			it := step.Intensity
+			if step.Level != LevelUnset {
+				it = IntensityForLevel(step.Level)
 			}
+			ops.Intensity[step.PointIdx] = it
+
+		case StepGuide:
+			flow := step.Amount
+			if step.Level != LevelUnset {
+				flow = FlowForLevel(step.Level, g, step.From, step.To, step.Channel)
+			}
+			flow = fpMul(flow, st.flowScale)
+			// Knowledge Boundary（stage_2 §37 / stage_3 §41）：
+			// 请求超出已验证区间 → 不尝试，暂停并升级。
+			if ev := st.checkBoundary(s, step, flow); ev != nil {
+				return ops, ev
+			}
+			req := cult.FlowRequest{Channel: step.Channel}
+			if step.Element >= 0 {
+				req.Amount[step.Element] = flow
+			} else {
+				for e := 0; e < cult.ElementCount; e++ {
+					req.Amount[e] = fpMul(flow, 200) // 混合：每元素 0.2，合计 1.0
+				}
+			}
+			ops.Requests = append(ops.Requests, req)
 		}
-		ops.Requests = append(ops.Requests, req)
 	}
 
-	// 推进游标（本 Tick 已产出 Ops；下一 Tick 用下一步骤）。
-	st.tickInStep++
-	if st.tickInStep >= st.stepDuration() {
-		st.tickInStep = 0
-		st.step++
-		if st.step >= len(st.proto.Steps) {
-			st.step = 0
+	// 推进游标（本 Tick 已产出 Ops；下一 Tick 用下一槽）。
+	st.tickInSlot++
+	if st.tickInSlot >= st.proto.slotDuration(st.slot) {
+		st.tickInSlot = 0
+		st.slot++
+		if st.slot >= len(st.proto.Slots) {
+			st.slot = 0
 			st.cycle++
-			if st.cycle >= st.proto.Cycles {
+			if st.cycle >= st.proto.Cycles && !st.loopMode {
 				st.done = true
 			}
 		}
@@ -611,4 +681,202 @@ func fpMul(a, b int64) int64 {
 		return (p + One/2) / One
 	}
 	return (p - One/2) / One
+}
+
+// ---------------------------------------------------------------------------
+// 试运行与固化闭环（stage_2 §29 知识→功法；stage_3 §28-30）
+// ---------------------------------------------------------------------------
+
+// EventProtocolValidated 是试运行达标转正事件（stage_3 §29）。
+const EventProtocolValidated EventKind = "protocol_validated"
+
+// 周天成功与转正阈值（千分位；§52：实验值，公式关系不可变）。
+const (
+	CycleMinEfficiency   = 500 // §28 SuccessfulCycle: CycleEfficiency >= 0.50
+	CycleMinStability    = 600 // §28 MinimumCycleStability >= 0.60
+	CycleDamageTolerance = 5   // §28 DamageTolerance 0.005（×1000）
+	ValidateMinCycles    = 20  // §29 SuccessfulCycles >= 20
+	ValidateMinRate      = 950 // §29 SuccessRate >= 95%
+	ValidateMinAvgStab   = 750 // §29 AverageMinimumStability >= 0.75
+	RangeExpandStep      = 500 // §30 validated_range 一次允许的外扩幅度（量，千分位）
+)
+
+// CycleRecord 是一周天的试运行记录（成功/失败原因均为定性词；数值字段
+// 只进转录/调试视图）。
+type CycleRecord struct {
+	Cycle        int
+	Success      bool
+	FailWhy      string // 定性失败原因："归返不足"/"稳定性不足"/"新增损伤"
+	Efficiency   int64  // 调试视图：CycleEfficiency（×1000）
+	MinStability int64  // 调试视图：本周天诸穴稳定性最小值（×1000）
+}
+
+// TrialRecord 是一次 Runtime 试跑的逐周天记录。
+type TrialRecord struct {
+	Protocol       string
+	Cycles         []CycleRecord
+	UnknownAnomaly bool // 试运行期间出现过未知异常（§29：转正要求没有未知异常）
+}
+
+// TrialSummary 是试跑结束后的达标判定（stage_3 §29）。
+type TrialSummary struct {
+	SuccessfulCycles int
+	TotalCycles      int
+	SuccessRate      int64 // ×1000（调试视图）
+	AvgMinStability  int64 // ×1000（调试视图）
+	UnknownAnomaly   bool
+	Qualified        bool // 是否满足转正条件
+}
+
+// TrialMonitor 伴随一次 Runtime 试跑，逐周天记录成功与失败原因。
+// 周天边界 = 各槽有效时长之和（与 Runtime 游标同构）。
+type TrialMonitor struct {
+	proto       *Protocol
+	cycleLen    int
+	tickInCycle int
+	cycleNo     int
+	input       int64 // 本周天累计：纳入 + 实际推动（§26 CycleInput 的 v0.1 口径）
+	output      int64 // 本周天累计：送达（§26 CycleOutput 的 v0.1 口径）
+	minStab     int64
+	damageStart int64
+	Record      TrialRecord
+}
+
+// newTrialMonitor 为一份 Protocol 建试跑记录器。
+func newTrialMonitor(p *Protocol) *TrialMonitor {
+	cl := 0
+	for i := range p.Slots {
+		cl += p.slotDuration(i)
+	}
+	return &TrialMonitor{proto: p, cycleLen: cl, minStab: One, Record: TrialRecord{Protocol: p.Name}}
+}
+
+// ObserveTick 累积一个引擎 Tick 的报告；跨过周天边界即结一周天账。
+func (t *TrialMonitor) ObserveTick(rep *cult.TickReport) {
+	if t == nil || t.cycleLen <= 0 || rep == nil {
+		return
+	}
+	if t.tickInCycle == 0 {
+		t.minStab = One
+		t.input, t.output = 0, 0
+		t.damageStart = 0
+		for i := range rep.Points {
+			if rep.Points[i].Damage > t.damageStart {
+				t.damageStart = rep.Points[i].Damage
+			}
+		}
+	}
+	for i := range rep.Points {
+		p := &rep.Points[i]
+		for e := 0; e < cult.ElementCount; e++ {
+			t.input += p.Intake[e]
+		}
+		if p.Stability < t.minStab {
+			t.minStab = p.Stability
+		}
+	}
+	for ti := range rep.Transfers {
+		tr := &rep.Transfers[ti]
+		for e := 0; e < cult.ElementCount; e++ {
+			t.input += tr.Actual[e]
+			t.output += tr.Delivered[e]
+		}
+	}
+	t.tickInCycle++
+	if t.tickInCycle >= t.cycleLen {
+		t.closeCycle(rep)
+		t.tickInCycle = 0
+		t.cycleNo++
+	}
+}
+
+// closeCycle 结一周天的账（stage_3 §28 周天成功判定）。
+func (t *TrialMonitor) closeCycle(rep *cult.TickReport) {
+	eff := int64(0)
+	if t.input > 0 {
+		eff = t.output * One / t.input
+		if eff > One {
+			eff = One
+		}
+	}
+	dmgEnd := int64(0)
+	for i := range rep.Points {
+		if rep.Points[i].Damage > dmgEnd {
+			dmgEnd = rep.Points[i].Damage
+		}
+	}
+	newDamage := dmgEnd-t.damageStart > CycleDamageTolerance
+	ok := eff >= CycleMinEfficiency && t.minStab >= CycleMinStability && !newDamage
+	cr := CycleRecord{Cycle: t.cycleNo, Success: ok, Efficiency: eff, MinStability: t.minStab}
+	switch {
+	case ok:
+	case eff < CycleMinEfficiency:
+		cr.FailWhy = "归返不足：投入多而归返少"
+	case t.minStab < CycleMinStability:
+		cr.FailWhy = "稳定性不足：循环中有的穴位晃得厉害"
+	default:
+		cr.FailWhy = "新增损伤"
+	}
+	t.Record.Cycles = append(t.Record.Cycles, cr)
+}
+
+// Finish 在试跑结束时做达标判定（stage_3 §29：SuccessfulCycles >= 20
+// 且 SuccessRate >= 95% 且 AverageMinimumStability >= 0.75 且无未知异常）。
+func (t *TrialMonitor) Finish() TrialSummary {
+	var sum TrialSummary
+	sum.TotalCycles = len(t.Record.Cycles)
+	for _, c := range t.Record.Cycles {
+		if c.Success {
+			sum.SuccessfulCycles++
+		}
+		sum.AvgMinStability += c.MinStability
+	}
+	if sum.TotalCycles > 0 {
+		sum.SuccessRate = int64(sum.SuccessfulCycles) * One / int64(sum.TotalCycles)
+		sum.AvgMinStability = divRound(sum.AvgMinStability, int64(sum.TotalCycles))
+	}
+	sum.UnknownAnomaly = t.Record.UnknownAnomaly
+	sum.Qualified = sum.SuccessfulCycles >= ValidateMinCycles &&
+		sum.SuccessRate >= ValidateMinRate &&
+		sum.AvgMinStability >= ValidateMinAvgStab &&
+		!sum.UnknownAnomaly
+	return sum
+}
+
+// ExpandRange 在回执确认安全后小步扩张已验证流量区间（stage_3 §30
+// Known Safe Range 的"逐步扩张"）。只允许已转正（validated）的功法、
+// 且一次外扩不超过 RangeExpandStep——Runtime 只小步放宽已知安全区，
+// 更远的未知仍留给 LLM 探索。
+func (s *CultSession) ExpandRange(p *Protocol, channel, element int, newMin, newMax int64) error {
+	if p == nil {
+		return errf("expand: nil protocol")
+	}
+	if p.Status != StatusValidated {
+		return errf("protocol %q is not validated yet; range expansion denied", p.Name)
+	}
+	ri := -1
+	for i := range p.Ranges {
+		if p.Ranges[i].Channel == channel && p.Ranges[i].Element == element {
+			ri = i
+			break
+		}
+	}
+	if ri < 0 {
+		return errf("protocol %q has no validated range for channel %d element %d", p.Name, channel, element)
+	}
+	r := &p.Ranges[ri]
+	if newMin < 0 || newMax < newMin {
+		return errf("expand: need 0 <= min <= max, got [%d,%d]", newMin, newMax)
+	}
+	if newMin > r.Min || newMax < r.Max {
+		return errf("expand: only widening is allowed (current [%d,%d]); contraction denied", r.Min, r.Max)
+	}
+	if newMin < r.Min-RangeExpandStep {
+		return errf("expand: min %d reaches below %d by more than one safe step; expansion denied", newMin, r.Min)
+	}
+	if newMax > r.Max+RangeExpandStep {
+		return errf("expand: max %d exceeds %d by more than one safe step; expansion denied", newMax, r.Max)
+	}
+	r.Min, r.Max = newMin, newMax
+	return nil
 }

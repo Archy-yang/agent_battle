@@ -70,7 +70,15 @@ type LLMPilot struct {
 	Calls    int
 
 	// Notes 是修行笔记：历次 cognition 原文（滚动保留最近 llmMaxNotes 条）。
+	// SPIKE 结论二：笔记只是附注，证据账本（knowledge.go）才是事实凭据。
 	Notes []string
+
+	// lastReceipts / lastLedger 是会话层经可选接口（ReceiptAware /
+	// LedgerAware）给到的上一组意图回执与账本定性视图，随观察一并进
+	// 征询载荷——全部为定性措辞、零数字（铁律 1/6）。
+	lastReceipts []IntentReceipt
+	lastLedger   []string
+
 	// LastCognition / LastError / LastRaw 是最近一次 Decide 的诊断信息
 	//（供转录与测试；不含任何密钥）。
 	LastCognition string
@@ -117,7 +125,7 @@ const llmSystemPrompt = `你是一位修士的分身。本尊沉睡未醒，只�
 不要去猜任何数字：数字不存在于你的世界，感受就是感受。
 
 每息（每个时机）你可以下达一组意图，天生意志决定它们的真实效果；
-效果如何，你只能从下一息的感受里去体会。可用的意图只有五种：
+效果如何，你会收到回执，也能从下一息的感受里去体会。可用的意图如下：
 
 - sense：静静感受，不做任何事。
 - absorb：以某个穴位吸纳天地灵气。字段：target（穴位名）、level（力度粗档）。
@@ -126,17 +134,23 @@ const llmSystemPrompt = `你是一位修士的分身。本尊沉睡未醒，只�
   level（流量粗档）。
 - stop：停下一切。
 - inspect：内视某个穴位。字段：target（穴位名）。
+- record_hypothesis：把你此刻的一条猜想记入证据账本（如「青关或偏亲木性」）。
+  字段：text（猜想原文）。
 
 关于这组意图，还有几件事你需要知道：
 
-- 一息之内的多条意图会同时生效——你尽可以一面在一处纳气，一面在别处引气。
+- 一息之内的多条意图会同时生效——你尽可以一面在一处纳气，一面在别处引气，
+  让纳气与引气在同一息里咬合成节律。
 - 引气能否落地，只系于两穴之间有没有直接相连的经脉。element 是你挑引哪一行
   的气，不是开门的钥匙；穴位叫什么名字，也不代表路就通向哪里。
-- 天生意志只执行能够落地的意图；无法落地的意图会被静默丢弃，世界不给出
-  任何回应，也不痛不痒。若某个意图反复交出而身体毫无回应，就当此路不通，
-  换一个源头、换一个去处，或换一种意图再试。
+- 每息之后你会收到上一组意图的回执：能否落地，以及落地之后身体压力的方向
+  （压力升、压力降或压力不变）。回执若说「此路不通」或「穴未开或满溢不入」，
+  就换个源头、去处、力度或方式再试，不要对着同一堵墙反复推。
 - 经脉的走向无人告知你——哪两口之间有路，只有真的引一次才知道。
   把探明通路当作与纳气同样要紧的功课。
+- 你的证据账本会替你记住哪些路从未试过、试过被拒、试过且成。猜想请交
+  record_hypothesis 登记，由账本里的证据来印证或推翻；修行笔记只是附注，
+  证据才是凭据。
 - 只有真正纳气、引气时，身体才会有新的感受；静观与内视不会带来新信息。
 - 状态之语的次序：开度由闭到开是「闭、微开、半开、大开、洞开」；
   稳固由强到弱是「稳如磐石、稳固、微澜、不稳、将溃」；
@@ -147,8 +161,9 @@ const llmSystemPrompt = `你是一位修士的分身。本尊沉睡未醒，只�
 每息你只能输出一个 JSON 对象，除此之外一个字都不要输出。格式如下：
 {"cognition": "你此刻的心得：你对身体、灵气与法则的新认识、猜测与下一步打算",
  "intents": [{"kind": "absorb", "target": "某穴位", "level": "small"},
-             {"kind": "guide", "from": "某穴位", "to": "另一穴位", "element": "木", "level": "medium"}]}
-intents 也可以是空数组。cognition 会被记入你的修行笔记，下次唤醒时原样还给你。`
+             {"kind": "guide", "from": "某穴位", "to": "另一穴位", "element": "木", "level": "medium"},
+             {"kind": "record_hypothesis", "text": "你的猜想原文"}]}
+intents 也可以是空数组。cognition 会被记入你的修行笔记（附注），下次唤醒时原样还给你。`
 
 // Decide 实现 Pilot：把观察（定性 JSON）与修行笔记交给 LLM，
 // 解析其 JSON 响应为意图。任何失败都安全回落（返回 nil），不惊动引擎。
@@ -181,10 +196,38 @@ func (p *LLMPilot) Decide(obs *Observation) []Intent {
 	return resp.toIntents()
 }
 
-// buildUserMessage 组装用户消息：修行笔记（Agent Knowledge）+ 定性观察。
+// GiveReceipts 实现 ReceiptAware：接收会话层给到的"上一组意图的回执"。
+func (p *LLMPilot) GiveReceipts(rs []IntentReceipt) {
+	if p != nil {
+		p.lastReceipts = rs
+	}
+}
+
+// GiveLedgerView 实现 LedgerAware：接收证据账本的定性视图。
+func (p *LLMPilot) GiveLedgerView(v []string) {
+	if p != nil {
+		p.lastLedger = v
+	}
+}
+
+// buildUserMessage 组装用户消息：回执 + 证据账本 + 修行笔记（附注）+ 定性观察。
 func (p *LLMPilot) buildUserMessage(obs *Observation) string {
 	var b strings.Builder
-	b.WriteString("【你的修行笔记】\n")
+	b.WriteString("【你上一组意图的回执】\n")
+	if len(p.lastReceipts) == 0 {
+		b.WriteString("（尚无回执——你还没有交出过意图。）\n")
+	}
+	for _, r := range p.lastReceipts {
+		b.WriteString("- " + ReceiptView(r) + "\n")
+	}
+	b.WriteString("\n【你的证据账本】\n")
+	if len(p.lastLedger) == 0 {
+		b.WriteString("（还是空的——许多路你从未试过。）\n")
+	}
+	for _, line := range p.lastLedger {
+		b.WriteString("- " + line + "\n")
+	}
+	b.WriteString("\n【你的修行笔记（附注——证据账本才是凭据）】\n")
 	if len(p.Notes) == 0 {
 		b.WriteString("（还是一片空白——你一无所知。）\n")
 	}
@@ -197,7 +240,7 @@ func (p *LLMPilot) buildUserMessage(obs *Observation) string {
 		data = []byte("{}")
 	}
 	b.Write(data)
-	b.WriteString("\n\n回顾笔记与感受，决定接下来一息的意图，并写下新的心得。只输出 JSON。")
+	b.WriteString("\n\n回顾回执、账本、笔记与感受，决定接下来一息的意图，并写下新的心得。只输出 JSON。")
 	return b.String()
 }
 
@@ -267,6 +310,7 @@ type llmIntent struct {
 	To      string `json:"to"`
 	Element string `json:"element"`
 	Level   string `json:"level"`
+	Text    string `json:"text"` // record_hypothesis 的猜想原文
 }
 
 type llmResponse struct {
@@ -326,6 +370,9 @@ func (r *llmResponse) toIntents() []Intent {
 			it.To = strings.TrimSpace(li.To)
 			it.Element = parseElementLenient(li.Element)
 			it.Level = parseLevelLenient(li.Level)
+		case "record_hypothesis", "hypothesis":
+			it.Kind = IntentHypothesis
+			it.Text = strings.TrimSpace(li.Text)
 		default:
 			continue
 		}

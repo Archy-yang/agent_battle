@@ -153,7 +153,7 @@ func sanitizeIntents(g *cult.BodyGraph, intents []ctmatch.Intent) ([]ctmatch.Int
 	drop := func(why string) { drops = append(drops, why) }
 	for _, it := range intents {
 		switch it.Kind {
-		case ctmatch.IntentSense, ctmatch.IntentStop:
+		case ctmatch.IntentSense, ctmatch.IntentStop, ctmatch.IntentHypothesis:
 			out = append(out, it)
 		case ctmatch.IntentInspect:
 			if names[it.Acupoint] {
@@ -343,6 +343,9 @@ func main() {
 		} else {
 			fmt.Fprintf(out, "- 事件：—\n")
 		}
+		for _, rc := range res.Receipts { // 意图回执（铁律 6）：随观察一并可感知
+			fmt.Fprintf(out, "- 回执：%s\n", ctmatch.ReceiptView(rc))
+		}
 
 		newDamage, hot, inTotal, outTotal := r.absorbTruth(rep, obs)
 		fmt.Fprintf(out, "- 真值：%s\n", truthLine(r.g, rep, inTotal, outTotal))
@@ -401,6 +404,23 @@ func (r *spikeRun) decide(obs *cult.Observation, why string, t int64) {
 	fmt.Fprintf(r.out, "\n#### LLM 调用 #%d（%s；喂给它的观察 = Tick %d 的感知）\n", r.pilot.Calls+1, why, obs.Tick)
 	data, _ := json.MarshalIndent(obs, "", " ")
 	fmt.Fprintf(r.out, "```json\n%s\n```\n", data)
+
+	// 意图回执（铁律 6）与证据账本（SPIKE 结论二）随观察一并给出——
+	// 全部定性措辞、零数字。
+	r.pilot.GiveReceipts(r.sess.LastReceipts())
+	r.pilot.GiveLedgerView(r.sess.LedgerView())
+	if rs := r.sess.LastReceipts(); len(rs) > 0 {
+		fmt.Fprintf(r.out, "- 随载荷给出的回执：\n")
+		for _, rc := range rs {
+			fmt.Fprintf(r.out, "    - %s\n", ctmatch.ReceiptView(rc))
+		}
+	}
+	if lv := r.sess.LedgerView(); len(lv) > 0 {
+		fmt.Fprintf(r.out, "- 随载荷给出的证据账本：\n")
+		for _, line := range lv {
+			fmt.Fprintf(r.out, "    - %s\n", line)
+		}
+	}
 
 	ni := r.pilot.Decide(obs)
 	if err := r.pilot.LastError; err != "" {
@@ -517,6 +537,8 @@ func intentsLine(intents []ctmatch.Intent) string {
 				el = [...]string{"木", "火", "土", "金", "水"}[it.Element]
 			}
 			parts = append(parts, fmt.Sprintf("guide(%s→%s,%s,%s)", it.From, it.To, el, levelName(it.Level)))
+		case ctmatch.IntentHypothesis:
+			parts = append(parts, "record_hypothesis("+it.Text+")")
 		}
 	}
 	return strings.Join(parts, " ")

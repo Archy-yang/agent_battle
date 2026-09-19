@@ -67,6 +67,7 @@ func (e Event) IsEscalation() bool {
 type TickResult struct {
 	Report      *cult.TickReport // L0 引擎报告；出界拒绝推进时为 nil
 	Events      []Event          // 本 Tick 新产生的事件
+	Receipts    []IntentReceipt  // 本 Tick 的意图回执（铁律 6：每意图恰一条）
 	Escalated   bool             // 是否需要唤醒 Pilot（Guard stop / 出界 / 未知异常）
 	Advanced    bool             // 引擎是否被推进
 	Observation *Observation     // Observe 钩子接入时的最新观察（可能为 nil）
@@ -97,6 +98,11 @@ type CultSession struct {
 	Protocols map[string]*Protocol
 	Queue     []Intent // 意图队列：Tick 前入队的意图，先于 Tick 参数意图
 
+	// Ledger 是证据账本（SPIKE 结论二：三态事实凭据，假说校验的依据）；
+	// Foundation 是 Loop 五量与筑基判定器（五量只进调试视图）。
+	Ledger     *EvidenceLedger
+	Foundation *FoundationMonitor
+
 	Events    []Event
 	IntentLog []IntentLogEntry
 
@@ -104,6 +110,13 @@ type CultSession struct {
 	prevDamage    []int64 // 未知异常扫描用：上一 Tick 各穴位损伤
 	lastEscalated bool    // 上一 Tick 是否升级（唤醒 Pilot 的条件）
 	evCursor      int     // 事件流消费游标（drainNewEvents 用）
+
+	Trial            *TrialMonitor    // 当前 Runtime 试跑的逐周天记录（stage_3 §28-29）
+	lastProtocol     *Protocol        // 最近启动过的功法（筑基后升格 Loop 用）
+	prevReport       *cult.TickReport // 上一 Tick 报告（回执压力方向比较用）
+	lastReceipts     []IntentReceipt  // 最近一次交出意图的回执组（唤醒 Pilot 时随观察给出）
+	loopEngaged      bool             // 筑基后是否已注册 AutonomousLoop（幂等）
+	establishedNoted bool             // 筑基事件是否已发（幂等）
 }
 
 // NewSession 建会话；seed 同时写入 World.NoiseSeed（0 视为 1）。
@@ -113,15 +126,29 @@ func NewSession(w *cult.World, seed uint64, p Pilot) *CultSession {
 	}
 	w.NoiseSeed = seed
 	return &CultSession{
-		World:     w,
-		Seed:      seed,
-		Pilot:     p,
-		Protocols: make(map[string]*Protocol),
+		World:      w,
+		Seed:       seed,
+		Pilot:      p,
+		Protocols:  make(map[string]*Protocol),
+		Ledger:     NewEvidenceLedger(),
+		Foundation: NewFoundationMonitor(),
 	}
 }
 
 // LoadProtocol 收录一份已编译协议。
 func (s *CultSession) LoadProtocol(p *Protocol) { s.Protocols[p.Name] = p }
+
+// LastReceipts 返回最近一次交出意图的回执组（转录/上层接线用；
+// Pilot 征询载荷由会话在唤醒时经 ReceiptAware 自动给出）。
+func (s *CultSession) LastReceipts() []IntentReceipt { return s.lastReceipts }
+
+// LedgerView 返回证据账本的定性视图（转录/上层接线用）。
+func (s *CultSession) LedgerView() []string {
+	if s.Ledger == nil {
+		return nil
+	}
+	return s.Ledger.AgentView()
+}
 
 // StartProtocol 启动一个 Protocol：先评估前置条件（stage_2 §35
 // preconditions），不满足则拒绝启动并记录事件。前置条件需要一个
@@ -149,6 +176,8 @@ func (s *CultSession) StartProtocol(name string) error {
 		}
 	}
 	s.active = &protocolState{proto: p, flowScale: One}
+	s.lastProtocol = p
+	s.Trial = newTrialMonitor(p) // 每次 Runtime 试跑都记录逐周天账（stage_3 §28-29）
 	s.pushEvent(Event{Kind: EventProtocolStarted, Tick: s.World.Tick, Protocol: name})
 	return nil
 }
@@ -187,6 +216,7 @@ func errf(format string, args ...any) error { return fmt.Errorf(format, args...)
 
 // Tick 推进一个 Tick。intents 是本 Tick 提交的意图（可为 nil）。
 // 返回观察与报告；出界拒绝推进时 Report 为 nil 且引擎未被推进。
+// 每 Tick 每意图产出一条回执（铁律 6），随观察一并可供 Pilot 感知。
 func Tick(s *CultSession, intents []Intent) *TickResult {
 	res := &TickResult{}
 
@@ -197,8 +227,29 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 		s.IntentLog = append(s.IntentLog, IntentLogEntry{Tick: s.World.Tick, Intent: it})
 	}
 
+	// 0.5 假说登记（stage_2 §26 第六接口；非动作意图，不打断 Runtime）。
+	var receipts []IntentReceipt
+	for _, it := range pending {
+		if it.Kind != IntentHypothesis {
+			continue
+		}
+		s.Ledger.RecordHypothesis(it.Text, s.World.Tick)
+		receipts = append(receipts, IntentReceipt{
+			Tick: s.World.Tick, Kind: it.Kind,
+			Summary: intentSummary(it), Outcome: WordNoted,
+		})
+	}
+
 	// 1. 升级挂起 → 唤醒 Pilot（stage_2 §34 行为生命周期最后一段）。
+	// 征询载荷携带：最新观察 + 上一组意图的回执 + 证据账本视图
+	//（全部定性措辞、零数字——铁律 1/6）。
 	if s.lastEscalated && s.Pilot != nil {
+		if ra, ok := s.Pilot.(ReceiptAware); ok {
+			ra.GiveReceipts(s.lastReceipts)
+		}
+		if la, ok := s.Pilot.(LedgerAware); ok {
+			la.GiveLedgerView(s.Ledger.AgentView())
+		}
 		var obs *Observation
 		if s.Observe != nil {
 			obs = s.Observe(s.World)
@@ -213,6 +264,7 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 
 	// 2. 产出本 Tick 的 Ops。
 	var ops cult.Ops
+	var plans []intentPlan
 	runtimePath := false
 	if s.active != nil && !s.active.paused && !s.active.done {
 		// 外部动作意图 = L2 显式接管（stage_2 §33：L2 处理异常/策略）。
@@ -223,7 +275,7 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 				Reason: "external action intents took over",
 			})
 		} else {
-			// Sense/Inspect 不打断 Runtime；它们只被记录。
+			// Sense/Inspect/RecordHypothesis 不打断 Runtime；它们只被记录。
 			pending = filterNonAction(pending)
 			var ev *Event
 			ops, ev = s.active.runtimeOps(s)
@@ -233,6 +285,8 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 				s.pushEvent(*ev)
 				s.lastEscalated = true
 				res.Escalated = true
+				res.Receipts = s.settleReceipts(pending, nil, res, true)
+				s.keepReceipts(res)
 				res.Events = s.drainNewEvents()
 				return res
 			}
@@ -252,6 +306,11 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 		s.World.Ops = ops
 		s.advanceEngine(res)
 
+		// 试运行逐周天记账（stage_3 §28）。
+		if s.Trial != nil && !s.active.loopMode {
+			s.Trial.ObserveTick(res.Report)
+		}
+
 		// 4. Protocol guards 与未知异常扫描（结算后）。
 		if !wasDone {
 			guardFired := s.active.runGuards(s, res.Report)
@@ -265,17 +324,64 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 			s.rememberDamage()
 		}
 		if s.active != nil && s.active.done {
+			s.finishTrial(res)
 			s.active = nil
 		}
 	} else {
 		// 3. L2 路径：意图 → Ops。
-		s.World.Ops = s.opsFromIntents(pending, res)
+		ops, plans = s.opsFromIntents(pending, res)
+		s.World.Ops = ops
 		s.advanceEngine(res)
 		s.rememberDamage()
 	}
 
+	// 5. 回执结算（铁律 6）：每 Tick 每意图恰一条，随观察一并可供 Pilot 感知。
+	receipts = append(receipts, s.settleReceipts(pending, plans, res, runtimePath)...)
+	res.Receipts = receipts
+	s.keepReceipts(res)
+
+	// 6. 证据账本：动作 → 后果方向（settleReceipts 内入账，
+	// SPIKE 结论二：三态事实凭据）。
+
+	// 7. Loop 五量与筑基判定（stage_3 §31-39；数值只进调试视图）。
+	s.observeFoundation(res, opsHasControl(s.World.Ops))
+
+	if res.Report != nil {
+		s.prevReport = res.Report
+	}
 	res.Events = s.drainNewEvents()
 	return res
+}
+
+// keepReceipts 更新"上一组意图的回执"：没有新意图就没有新回执，
+// 沿用上一组（唤醒 Pilot 时给到的是最近一次交出的那组）。
+func (s *CultSession) keepReceipts(res *TickResult) {
+	if len(res.Receipts) > 0 {
+		s.lastReceipts = res.Receipts
+	}
+}
+
+// finishTrial 在试跑结束（跑满 Cycles）时做达标判定，达标即转正
+// （stage_2 §29 / stage_3 §29：draft → validated）。
+func (s *CultSession) finishTrial(res *TickResult) {
+	if s.Trial == nil || s.active == nil || s.active.proto != s.Trial.proto {
+		return
+	}
+	sum := s.Trial.Finish()
+	if !sum.Qualified {
+		return
+	}
+	s.active.proto.Status = StatusValidated
+	s.pushEvent(Event{
+		Kind: EventProtocolValidated, Tick: s.World.Tick, Protocol: s.active.proto.Name,
+		Reason: "trial cycles held steady with losses well under one in ten and stability never wavering; promoted to validated",
+		Detail: map[string]int64{
+			"successful_cycles": int64(sum.SuccessfulCycles),
+			"total_cycles":      int64(sum.TotalCycles),
+			"success_rate":      sum.SuccessRate,
+			"avg_min_stability": sum.AvgMinStability,
+		},
+	})
 }
 
 // advanceEngine 推进 L0 引擎（stage_2 §33：L0 绝不调用 LLM）。
@@ -287,12 +393,27 @@ func (s *CultSession) advanceEngine(res *TickResult) {
 	}
 }
 
-// opsFromIntents 把意图换算为 Ops（Intent → Intensity/FlowRequest）。
+// intentPlan 是一条意图在 L2 路径上的落地计划与评估要点（回执结算用）。
+type intentPlan struct {
+	it       Intent
+	rejected bool   // 预判拒绝（意图无处落地）
+	outcome  string // 拒绝回执主词
+	detail   string // 拒绝补语
+
+	pointIdx int // absorb 目标穴位下标（评估方向/进气用）
+	toIdx    int // guide 目的穴位下标（评估方向用）
+	channel  int // guide 经脉下标（核对实际流量用）
+}
+
+// opsFromIntents 把意图换算为 Ops（Intent → Intensity/FlowRequest），
+// 同时为每条意图记下落地计划（回执在引擎结算后统一给出——铁律 6）。
 // 意图引用未知目标时丢弃并记 EventInvalidIntent——Engine 决定实际结果，
 // 也包括决定"这个意图无处落地"。
-func (s *CultSession) opsFromIntents(intents []Intent, res *TickResult) cult.Ops {
+func (s *CultSession) opsFromIntents(intents []Intent, res *TickResult) (cult.Ops, []intentPlan) {
 	g := &s.World.Character.BodyGraph
+	nameIdx := pointIndex(g)
 	ops := cult.Ops{Intensity: make([]int64, len(g.Acupoints))}
+	plans := make([]intentPlan, 0, len(intents))
 
 	drop := func(it Intent, why string) {
 		s.pushEvent(Event{
@@ -302,24 +423,32 @@ func (s *CultSession) opsFromIntents(intents []Intent, res *TickResult) cult.Ops
 	}
 
 	for _, it := range intents {
+		plan := intentPlan{it: it, pointIdx: -1, toIdx: -1, channel: -1}
 		switch it.Kind {
 		case IntentAbsorb:
-			idx, ok := pointIndex(g)[it.Acupoint]
+			idx, ok := nameIdx[it.Acupoint]
 			if !ok {
 				drop(it, "unknown acupoint "+it.Acupoint)
+				plan.rejected, plan.outcome, plan.detail = true, WordRejected, WhyNoAcupoint
+				plans = append(plans, plan)
 				continue
 			}
 			if it.Level == LevelUnset {
 				drop(it, "absorb without level")
+				plan.rejected, plan.outcome, plan.detail = true, WordUnclear, WhyNoLevel
+				plans = append(plans, plan)
 				continue
 			}
+			plan.pointIdx = idx
 			ops.Intensity[idx] = IntensityForLevel(it.Level)
 
 		case IntentGuide:
-			from, ok1 := pointIndex(g)[it.From]
-			to, ok2 := pointIndex(g)[it.To]
+			from, ok1 := nameIdx[it.From]
+			to, ok2 := nameIdx[it.To]
 			if !ok1 || !ok2 {
 				drop(it, "unknown acupoint in guide")
+				plan.rejected, plan.outcome, plan.detail = true, WordRejected, WhyNoAcupoint
+				plans = append(plans, plan)
 				continue
 			}
 			ch := -1
@@ -331,20 +460,27 @@ func (s *CultSession) opsFromIntents(intents []Intent, res *TickResult) cult.Ops
 			}
 			if ch < 0 {
 				drop(it, "no channel "+it.From+"->"+it.To)
+				plan.rejected, plan.outcome, plan.detail = true, WordRejected, WhyNoChannel
+				plans = append(plans, plan)
 				continue
 			}
 			if it.Element < -1 || it.Element >= cult.ElementCount {
 				drop(it, "bad element")
+				plan.rejected, plan.outcome, plan.detail = true, WordUnclear, WhyBadElement
+				plans = append(plans, plan)
 				continue
 			}
 			flow := it.Amount
 			if it.Amount <= 0 {
 				if it.Level == LevelUnset {
 					drop(it, "guide without level or amount")
+					plan.rejected, plan.outcome, plan.detail = true, WordUnclear, WhyNoFlow
+					plans = append(plans, plan)
 					continue
 				}
 				flow = FlowForLevel(it.Level, g, from, to, ch)
 			}
+			plan.channel, plan.toIdx = ch, to
 			req := cult.FlowRequest{Channel: ch}
 			if it.Element >= 0 {
 				req.Amount[it.Element] = flow
@@ -362,11 +498,132 @@ func (s *CultSession) opsFromIntents(intents []Intent, res *TickResult) cult.Ops
 				s.active.paused = true
 			}
 
+		case IntentSense, IntentInspect, IntentHypothesis:
+			// 不产生 Ops；观察由 Observe 钩子在结算后给出，假说已登记。
+		}
+		plans = append(plans, plan)
+	}
+	return ops, plans
+}
+
+// settleReceipts 在引擎结算后为每条意图给出回执（铁律 6）：
+//   - 落地类：已生效 + 粗档后果方向（压力升/降/不变——只给方向词）；
+//   - 拒绝类：此路不通（目标穴位/经脉不存在）/ 穴未开或满溢不入 /
+//     意图不明。
+//
+// runtimePath 时 intents 只有感知/内视/假说（动作已被过滤），plans 为 nil。
+func (s *CultSession) settleReceipts(intents []Intent, plans []intentPlan, res *TickResult, runtimePath bool) []IntentReceipt {
+	out := make([]IntentReceipt, 0, len(intents))
+	for i, it := range intents {
+		switch it.Kind {
 		case IntentSense, IntentInspect:
-			// 不产生 Ops；观察由 Observe 钩子在结算后给出。
+			out = append(out, IntentReceipt{
+				Tick: s.World.Tick, Kind: it.Kind,
+				Summary: intentSummary(it), Outcome: WordApplied,
+			})
+			continue
+		case IntentStop:
+			out = append(out, IntentReceipt{
+				Tick: s.World.Tick, Kind: it.Kind,
+				Summary: intentSummary(it), Outcome: WordApplied, Direction: WordPressureSame,
+			})
+			continue
+		case IntentHypothesis:
+			continue // 已在 Tick 开头给过回执（WordNoted）
+		case IntentAbsorb, IntentGuide:
+			// 走计划评估。
+		}
+		if runtimePath || i >= len(plans) {
+			continue // Runtime 路径上不该出现动作意图；保守不给回执
+		}
+		plan := plans[i]
+		if plan.rejected {
+			rc := IntentReceipt{
+				Tick: s.World.Tick, Kind: it.Kind,
+				Summary: intentSummary(it), Outcome: plan.outcome, Detail: plan.detail,
+			}
+			out = append(out, rc)
+			s.recordEvidence(it, rc)
+			continue
+		}
+		switch it.Kind {
+		case IntentAbsorb:
+			intake := int64(0)
+			if res.Report != nil && plan.pointIdx >= 0 && plan.pointIdx < len(res.Report.Points) {
+				for e := 0; e < cult.ElementCount; e++ {
+					intake += res.Report.Points[plan.pointIdx].Intake[e]
+				}
+			}
+			if intake <= 0 {
+				rc := IntentReceipt{
+					Tick: s.World.Tick, Kind: it.Kind,
+					Summary: intentSummary(it), Outcome: WordBlocked, Detail: WhyNotTakenIn,
+				}
+				out = append(out, rc)
+				s.recordEvidence(it, rc)
+				continue
+			}
+			rc := IntentReceipt{
+				Tick: s.World.Tick, Kind: it.Kind,
+				Summary:   intentSummary(it),
+				Outcome:   WordApplied,
+				Direction: pressureDirection(res.Report, s.prevReport, plan.pointIdx),
+			}
+			out = append(out, rc)
+			s.recordEvidence(it, rc)
+		case IntentGuide:
+			moved := int64(0)
+			if res.Report != nil && plan.channel >= 0 {
+				for ti := range res.Report.Transfers {
+					tr := &res.Report.Transfers[ti]
+					if tr.Channel != plan.channel {
+						continue
+					}
+					for e := 0; e < cult.ElementCount; e++ {
+						moved += tr.Actual[e]
+					}
+				}
+			}
+			if moved <= 0 {
+				rc := IntentReceipt{
+					Tick: s.World.Tick, Kind: it.Kind,
+					Summary: intentSummary(it), Outcome: WordBlocked, Detail: WhyNotTakenIn,
+				}
+				out = append(out, rc)
+				s.recordEvidence(it, rc)
+				continue
+			}
+			rc := IntentReceipt{
+				Tick: s.World.Tick, Kind: it.Kind,
+				Summary:   intentSummary(it),
+				Outcome:   WordApplied,
+				Direction: pressureDirection(res.Report, s.prevReport, plan.toIdx),
+			}
+			out = append(out, rc)
+			s.recordEvidence(it, rc)
 		}
 	}
-	return ops
+	return out
+}
+
+// recordEvidence 把动作意图的回执记入证据账本（SPIKE 结论二：账本是
+// "动作 → 观察到的后果方向"的事实凭据；感知/内视/假说不入账）。
+func (s *CultSession) recordEvidence(it Intent, r IntentReceipt) {
+	key := ActionKey(it)
+	if key == "" {
+		return
+	}
+	outcome := ""
+	if r.Outcome == WordApplied {
+		outcome = r.Direction
+	}
+	s.Ledger.Record(EvidenceEntry{
+		Tick:    r.Tick,
+		Action:  key,
+		Summary: r.Summary,
+		Receipt: r.Outcome,
+		Outcome: outcome,
+	})
 }
 
 // scanAnomalies 在结算后扫描未知异常（stage_2 §36 第三段）：
@@ -384,6 +641,9 @@ func (s *CultSession) scanAnomalies(res *TickResult, guardFired bool) {
 			if !guardFired {
 				name := s.World.Character.BodyGraph.Acupoints[i].Name
 				s.active.paused = true
+				if s.Trial != nil && s.Trial.proto == s.active.proto {
+					s.Trial.Record.UnknownAnomaly = true // §29：转正要求没有未知异常
+				}
 				s.pushEvent(Event{
 					Kind:     EventUnknownAnomaly,
 					Tick:     s.World.Tick,
@@ -431,11 +691,22 @@ func hasActionIntent(intents []Intent) bool {
 	return false
 }
 
+// opsHasControl 报告一份 Ops 是否含主动推动（吸收/引流）——筑基判定的
+// SelfSustain 观察窗据此区分"推动"与"松手"（stage_3 §34）。
+func opsHasControl(ops cult.Ops) bool {
+	for _, v := range ops.Intensity {
+		if v > 0 {
+			return true
+		}
+	}
+	return len(ops.Requests) > 0
+}
+
 func filterNonAction(intents []Intent) []Intent {
 	out := intents[:0]
 	for _, it := range intents {
 		switch it.Kind {
-		case IntentSense, IntentInspect:
+		case IntentSense, IntentInspect, IntentHypothesis:
 			out = append(out, it)
 		}
 	}
