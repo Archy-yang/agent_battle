@@ -25,9 +25,11 @@
   font-size: 15px;
   line-height: 1.7;
   -webkit-font-smoothing: antialiased;
-  /* 手机全屏：接管整个视口（不含浏览器动态工具栏），只有 .c-body 内滚，
-     外层永不滚动——轮询刷新不再引起整页跳动 */
-  height: 100dvh;
+  /* 手机/桌面通吃：固定定位精确接管整个视口（无视全局 .wrap 内边距
+     与浏览器动态工具栏），只有 .c-body 内滚，外层永不滚动——
+     轮询刷新不再引起整页跳动 */
+  position: fixed;
+  inset: 0;
   border-radius: 0;
   border: none;
   display: flex;
@@ -315,7 +317,12 @@
 /* 错误行 */
 .c-err { color: var(--cinnabar); font-family: 'Noto Sans SC', sans-serif; font-size: 11px; padding: 4px 16px; }
 
-/* 桌面宽屏：五屏内容居中收窄（手机竖屏优先） */
+/* 桌面宽屏：全高居中收窄为手机竖屏宽度（固定定位下 margin auto 居中） */
 @media (min-width: 720px) {
-  .cult-root { max-width: 430px; margin: 0 auto; min-height: 80vh; }
+  .cult-root {
+    max-width: 430px;
+    margin: 0 auto;
+    border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+  }
 }
