@@ -183,3 +183,29 @@ func TestLLMBudgetAndGarbage(t *testing.T) {
 		t.Errorf("失败调用也应计入预算: calls=%d left=%d", p.Calls, p.BudgetLeft())
 	}
 }
+
+// 思考模式配置（2026-09-19）：默认显式关闭；on 时带 reasoning_effort。
+func TestLLMThinkingPayload(t *testing.T) {
+	off := &LLMConfig{}
+	body := off.thinkingPayload()
+	if body["thinking"].(map[string]string)["type"] != "disabled" {
+		t.Errorf("默认应显式关闭思考，got %v", body)
+	}
+	if _, ok := body["reasoning_effort"]; ok {
+		t.Errorf("关闭时不应带 reasoning_effort")
+	}
+	on := &LLMConfig{Thinking: "on", ThinkingEffort: "low"}
+	body = on.thinkingPayload()
+	if body["thinking"].(map[string]string)["type"] != "enabled" || body["reasoning_effort"] != "low" {
+		t.Errorf("on 应 enabled+effort，got %v", body)
+	}
+	// 环境变量注入路径
+	t.Setenv("AGENTBATTLE_LLM_BASE_URL", "http://x/v1")
+	t.Setenv("AGENTBATTLE_LLM_API_KEY", "k")
+	t.Setenv("AGENTBATTLE_LLM_MODEL", "m")
+	t.Setenv("AGENTBATTLE_LLM_THINKING", "OFF") // 大小写不敏感
+	cfg := LoadLLMConfig()
+	if cfg.Thinking != "off" {
+		t.Errorf("THINKING 应归一化为小写，got %q", cfg.Thinking)
+	}
+}

@@ -32,6 +32,26 @@ type LLMConfig struct {
 	BaseURL string // 如 https://api.example.com/v1（自动补 /chat/completions）
 	APIKey  string
 	Model   string
+	// Thinking 控制混合推理模型的思考模式："" / "off"（默认，显式
+	// 关闭——DeepSeek 系列服务端默认 enabled，必须显式关）/"on"。
+	Thinking string
+	// ThinkingEffort 思考程度：仅 Thinking=on 时生效（low/high/max，
+	// 默认 high；DeepSeek reasoning_effort 参数）。
+	ThinkingEffort string
+}
+
+// thinkingPayload 按配置组装 thinking 请求体字段（千帆/DeepSeek 约定）：
+// off → {"thinking":{"type":"disabled"}}；on → enabled + reasoning_effort。
+// 未配置（空）按 off 处理——本项目的 Agent 一律非思考调用，除非显式开。
+func (c *LLMConfig) thinkingPayload() map[string]any {
+	if c.Thinking == "on" {
+		body := map[string]any{"thinking": map[string]string{"type": "enabled"}}
+		if c.ThinkingEffort != "" {
+			body["reasoning_effort"] = c.ThinkingEffort
+		}
+		return body
+	}
+	return map[string]any{"thinking": map[string]string{"type": "disabled"}}
 }
 
 const (
@@ -48,9 +68,11 @@ const (
 // LoadLLMConfig 从环境变量读 LLM 配置；任一项缺失返回 nil。
 func LoadLLMConfig() *LLMConfig {
 	cfg := &LLMConfig{
-		BaseURL: strings.TrimRight(os.Getenv("AGENTBATTLE_LLM_BASE_URL"), "/"),
-		APIKey:  os.Getenv("AGENTBATTLE_LLM_API_KEY"),
-		Model:   os.Getenv("AGENTBATTLE_LLM_MODEL"),
+		BaseURL:        strings.TrimRight(os.Getenv("AGENTBATTLE_LLM_BASE_URL"), "/"),
+		APIKey:         os.Getenv("AGENTBATTLE_LLM_API_KEY"),
+		Model:          os.Getenv("AGENTBATTLE_LLM_MODEL"),
+		Thinking:       strings.ToLower(os.Getenv("AGENTBATTLE_LLM_THINKING")),
+		ThinkingEffort: strings.ToLower(os.Getenv("AGENTBATTLE_LLM_THINKING_EFFORT")),
 	}
 	if cfg.BaseURL == "" || cfg.APIKey == "" || cfg.Model == "" {
 		return nil
@@ -301,14 +323,18 @@ func (p *LLMPilot) chat(system, user string) (string, error) {
 	if !strings.HasSuffix(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"
 	}
-	payload, err := json.Marshal(map[string]any{
+	body := map[string]any{
 		"model": p.cfg.Model,
 		"messages": []map[string]string{
 			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},
 		"temperature": 0.7,
-	})
+	}
+	for k, v := range p.cfg.thinkingPayload() {
+		body[k] = v
+	}
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return "", err
 	}

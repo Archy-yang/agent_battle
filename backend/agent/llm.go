@@ -20,6 +20,25 @@ type LLMConfig struct {
 	BaseURL string
 	APIKey  string
 	Model   string
+	// Thinking 控制混合推理模型的思考模式：""/"off"（默认，显式关闭
+	// ——DeepSeek 系列服务端默认 enabled，必须显式关）/"on"。
+	Thinking string
+	// ThinkingEffort 思考程度：仅 Thinking=on 时生效（low/high/max，
+	// 默认 high；DeepSeek reasoning_effort 参数）。
+	ThinkingEffort string
+}
+
+// thinkingPayload 组装 thinking 请求体字段（千帆/DeepSeek 约定），
+// 与 ctmatch.LLMConfig 同一约定：未配置按 off 处理。
+func (c *LLMConfig) thinkingPayload() map[string]any {
+	if c.Thinking == "on" {
+		body := map[string]any{"thinking": map[string]string{"type": "enabled"}}
+		if c.ThinkingEffort != "" {
+			body["reasoning_effort"] = c.ThinkingEffort
+		}
+		return body
+	}
+	return map[string]any{"thinking": map[string]string{"type": "disabled"}}
 }
 
 // LLMFromEnv builds a config from AGENTBATTLE_LLM_* variables, or nil
@@ -30,9 +49,11 @@ func LLMFromEnv() *LLMConfig {
 		return nil
 	}
 	return &LLMConfig{
-		BaseURL: strings.TrimRight(base, "/"),
-		APIKey:  os.Getenv("AGENTBATTLE_LLM_API_KEY"),
-		Model:   os.Getenv("AGENTBATTLE_LLM_MODEL"),
+		BaseURL:        strings.TrimRight(base, "/"),
+		APIKey:         os.Getenv("AGENTBATTLE_LLM_API_KEY"),
+		Model:          os.Getenv("AGENTBATTLE_LLM_MODEL"),
+		Thinking:       strings.ToLower(os.Getenv("AGENTBATTLE_LLM_THINKING")),
+		ThinkingEffort: strings.ToLower(os.Getenv("AGENTBATTLE_LLM_THINKING_EFFORT")),
 	}
 }
 
@@ -221,6 +242,9 @@ func (a *LLMAgent) chat(messages []map[string]string, temp float32) string {
 		"model":       a.cfg.Model,
 		"messages":    messages,
 		"temperature": temp,
+	}
+	for k, v := range a.cfg.thinkingPayload() {
+		body[k] = v
 	}
 	buf, _ := json.Marshal(body)
 	req, err := http.NewRequest("POST", a.cfg.BaseURL+"/chat/completions", bytes.NewReader(buf))
