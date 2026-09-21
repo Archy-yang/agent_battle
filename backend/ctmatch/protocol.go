@@ -89,9 +89,14 @@ type Step struct {
 	Intensity int64 // 显式吸收强度（千分位比率；Level 非空时忽略）
 
 	// guide
-	From    int // 源穴位下标
-	To      int // 目标穴位下标
-	Channel int // From→To 经脉下标（编译期解析，路径连通性校验的产物）
+	From    int // 源穴位下标（声明流向的发起端）
+	To      int // 目标穴位下标（声明流向的目的端）
+	Channel int // 经脉下标（编译期解析，边序列校验的产物）
+	// Reverse 标记本步为逆流边（修订包 C1/A2）：声明流向与经脉天然向
+	// 相反（实际气从 To 端流向 From 端——即 From=发起端）。编译期已校验
+	// 发起端是纯汇点（唯有丹田可发起外推，B1）；运行期映射
+	// FlowRequest{Reverse:true}，引擎仍保留最终否决权。
+	Reverse bool
 	Element int // 元素：cult.Wood..Water；-1 = 混合（五均分）
 	Amount  int64
 
@@ -200,8 +205,9 @@ type yamlProtocol struct {
 }
 
 // Compile 解析并静态校验一份 Protocol YAML（针对指定身体图）。
-// 穴位/经脉存在性、路径连通性（guide 的 from→to 必须是图中的直接经脉）、
-// 参数域（档位/强度/流量/阈值）任一非法即拒绝，错误信息给出全部理由。
+// 穴位/经脉存在性、边序列合法性（修订包 C1：每条 guide 边须是图中真实
+// 经脉，任一方向；逆流边只允许纯汇点发起）、参数域（档位/强度/流量/
+// 阈值）任一非法即拒绝，错误信息给出全部理由。
 func Compile(data []byte, g *cult.BodyGraph) (*Protocol, error) {
 	var y yamlProtocol
 	if err := yaml.Unmarshal(data, &y); err != nil {
@@ -299,7 +305,7 @@ func compileYAML(y *yamlProtocol, g *cult.BodyGraph) (*Protocol, error) {
 			add("validated_range[%d]: channel must be [from, to]", i)
 			continue
 		}
-		ch, err := findChannel(g, r.Channel[0], r.Channel[1], nameIdx)
+		ch, err := resolveRangeChannel(g, r.Channel, nameIdx)
 		if err != nil {
 			add("validated_range[%d]: %v", i, err)
 			continue
@@ -353,9 +359,17 @@ func compileGuide(gd *yamlGuide, g *cult.BodyGraph, nameIdx map[string]int) (Ste
 	if !ok {
 		return Step{}, fmt.Errorf("guide: unknown acupoint %q", gd.To)
 	}
-	ch, err := findChannel(g, gd.From, gd.To, nameIdx)
-	if err != nil {
-		return Step{}, err // 路径连通性：断路径在此拒绝
+	// 边序列校验（修订包 C1）：每条边须是真实经脉（任一方向）；
+	// 逆流边（声明向与天然向相反）只允许纯汇点发起（A2，结构判据同引擎核）。
+	ch, rev, found := edgeFor(g, from, to)
+	if !found {
+		if from == to {
+			return Step{}, fmt.Errorf("guide: from and to are the same acupoint %q", gd.From)
+		}
+		return Step{}, fmt.Errorf("guide: no channel %q -> %q (path not connected)", gd.From, gd.To)
+	}
+	if rev && !isPureSink(g, from) {
+		return Step{}, fmt.Errorf("guide: reverse edge %q -> %q denied: only a pure sink may push against the natural flow", gd.From, gd.To)
 	}
 	elem, err := parseElement(gd.Element)
 	if err != nil {
@@ -375,8 +389,26 @@ func compileGuide(gd *yamlGuide, g *cult.BodyGraph, nameIdx map[string]int) (Ste
 	if dur < 0 {
 		return Step{}, fmt.Errorf("guide: negative duration")
 	}
-	return Step{Kind: StepGuide, From: from, To: to, Channel: ch, Element: elem,
+	return Step{Kind: StepGuide, From: from, To: to, Channel: ch, Reverse: rev, Element: elem,
 		Level: lv, Amount: gd.Amount, Duration: dur}, nil
+}
+
+// resolveRangeChannel 解析 validated_range 的 channel [from, to]：
+// 与 guide 步骤同用 edgeFor（任一方向，含逆流边）。
+func resolveRangeChannel(g *cult.BodyGraph, names []string, nameIdx map[string]int) (int, error) {
+	fi, ok1 := nameIdx[names[0]]
+	ti, ok2 := nameIdx[names[1]]
+	if !ok1 {
+		return -1, fmt.Errorf("unknown acupoint %q", names[0])
+	}
+	if !ok2 {
+		return -1, fmt.Errorf("unknown acupoint %q", names[1])
+	}
+	ch, _, found := edgeFor(g, fi, ti)
+	if !found {
+		return -1, fmt.Errorf("guide: no channel %q -> %q (path not connected)", names[0], names[1])
+	}
+	return ch, nil
 }
 
 func compileCond(c *yamlCond, nameIdx map[string]int) (Cond, error) {
@@ -410,27 +442,39 @@ func pointIndex(g *cult.BodyGraph) map[string]int {
 	return m
 }
 
-// findChannel 返回 from→to 的直接经脉下标；不存在即路径不连通。
-// v0.1 只允许单跳步骤（stage_3 §25 的 Sequence 本就以相邻穴对成步），
-// 多跳路径由 Agent 在协议里拆成多步。
-func findChannel(g *cult.BodyGraph, from, to string, nameIdx map[string]int) (int, error) {
-	fi, ok := nameIdx[from]
-	if !ok {
-		return -1, fmt.Errorf("unknown acupoint %q", from)
-	}
-	ti, ok := nameIdx[to]
-	if !ok {
-		return -1, fmt.Errorf("unknown acupoint %q", to)
-	}
+// edgeFor 在身体图中解析一条声明方向的边（修订包 C1：协议路径=边序列，
+// 每条边 {from,to} 须是 BodyGraph 真实经脉，任一方向皆可）：
+// 先找天然向 fi→ti（顺流边）；再找 ti→fi（逆流边，reverse=true——实际气
+// 从 fi 端推向 ti 端）。两向皆无或 fi==ti 则 found=false。
+// 注意：逆流边的发起资格（纯汇点，A2）由调用方另行校验——编译期与
+// 意图路径都用 isPureSink，与引擎核 runTransfers 的出向表判据一致。
+func edgeFor(g *cult.BodyGraph, fi, ti int) (channel int, reverse, found bool) {
 	if fi == ti {
-		return -1, fmt.Errorf("guide: from and to are the same acupoint %q", from)
+		return -1, false, false
 	}
-	for c, ch := range g.Channels {
-		if ch.From == fi && ch.To == ti {
-			return c, nil
+	for c := range g.Channels {
+		if g.Channels[c].From == fi && g.Channels[c].To == ti {
+			return c, false, true
 		}
 	}
-	return -1, fmt.Errorf("guide: no channel %q -> %q (path not connected)", from, to)
+	for c := range g.Channels {
+		if g.Channels[c].From == ti && g.Channels[c].To == fi {
+			return c, true, true
+		}
+	}
+	return -1, false, false
+}
+
+// isPureSink 报告节点 i 是否为纯汇点（无出向经脉）——丹田画像的结构
+// 判据（修订包 B1，无 type 字段——宪法 §8），与引擎核 runTransfers 的
+// 出向表一致。唯有纯汇点可发起逆流外推（修订包 A2）。
+func isPureSink(g *cult.BodyGraph, i int) bool {
+	for _, c := range g.Channels {
+		if c.From == i {
+			return false
+		}
+	}
+	return true
 }
 
 // parseElement 解析元素名（英文/中文）；""、"mixed"、"all" 表示混合（-1）。
@@ -549,7 +593,7 @@ func (st *protocolState) runtimeOps(s *CultSession) (cult.Ops, *Event) {
 			if ev := st.checkBoundary(s, step, flow); ev != nil {
 				return ops, ev
 			}
-			req := cult.FlowRequest{Channel: step.Channel}
+			req := cult.FlowRequest{Channel: step.Channel, Reverse: step.Reverse}
 			if step.Element >= 0 {
 				req.Amount[step.Element] = flow
 			} else {
@@ -708,7 +752,8 @@ type CycleRecord struct {
 	Success      bool
 	FailWhy      string // 定性失败原因："归返不足"/"稳定性不足"/"新增损伤"
 	Efficiency   int64  // 调试视图：CycleEfficiency（×1000）
-	MinStability int64  // 调试视图：本周天诸穴稳定性最小值（×1000）
+	MinStability int64  // 调试视图：CycleStability——路径诸穴稳定性最小值（×1000）
+	Heat         int64  // 调试视图：HeatAccumulation——路径 ThermalLoad 变化和（修订包 C1）
 }
 
 // TrialRecord 是一次 Runtime 试跑的逐周天记录。
@@ -730,6 +775,9 @@ type TrialSummary struct {
 
 // TrialMonitor 伴随一次 Runtime 试跑，逐周天记录成功与失败原因。
 // 周天边界 = 各槽有效时长之和（与 Runtime 游标同构）。
+//
+// 评估沿路径累计（修订包 C1：周天=边序列，路径评估不是集合评估）：
+// 效率与稳定性只统计协议边序列覆盖的穴位/经脉，热账只算路径穴位。
 type TrialMonitor struct {
 	proto       *Protocol
 	cycleLen    int
@@ -739,6 +787,9 @@ type TrialMonitor struct {
 	output      int64 // 本周天累计：送达（§26 CycleOutput 的 v0.1 口径）
 	minStab     int64
 	damageStart int64
+	pathPts     []int        // 路径穴位（吸收目标 + 各边两端，去重，编译顺序）
+	pathChs     map[int]bool // 路径经脉（各边编译解析出的通道）
+	heatStart   []int64      // 周天起点各路径穴位的热负荷（HeatAccumulation 基准）
 	Record      TrialRecord
 }
 
@@ -748,7 +799,28 @@ func newTrialMonitor(p *Protocol) *TrialMonitor {
 	for i := range p.Slots {
 		cl += p.slotDuration(i)
 	}
-	return &TrialMonitor{proto: p, cycleLen: cl, minStab: One, Record: TrialRecord{Protocol: p.Name}}
+	seen := map[int]bool{}
+	var pts []int
+	chs := map[int]bool{}
+	for i := range p.Steps {
+		st := &p.Steps[i]
+		cand := []int{}
+		switch st.Kind {
+		case StepAbsorb:
+			cand = append(cand, st.PointIdx)
+		case StepGuide:
+			cand = append(cand, st.From, st.To)
+			chs[st.Channel] = true
+		}
+		for _, idx := range cand {
+			if idx >= 0 && !seen[idx] {
+				seen[idx] = true
+				pts = append(pts, idx)
+			}
+		}
+	}
+	return &TrialMonitor{proto: p, cycleLen: cl, minStab: One,
+		pathPts: pts, pathChs: chs, Record: TrialRecord{Protocol: p.Name}}
 }
 
 // ObserveTick 累积一个引擎 Tick 的报告；跨过周天边界即结一周天账。
@@ -765,9 +837,20 @@ func (t *TrialMonitor) ObserveTick(rep *cult.TickReport) {
 				t.damageStart = rep.Points[i].Damage
 			}
 		}
+		// 周天起点热负荷（HeatAccumulation = 路径 ThermalLoad 变化和，C1）。
+		t.heatStart = make([]int64, len(t.pathPts))
+		for k, pt := range t.pathPts {
+			if pt < len(rep.Points) {
+				t.heatStart[k] = rep.Points[pt].ThermalLoad
+			}
+		}
 	}
-	for i := range rep.Points {
-		p := &rep.Points[i]
+	// 路径穴位：纳入累计 + CycleStability（路径各穴稳定性最小值，C1）。
+	for _, pt := range t.pathPts {
+		if pt >= len(rep.Points) {
+			continue
+		}
+		p := &rep.Points[pt]
 		for e := 0; e < cult.ElementCount; e++ {
 			t.input += p.Intake[e]
 		}
@@ -775,8 +858,13 @@ func (t *TrialMonitor) ObserveTick(rep *cult.TickReport) {
 			t.minStab = p.Stability
 		}
 	}
+	// 路径经脉：实际推动与送达累计（含逆流边——Actual/Delivered 已由
+	// 引擎按实际流向给出）。
 	for ti := range rep.Transfers {
 		tr := &rep.Transfers[ti]
+		if !t.pathChs[tr.Channel] {
+			continue
+		}
 		for e := 0; e < cult.ElementCount; e++ {
 			t.input += tr.Actual[e]
 			t.output += tr.Delivered[e]
@@ -790,13 +878,22 @@ func (t *TrialMonitor) ObserveTick(rep *cult.TickReport) {
 	}
 }
 
-// closeCycle 结一周天的账（stage_3 §28 周天成功判定）。
+// closeCycle 结一周天的账（stage_3 §28 周天成功判定 + 修订包 C1 路径评估）。
 func (t *TrialMonitor) closeCycle(rep *cult.TickReport) {
 	eff := int64(0)
 	if t.input > 0 {
 		eff = t.output * One / t.input
 		if eff > One {
 			eff = One
+		}
+	}
+	// HeatAccumulation（C1）：路径各穴 ThermalLoad 自周天起点的变化和。
+	heat := int64(0)
+	if len(t.heatStart) == len(t.pathPts) {
+		for k, pt := range t.pathPts {
+			if pt < len(rep.Points) {
+				heat += rep.Points[pt].ThermalLoad - t.heatStart[k]
+			}
 		}
 	}
 	dmgEnd := int64(0)
@@ -807,7 +904,7 @@ func (t *TrialMonitor) closeCycle(rep *cult.TickReport) {
 	}
 	newDamage := dmgEnd-t.damageStart > CycleDamageTolerance
 	ok := eff >= CycleMinEfficiency && t.minStab >= CycleMinStability && !newDamage
-	cr := CycleRecord{Cycle: t.cycleNo, Success: ok, Efficiency: eff, MinStability: t.minStab}
+	cr := CycleRecord{Cycle: t.cycleNo, Success: ok, Efficiency: eff, MinStability: t.minStab, Heat: heat}
 	switch {
 	case ok:
 	case eff < CycleMinEfficiency:

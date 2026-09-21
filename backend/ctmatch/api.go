@@ -236,6 +236,7 @@ type DebugView struct {
 type SessionView struct {
 	ID           string        `json:"id"`
 	Seed         uint64        `json:"seed"`
+	RuleVersion  string        `json:"rule_version"` // 产生本会话状态的底层规则版本（cult.RuleVersion；非世界真值，不属泄漏）
 	Tick         int64         `json:"tick"`
 	Acuity       int           `json:"acuity"`
 	Realm        string        `json:"realm"`
@@ -647,13 +648,14 @@ func mergeIntent(cur []Intent, it Intent) []Intent {
 func (h *cultHandle) view() *SessionView {
 	s := h.sess
 	v := &SessionView{
-		ID:        h.id,
-		Seed:      s.Seed,
-		Tick:      s.World.Tick,
-		Acuity:    1,
-		Realm:     realmWord(s.Foundation),
-		PilotKind: h.kind,
-		Active:    s.ActiveProtocol(),
+		ID:          h.id,
+		Seed:        s.Seed,
+		RuleVersion: s.World.RuleVersion,
+		Tick:        s.World.Tick,
+		Acuity:      1,
+		Realm:       realmWord(s.Foundation),
+		PilotKind:   h.kind,
+		Active:      s.ActiveProtocol(),
 	}
 
 	// LLM 配置是否可用（分身是否请得动）。

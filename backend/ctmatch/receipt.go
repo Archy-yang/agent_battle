@@ -39,12 +39,13 @@ const (
 
 // 拒绝/阻断的定性补语。
 const (
-	WhyNoAcupoint = "目标穴位不存在"
-	WhyNoChannel  = "两穴之间没有经脉直接相连"
-	WhyNoLevel    = "未说明力度"
-	WhyNoFlow     = "未说明流量"
-	WhyBadElement = "所引的五行不明"
-	WhyNotTakenIn = "穴位未开，或已满溢，气入不进去"
+	WhyNoAcupoint  = "目标穴位不存在"
+	WhyNoChannel   = "两穴之间没有经脉直接相连"
+	WhyNoLevel     = "未说明力度"
+	WhyNoFlow      = "未说明流量"
+	WhyBadElement  = "所引的五行不明"
+	WhyNotTakenIn  = "穴位未开，或已满溢，气入不进去"
+	WhyNotBackflow = "逆经脉而行，唯丹田能推得动" // 修订包 A2：非汇点发起逆流
 )
 
 // ---------------------------------------------------------------------------

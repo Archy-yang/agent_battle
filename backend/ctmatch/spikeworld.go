@@ -8,6 +8,9 @@ package ctmatch
 //   - 青关：主纳穴。开度大开、通量宽（8000），混合引流 large（每行 1280）
 //     足以对冲 trace/small/medium 各档吸收的反压平衡——单穴"吸+引"即可闭环。
 //   - 下丹田：巨容汇点（200000），引流去处，30+ Tick 内不会自己顶到不适档。
+//     丹田双入口拓扑（修订包 B3）：青关→下丹田为捷径（快、单属性直入），
+//     中庭→下丹田为主汇（慢、多属性混合后入）；丹田无出向经脉——
+//     唯一可发起逆流外推的纯汇点（修订包 A2/B1，无 type 字段）。
 //   - 神庭：脆穴（容量 3000、开度 0.90）。在它上面用 large 吸收会迅速过载
 //     受损——为 M2 的"不适→自主调整"提供真实触发点。
 //   - 环境五行接近均衡（木略盛）：混合引流才可能对冲混合吸收，
@@ -25,7 +28,10 @@ func SpikeWorld() *cult.World {
 			Name: name, Affinity: aff, Capacity: cap, Throughput: tp,
 			// open 以千分位传入（800 = 0.8）；微标度换算 ×1000（1.0 = 1e6 微）。
 			Retention: ret, Openness: open * 1000, Stability: stab,
-			Activity: [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
+			// BaseStability 先天资质与初值稳定一致（修订包 B1 参数画像；
+			// v0.1 公式未使用，仅携带）。
+			BaseStability: stab,
+			Activity:      [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
 		}
 	}
 	all := func(v int64) [cult.ElementCount]int64 {
@@ -44,7 +50,10 @@ func SpikeWorld() *cult.World {
 				pt("金门", [cult.ElementCount]int64{800, 750, 800, 1300, 850}, 5000, 4000, 600, 300, 920),   // 4 近闭
 				pt("玄泉", [cult.ElementCount]int64{900, 800, 800, 800, 1200}, 7000, 4000, 700, 700, 940),   // 5
 				pt("神庭", [cult.ElementCount]int64{1050, 1050, 800, 800, 800}, 3000, 3000, 300, 900, 880),  // 6 脆
-				pt("中庭", [cult.ElementCount]int64{1000, 900, 950, 900, 950}, 9000, 6000, 500, 750, 930),   // 7 中枢
+				// 中庭（修订包 B1 参数画像）：高吞吐（6000，普通穴之上）、
+				// 低 Retention（300）、Affinity[5] ≈ 1.0 不偏任何一行（五行反应炉，
+				// B7）、base_stability 高。特殊性全在参数取值，无 type 字段。
+				pt("中庭", all(1000), 9000, 6000, 300, 750, 930), // 7 中枢
 			},
 			Channels: []cult.Channel{
 				{Name: "青关→下丹田", From: 1, To: 0, BaseConductance: 950, Throughput: 8000},

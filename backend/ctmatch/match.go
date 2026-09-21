@@ -451,16 +451,19 @@ func (s *CultSession) opsFromIntents(intents []Intent, res *TickResult) (cult.Op
 				plans = append(plans, plan)
 				continue
 			}
-			ch := -1
-			for c, c2 := range g.Channels {
-				if c2.From == from && c2.To == to {
-					ch = c
-					break
-				}
-			}
-			if ch < 0 {
+			// 边解析（修订包 C1/A2）：天然向为顺流；反向则视为逆流意图，
+			// 发起端须是纯汇点（唯丹田可发起外推）——否则走"此路不通"
+			// 回执路径，产出定性回执，引擎不接触逆流请求。
+			ch, rev, found := edgeFor(g, from, to)
+			if !found {
 				drop(it, "no channel "+it.From+"->"+it.To)
 				plan.rejected, plan.outcome, plan.detail = true, WordRejected, WhyNoChannel
+				plans = append(plans, plan)
+				continue
+			}
+			if rev && !isPureSink(g, from) {
+				drop(it, "reverse flow denied "+it.From+"->"+it.To)
+				plan.rejected, plan.outcome, plan.detail = true, WordRejected, WhyNotBackflow
 				plans = append(plans, plan)
 				continue
 			}
@@ -481,7 +484,7 @@ func (s *CultSession) opsFromIntents(intents []Intent, res *TickResult) (cult.Op
 				flow = FlowForLevel(it.Level, g, from, to, ch)
 			}
 			plan.channel, plan.toIdx = ch, to
-			req := cult.FlowRequest{Channel: ch}
+			req := cult.FlowRequest{Channel: ch, Reverse: rev}
 			if it.Element >= 0 {
 				req.Amount[it.Element] = flow
 			} else {

@@ -67,10 +67,10 @@ const (
 // LoadLLMConfig 从环境变量读 LLM 配置；任一项缺失返回 nil。
 func LoadLLMConfig() *LLMConfig {
 	cfg := &LLMConfig{
-		BaseURL:        strings.TrimRight(os.Getenv("AGENTBATTLE_LLM_BASE_URL"), "/"),
-		APIKey:         os.Getenv("AGENTBATTLE_LLM_API_KEY"),
-		Model:          os.Getenv("AGENTBATTLE_LLM_MODEL"),
-		Thinking:       strings.ToLower(os.Getenv("AGENTBATTLE_LLM_THINKING")),
+		BaseURL:  strings.TrimRight(os.Getenv("AGENTBATTLE_LLM_BASE_URL"), "/"),
+		APIKey:   os.Getenv("AGENTBATTLE_LLM_API_KEY"),
+		Model:    os.Getenv("AGENTBATTLE_LLM_MODEL"),
+		Thinking: strings.ToLower(os.Getenv("AGENTBATTLE_LLM_THINKING")),
 	}
 	if cfg.BaseURL == "" || cfg.APIKey == "" || cfg.Model == "" {
 		return nil
@@ -179,6 +179,15 @@ const llmSystemPrompt = `你是一位修士的分身。本尊沉睡未醒，只�
 - 状态之语的次序：开度由闭到开是「闭、微开、半开、大开、洞开」；
   稳固由强到弱是「稳如磐石、稳固、微澜、不稳、将溃」；
   损伤由轻到重是「无损、隐伤、作痛、重创、脉裂」。
+
+还有一些表象，只可体会，供你摸索：
+
+- 气循经脉行走时，途经的穴位会自行纳气补充——气在路上走，一路走一路补，
+  不是先把一处装满再搬运。
+- 你可以试着让丹田把气推出去，逆着经脉的天然走向而行。逆行更费力，推得
+  急了还可能生热；也唯有丹田能这么做，其余穴位逆不得。
+- 气在体内久留，身体会替你筛选：与身体亲和的成分留下，不合的渐渐散去——
+  久行的气会因此慢慢变化。
 
 力度粗档只有四档：trace（极微）、small（少量）、medium（中等）、large（大量）。
 

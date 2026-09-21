@@ -40,12 +40,18 @@ type FlowRequest struct {
 	Channel int
 	// Amount[e] 是对元素 e 的请求流量；0 表示不请求。
 	Amount [ElementCount]int64
+	// Reverse 标记逆流传输（修订包 A2）：沿天然向反向行走。
+	// 唯有"无出向经脉"的纯汇点（丹田画像，B1）可发起；其余一律被引擎拒绝。
+	Reverse bool
 }
 
 // World 是一次修炼仿真的全部状态。
 type World struct {
 	Character Character
 	Env       Environment
+
+	// RuleVersion 是产生本状态的底层规则版本（宪法 §18；cult.RuleVersion）。
+	RuleVersion string
 
 	// NoiseSeed 是控制误差 ε 的确定性噪声种子（stage_3 §8.2）。
 	NoiseSeed uint64
@@ -58,6 +64,12 @@ type World struct {
 
 	// Last 是最近一次 Advance 的报告；尚未推进时为 nil。
 	Last *TickReport
+
+	// sensory 是感知层的滞回状态存档（境界文档 §14-15；percept.go）：
+	// 各穴位的滚动窗口、滞回档位与档位时长。私有中间态——不进入任何
+	// 运算、不被序列化（encoding/json 只编导出字段），但同 seed 重放
+	// 时随相同的观察序列逐位一致（DeepEqual 测试锁死）。
+	sensory *sensoryState
 }
 
 // NewWorld 组装一个最小世界：指定角色与环境，噪声种子默认 1。
@@ -79,14 +91,14 @@ func NewWorld(char Character, env Environment) *World {
 			char.BodyGraph.Channels[c].ChannelAdaptation = MicroOne
 		}
 	}
-	return &World{Character: char, Env: env, NoiseSeed: 1}
+	return &World{Character: char, Env: env, NoiseSeed: 1, RuleVersion: RuleVersion}
 }
 
 // ---------------------------------------------------------------------------
 // Tick 报告（供测试与上层观察；不进入下一 Tick 的运算）
 // ---------------------------------------------------------------------------
 
-// TransferReport 是一条经脉本 Tick 的传输明细（§8-9）。
+// TransferReport 是一条经脉本 Tick 的传输明细（§8-9 + 修订包 A2）。
 type TransferReport struct {
 	Channel     int
 	From        int
@@ -97,6 +109,15 @@ type TransferReport struct {
 	Actual      [ElementCount]int64
 	Delivered   [ElementCount]int64
 	Loss        [ElementCount]int64
+
+	// Reverse 标记本条为逆流传输（A2）：Actual 沿天然向反向行走
+	// （从 To 端流向 From 端），From/To 仍为经脉天然端点。
+	Reverse bool
+	// Rejected 标记逆流请求被引擎拒绝（A2：发起者不是纯汇点），
+	// 此时无任何流量发生。
+	Rejected bool
+	// WorkCost[e] 是逆流做功代价（从发起汇点按元素扣除；A2）。
+	WorkCost [ElementCount]int64
 }
 
 // AcupointReport 是一个穴位本 Tick 结束时的诊断快照。
@@ -114,16 +135,35 @@ type AcupointReport struct {
 	BackPressure    int64 // 本 Tick 吸收时使用的反压
 	PostIntakeLoad  int64 // 吸收后立即测得的负载（§47）
 	PostIntakeRatio int64 // 吸收后负载比（§47，也是下一 Tick 反压的输入）
+	ThermalLoad     int64 // 热负荷累积（修订包 A2/B4；散热衰减后含本 Tick 新热）
 	Qi              [ElementCount]int64
 	Activity        [ElementCount]int64
 	Intake          [ElementCount]int64
 }
 
+// Conservation 是一次 Advance 的守恒归账（修订包 A3：任何总量变化必须
+// 逐项可归因，无凭空增益）。恒等式（精确整数，逐项与运算用同一舍入值）：
+//
+//	QiAfter - QiBefore == Intake - Diffuse - TransferLoss - ShengLoss - ReverseWork
+//
+// 去向标注：Diffuse 与 TransferLoss 的一半 → 环境；TransferLoss 另一半、
+// ShengLoss、ReverseWork → 热（穴位 heatAccum / ThermalLoad）。
+type Conservation struct {
+	QiBefore     int64 // Tick 开始时 Σ 穴位储气
+	QiAfter      int64 // Tick 结束时 Σ 穴位储气
+	Intake       int64 // Σ §7 环境输入（逐穴计量）
+	Diffuse      int64 // Σ §13 逸散（去向=环境）
+	TransferLoss int64 // Σ §9 传输损耗
+	ShengLoss    int64 // Σ §10 转化损耗（去向=热）
+	ReverseWork  int64 // Σ 逆流做功代价（A2，去向=热）
+}
+
 // TickReport 是一次 Advance 的完整报告。
 type TickReport struct {
-	Tick      int64
-	Transfers []TransferReport
-	Points    []AcupointReport
+	Tick         int64
+	Transfers    []TransferReport
+	Points       []AcupointReport
+	Conservation Conservation
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +180,29 @@ func Advance(w *World) *TickReport {
 	intake := make([][ElementCount]int64, n)
 	postLoad := make([]int64, n)
 	postRatio := make([]int64, n)
+
+	// Refinement 导出量快照（修订包 D2：绝不落存储，从本 Tick 开始时的
+	// 气构成与身体状态重算）。本 Tick 内所有 D4 乘子使用同一快照——
+	// Refinement=0 时全部乘子 = 1，与旧公式行为一致。
+	refines := make([]int64, n)
+	loadSum, weightedRefine := int64(0), int64(0)
+	for i := 0; i < n; i++ {
+		a := &w.Character.BodyGraph.Acupoints[i]
+		refines[i] = refineOf(a, &w.Character)
+		ld := a.load()
+		loadSum += ld
+		weightedRefine += fpMul(refines[i], ld)
+	}
+	refineAvg := int64(0)
+	if loadSum > 0 {
+		refineAvg = fpDiv(weightedRefine, loadSum) // 负载加权的平均炼化度（D4-2 口径）
+	}
+
+	// 守恒归账（修订包 A3）。
+	cons := &rep.Conservation
+	for i := 0; i < n; i++ {
+		cons.QiBefore += w.Character.BodyGraph.Acupoints[i].load()
+	}
 
 	// §7 BackPressure：由上一 Tick 吸收后的负载比决定（§47→§48 链式定义）。
 	for i := 0; i < n; i++ {
@@ -173,6 +236,7 @@ func Advance(w *World) *TickReport {
 			a.Qi[e] += v
 			// 吸收不计入 FlowShock/QiFlow（见 body.go flowAccum 注释）。
 			intake[i][e] = v
+			cons.Intake += v
 		}
 	}
 
@@ -185,11 +249,17 @@ func Advance(w *World) *TickReport {
 		a.lastLoadRatioMilli = r // 下一 Tick 反压的输入
 	}
 
-	// §8-9 灵气传输与损耗。
-	rep.Transfers = runTransfers(w)
+	// §8-9 灵气传输与损耗（含修订包 A2 逆流做功）。
+	rep.Transfers = runTransfers(w, refines)
+	for _, tr := range rep.Transfers {
+		for e := 0; e < ElementCount; e++ {
+			cons.TransferLoss += tr.Loss[e]
+			cons.ReverseWork += tr.WorkCost[e]
+		}
+	}
 
 	// §10 相生转化。
-	runSheng(w)
+	cons.ShengLoss = runSheng(w, refines)
 
 	// §11 相克压活性。
 	runKe(w)
@@ -202,13 +272,18 @@ func Advance(w *World) *TickReport {
 		}
 	}
 
-	// §13 逸散。
+	// §13 逸散（修订包 D3：筛选机制——穴位按亲和"留与散"，
+	// Retention_effective[i,e] = Retention[i] × AcupointAffinity[i,e]；
+	// 亲和低的成分按比例逸散，去向=环境，计入守恒账。
+	// D4-1：逸散 × (1 - Refine×KRefine)，Refine=0 时乘子=1）。
 	for i := 0; i < n; i++ {
 		a := &w.Character.BodyGraph.Acupoints[i]
-		keep := One - a.Retention
 		for e := 0; e < ElementCount; e++ {
-			d := fpMul(fpMul(fpMul(a.Qi[e], BaseDiffuseRate), keep), a.Activity[e])
+			retEff := fpClamp(fpMul(a.Retention, a.refineAffinity(e)), 0, One)
+			d := fpMul(fpMul(fpMul(a.Qi[e], BaseDiffuseRate), One-retEff), a.Activity[e])
+			d = fpMul(d, One-fpMul(refines[i], KRefine))
 			a.Qi[e] -= d
+			cons.Diffuse += d
 		}
 	}
 
@@ -241,7 +316,8 @@ func Advance(w *World) *TickReport {
 		// §16 Compatibility。
 		r.Compatibility = compatibility(a, r.Load)
 
-		// §17 Strain。
+		// §17 Strain（D4-4：FlowShock_effective × (1 - Refine×KShock)，
+		// 炼化气更抗冲击；报告中的 FlowShock 保持原值）。
 		r.TransformHeat = fpMul(fpClamp(fpDiv(a.heatAccum, denom), 0, One), TransformHeatMax)
 		overload := r.LoadRatio - One
 		if overload < 0 {
@@ -251,18 +327,20 @@ func Advance(w *World) *TickReport {
 		if affStrain < 0 {
 			affStrain = 0
 		}
+		shockEff := fpMul(r.FlowShock, One-fpMul(refines[i], KShock))
 		r.Strain = fpMul(WOverload, fpMul(overload, overload)) +
 			fpMul(WAffinity, fpMul(affStrain, affStrain)) +
-			fpMul(WShock, fpMul(r.FlowShock, r.FlowShock)) +
+			fpMul(WShock, fpMul(shockEff, shockEff)) +
 			r.TransformHeat
 
-		// §18 Stability。
+		// §18 Stability（D4-2：稳定性恢复 × (1 + Refine_avg×KStab)）。
 		earthRatio := int64(0)
 		if r.Load > 0 {
 			earthRatio = fpDiv(a.Qi[Earth], r.Load)
 		}
 		earthStab := One + fpMul(fpMul(earthRatio, a.Activity[Earth]), EarthStabilizationBonus)
 		recovery := fpMul(fpMul(BaseRecovery, One-a.Damage), earthStab)
+		recovery = fpMul(recovery, One+fpMul(refineAvg, KStab))
 		a.Stability = fpClamp(a.Stability+recovery-r.Strain, 0, One)
 		r.Stability = a.Stability
 
@@ -277,6 +355,12 @@ func Advance(w *World) *TickReport {
 			a.Damage = fpClamp(a.Damage-fpMul(BaseDamageRecovery, BodyRecoveryModifier), 0, One)
 		}
 		r.Damage = a.Damage
+
+		// ThermalLoad（修订包 A2/B4）：旧值先按 HeatDissipation 散热衰减，
+		// 再累加本 Tick 的转化损耗热（§9/§10 → heatAccum）与逆流做功热
+		// （reverseHeatAccum）。只累积，不进任何公式（P5 标定项）。
+		a.ThermalLoad = fpMul(a.ThermalLoad, One-HeatDissipation) + a.heatAccum + a.reverseHeatAccum
+		r.ThermalLoad = a.ThermalLoad
 
 		// §22 Adaptation。
 		if a.Stability >= AdaptationSafeStability && r.Pressure <= AdaptationSafePressure {
@@ -312,6 +396,7 @@ func Advance(w *World) *TickReport {
 		a.PreviousFlow = a.flowAccum
 		a.flowAccum = 0
 		a.heatAccum = 0
+		a.reverseHeatAccum = 0
 		a.elemFlowAccum = [ElementCount]int64{}
 
 		r.Qi = a.Qi
@@ -337,6 +422,11 @@ func Advance(w *World) *TickReport {
 		ch.flowAccum = 0
 	}
 
+	// 守恒归账收尾（修订包 A3）：Qi 在 §13 后不再变化，此处汇总。
+	for i := 0; i < n; i++ {
+		cons.QiAfter += w.Character.BodyGraph.Acupoints[i].load()
+	}
+
 	w.Last = rep
 	return rep
 }
@@ -354,11 +444,27 @@ func loadRatio(a *Acupoint, load int64) int64 {
 	return fpDiv(load, cap)
 }
 
-// runTransfers 实现 §8-9。
-func runTransfers(w *World) []TransferReport {
+// runTransfers 实现 §8-9（含修订包 A2 逆流做功）。
+//
+// 逆流语义（A2/B1）：请求带 Reverse 标记时，Actual 沿经脉天然向反向行走
+// （从 To 端流向 From 端）。唯有"无出向经脉"的纯汇点（B1 丹田画像，不设
+// type 字段——宪法 §8）可发起逆流；其余逆流请求被拒绝（Rejected），
+// 穴与穴之间不得逆流。逆流在常规传输损耗之外另付做功代价：
+//
+//	WorkCost = Actual × BaseWork × (1 + LoadRatio_dst × KBack) × (1 - Conductance)
+//	ReverseHeat = WorkCost × KHeat → 逆流目的地 ThermalLoad
+func runTransfers(w *World, refines []int64) []TransferReport {
 	g := &w.Character.BodyGraph
 	reports := make([]TransferReport, 0, len(w.Ops.Requests))
 	controlErrMax := fpMul(ControlErrorBase, One-w.Character.Control)
+
+	// 出向表：节点是否有出向经脉（B1 画像判据——丹田是唯一无出向的汇点）。
+	outgoing := make([]bool, len(g.Acupoints))
+	for _, c := range g.Channels {
+		if c.From >= 0 && c.From < len(g.Acupoints) {
+			outgoing[c.From] = true
+		}
+	}
 
 	for _, req := range w.Ops.Requests {
 		if req.Channel < 0 || req.Channel >= len(g.Channels) {
@@ -368,9 +474,19 @@ func runTransfers(w *World) []TransferReport {
 		if ch.From < 0 || ch.From >= len(g.Acupoints) || ch.To < 0 || ch.To >= len(g.Acupoints) {
 			continue
 		}
-		src := &g.Acupoints[ch.From]
-		dst := &g.Acupoints[ch.To]
-		tr := TransferReport{Channel: req.Channel, From: ch.From, To: ch.To}
+		tr := TransferReport{Channel: req.Channel, From: ch.From, To: ch.To, Reverse: req.Reverse}
+
+		// 端点选取：顺流 From→To；逆流 To→From（A2）。
+		src, dst := &g.Acupoints[ch.From], &g.Acupoints[ch.To]
+		if req.Reverse {
+			if outgoing[ch.To] {
+				// 发起者不是纯汇点（非丹田画像）——穴与穴之间不得逆流。
+				tr.Rejected = true
+				reports = append(reports, tr)
+				continue
+			}
+			src, dst = &g.Acupoints[ch.To], &g.Acupoints[ch.From]
+		}
 
 		chanAdapt := ch.ChannelAdaptation / 1000
 		baseCond := fpMul(ch.BaseConductance, chanAdapt) // §24
@@ -381,6 +497,22 @@ func runTransfers(w *World) []TransferReport {
 		}
 		if d := dst.effectiveThroughput(); d < chanCap {
 			chanCap = d
+		}
+
+		// D4-5：控制误差幅值 × (1 - Refine_src×KControl)。src 已按流向取对
+		// （顺流源 = From 端，逆流源 = To 端）。
+		srcIdx := ch.From
+		if req.Reverse {
+			srcIdx = ch.To
+		}
+		controlErrEff := fpMul(controlErrMax, One-fpMul(refines[srcIdx], KControl))
+
+		// A2：逆流目的地的即时负载比（推入越满，做功越贵）。
+		// workUnit = BaseWork × (1 + LoadRatio_dst × KBack)；(1 - Conductance) 逐元素乘。
+		workUnit := int64(0)
+		if req.Reverse {
+			lrDst := loadRatio(dst, dst.load())
+			workUnit = fpMul(BaseWork, One+fpMul(lrDst, KBack))
 		}
 
 		for e := 0; e < ElementCount; e++ {
@@ -398,7 +530,7 @@ func runTransfers(w *World) []TransferReport {
 			tr.Capacity[e] = cap
 
 			// §8.2 控制误差 ε = deterministic_noise(seed, tick, channel, e)。
-			eps := noiseSigned(w.NoiseSeed, w.Tick, req.Channel, e) * controlErrMax / 1000
+			eps := noiseSigned(w.NoiseSeed, w.Tick, req.Channel, e) * controlErrEff / 1000
 			requested := fpMul(req.Amount[e], One+eps)
 
 			actual := requested
@@ -420,6 +552,21 @@ func runTransfers(w *World) []TransferReport {
 			src.Qi[e] -= actual
 			dst.Qi[e] += delivered
 			dst.heatAccum += fpMul(loss, One-DiffuseShare) // 50% → 热
+
+			// A2 逆流做功：代价从发起汇点按元素扣除（扣除量不超过存量），
+			// 对应热加到逆流目的地的 ThermalLoad 累计。
+			if req.Reverse {
+				cost := fpMul(actual, fpMul(workUnit, One-eff))
+				if cost > src.Qi[e] {
+					cost = src.Qi[e]
+				}
+				if cost > 0 {
+					src.Qi[e] -= cost
+					dst.reverseHeatAccum += fpMul(cost, KHeat)
+				}
+				tr.WorkCost[e] = cost
+			}
+
 			src.elemFlowAccum[e] += actual
 			dst.elemFlowAccum[e] += delivered
 			src.flowAccum += actual
@@ -436,7 +583,10 @@ func runTransfers(w *World) []TransferReport {
 }
 
 // runSheng 实现 §10（快照语义：所有转化量按本阶段开始时的 Qi 计算）。
-func runSheng(w *World) {
+// D4-3：转化量 × (1 + Refine×KTransform)，Refine=0 时乘子=1。
+// 返回本 Tick 转化损耗总量（§10.1 剩余 → 热，守恒归账用）。
+func runSheng(w *World, refines []int64) int64 {
+	total := int64(0)
 	for i := range w.Character.BodyGraph.Acupoints {
 		a := &w.Character.BodyGraph.Acupoints[i]
 		var snap [ElementCount]int64
@@ -449,6 +599,7 @@ func runSheng(w *World) {
 			}
 			localAff := fpSqrt(fpMul(a.effectiveAffinity(src), a.effectiveAffinity(dst)))
 			transform := fpMul(fpMul(fpMul(fpMul(snap[src], a.Activity[src]), BaseShengRate), localAff), TimeFactor)
+			transform = fpMul(transform, One+fpMul(refines[i], KTransform)) // D4-3
 			if transform <= 0 {
 				continue
 			}
@@ -456,8 +607,10 @@ func runSheng(w *World) {
 			a.Qi[src] -= transform
 			a.Qi[dst] += gain
 			a.heatAccum += transform - gain // §10.1 剩余 → 热
+			total += transform - gain
 		}
 	}
+	return total
 }
 
 // runKe 实现 §11（固定顺序、活值语义）。

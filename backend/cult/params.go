@@ -168,7 +168,46 @@ const (
 
 	// DiffuseShare 是 §9 传输损耗中归入 Diffuse 的比例 0.5（另 0.5 → 热）。
 	DiffuseShare = 500 // 0.5
+
+	// ---------------------------------------------------------------------------
+	// 修订包（docs/specs/2026-09-21-stage3-revision-circulation-refinement.md）
+	// ---------------------------------------------------------------------------
+
+	// BaseWork 是逆流做功基数（A2）：每单位逆流传输量的做功代价系数 0.20。
+	// 单位代价 = BaseWork × (1 + LoadRatio_dst × KBack) × (1 - Conductance)。
+	BaseWork = 200 // 0.20 [v0.1 参数]
+
+	// KBack 是逆流做功的目的地负载比敏感系数（A2）：推入越满，做功越贵。
+	KBack = 500 // 0.5 [v0.1 参数]
+
+	// KHeat 是逆流做功 → 热的转化比（A2）：ReverseHeat = ReverseWorkCost × KHeat，
+	// 加到逆流目的地穴位的 ThermalLoad。
+	KHeat = 500 // 0.5 [v0.1 参数]
+
+	// HeatDissipation 是穴位 ThermalLoad 的每 Tick 散热衰减率（A2/B4）0.10。
+	HeatDissipation = 100 // 0.10 [v0.1 参数]
+
+	// KRefine 是炼化对逸散的敏感化乘子（D4-1）：Diffuse × (1 - Refine×KRefine)。
+	KRefine = 500 // 0.5 [v0.1 参数]
+
+	// KStab 是炼化对稳定性恢复的敏感化乘子（D4-2）：恢复 × (1 + Refine_avg×KStab)。
+	KStab = 300 // 0.3 [v0.1 参数]
+
+	// KTransform 是炼化对相生转化的敏感化乘子（D4-3）：Transform × (1 + Refine×KTransform)。
+	KTransform = 300 // 0.3 [v0.1 参数]
+
+	// KControl 是炼化对控制误差的敏感化乘子（D4-5）：ControlErrorMax × (1 - Refine×KControl)。
+	KControl = 300 // 0.3 [v0.1 参数]
+
+	// KShock 是炼化对流量冲击的敏感化乘子（D4-4）：FlowShock_effective × (1 - Refine×KShock)。
+	KShock = 500 // 0.5 [v0.1 参数]
 )
+
+// RuleVersion 是底层规则版本标识（宪法 §18 Rule Versioning）。
+// 修订包 2026-09-21-circulation-refinement（逆流做功/逐元素筛选/炼化乘子）
+// 属 Rule Semantic Change 而非 Parameter Tuning：0.1.0 → 0.2.0。
+// 同 World 状态 + 同 Ops + 同 RuleVersion + 同 Seed ⇒ 逐位一致重演。
+const RuleVersion = "0.2.0-circulation"
 
 // ---------------------------------------------------------------------------
 // 定点算术

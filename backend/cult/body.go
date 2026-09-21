@@ -67,6 +67,12 @@ type Acupoint struct {
 	// 打穿稳定性并受伤，与该节的叙事矛盾。§22 的 QiFlow 同口径。
 	PreviousFlow int64
 
+	// ThermalLoad 是穴位热负荷（修订包 A2/B4：累积量，千分位）。
+	// 累积来源 = 逆流做功热（reverseHeatAccum）+ 转化损耗热（heatAccum，
+	// §9/§10 损耗）；每 Tick 按 HeatDissipation 衰减。是慢响应累积量，
+	// 与 §17 的瞬时 TransformHeat 口径不同，二者互不替代。
+	ThermalLoad int64
+
 	// lastLoadRatioMilli 是上一 Tick 吸收后的负载比（千分位），
 	// 供下一 Tick 的 BackPressure 使用——stage_3 §47→§48 的链式定义
 	// （§48 直接以吸收后 LoadRatio 计算"下一 Tick BackPressure"）。
@@ -76,6 +82,10 @@ type Acupoint struct {
 	flowAccum     int64
 	elemFlowAccum [ElementCount]int64
 	heatAccum     int64 // 本 Tick 热量累计（§9/§10 损耗 → §17 TransformHeat）
+
+	// reverseHeatAccum 是本 Tick 逆流做功热累计（修订包 A2 → ThermalLoad），
+	// Advance 内部使用。
+	reverseHeatAccum int64
 }
 
 // Channel 是经脉（stage_3 §5）。
@@ -138,6 +148,13 @@ func (a *Acupoint) adaptationMilli(e int) int64 { return a.Adaptation[e] / 1000 
 // effectiveAffinity 返回 EffectiveAffinity[i,e] = Affinity×Adaptation（§8）。
 func (a *Acupoint) effectiveAffinity(e int) int64 {
 	return fpMul(a.Affinity[e], int64(a.adaptationMilli(e)))
+}
+
+// refineAffinity 返回炼化口径的穴位有效亲和（修订包 D2/D3 的
+// AcupointAffinity[i,e] 实现口径）：Affinity × Adaptation × (1 - Damage)。
+// 身体变化即重算（D2：受伤、Adaptation 变化 → 今日精纯明日变粗）。
+func (a *Acupoint) refineAffinity(e int) int64 {
+	return fpMul(a.effectiveAffinity(e), One-a.Damage)
 }
 
 // load 返回穴位当前总负载 Σ Qi[e]（§7.1/§14）。

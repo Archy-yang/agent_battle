@@ -29,8 +29,13 @@ package cult
 // （felt ≥ 真值档-2）：低感知是对危险的钝化，不是全盲——剧痛不可能
 // 被报成"轻微充盈"（§19 损伤机制也要求强压必然可感）。
 //
-// 本文件只读 World，不写；全程定点整数，无浮点；同状态两次 Observe
-// 结果深度相等（确定性）。
+// 本文件读取 World，并推进 World 上的私有感知状态（w.sensory，
+// percept.go 的滞回记忆——每 Tick 备忘一次，同一 Tick 反复观察结果
+// 深度相等，同 seed 重放逐位一致）；不写任何引擎状态，Advance 的
+// 结果与是否观察无关。全程定点整数，无浮点。
+//
+// 流水线（境界文档 §8/§17）：真值 → PerceptToken（percept.go：趋势、
+// 滞回、痛感分型、炼化档）→ 本文件的确定性模板渲染 → 定性文本。
 
 // ---------------------------------------------------------------------------
 // 词表（集中定义；stage_2 §25 类型词 + 设计稿"状态词表"五档）
@@ -101,11 +106,9 @@ var natureTentative = [ElementCount]string{
 }
 
 // 感受词（stage_2 §25 sensation：温热/清凉/胀/疼痛/阻塞/震荡）由
-// TickReport 变化量生成，阈值均为 v0.1 实验值（§52）：
+// PerceptToken（percept.go）的时间分析 + 滞回档驱动；热词只看热负荷
+// （境界文档 §7.2/§9），不看属性名。阈值均为 v0.1 实验值（§52）：
 const (
-	// heatWarm / heatScorching：§17 TransformHeat ∈ [0,200]，≥50 温热、≥150 灼热。
-	heatWarm      = 50
-	heatScorching = 150
 	// shockFeel：§15 FlowShock ≥ 0.2 时有震荡感。
 	shockFeel = 200
 	// blockedFeel：§7 反压 < 0.4（上一 Tick 负载比 > 1.22）时牵引受阻。
@@ -165,6 +168,7 @@ func Observe(w *World, acuity int) *Observation {
 	tier := acuity - 1
 	fam := familiarityMilli(acuity)
 	perception := fpClamp(w.Character.Perception, 0, One)
+	tokens := sensoryTokens(w)
 
 	obs := &Observation{
 		Tick: w.Tick,
@@ -180,13 +184,15 @@ func Observe(w *World, acuity int) *Observation {
 
 	for i := range w.Character.BodyGraph.Acupoints {
 		a := &w.Character.BodyGraph.Acupoints[i]
-		obs.Points = append(obs.Points, observePoint(w, a, i, tier, fam, perception))
+		obs.Points = append(obs.Points, observePoint(w, a, i, tier, fam, perception, &tokens[i]))
 	}
 	return obs
 }
 
-// observePoint 感知一个穴位。
-func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64) AcupointSense {
+// observePoint 把一个穴位的 PerceptToken 渲染成定性感知（§18 模板：
+// 压感措辞 → 身体感觉 → 流动情况 → 疼痛/危险 → 趋势；单穴单条流，
+// 不碎片化）。
+func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64, tok *pointToken) AcupointSense {
 	// §47 口径的即时压感：吸收后负载比的平方。世界未推进时（无报告）
 	// 用现场负载计算——同一公式（§14），同一标度。
 	pressure := int64(0)
@@ -212,21 +218,16 @@ func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64) A
 		Flow:         "停滞",
 	}
 
+	// 温度感只来自热负荷（§9/§7.2：热来自 ThermalLoad 的滞回档，不看
+	// 属性名——同构成不同热负荷必然不同热词）。热负荷是穴位累积状态，
+	// 无论世界是否推进过都可感。
+	if tok.Thermal.level >= 1 {
+		sense.Feelings = append(sense.Feelings, thermalWords[tok.Thermal.level])
+	}
+
 	// TickReport 变化量 → sensation / flow 词。
 	if w.Last != nil && idx < len(w.Last.Points) {
 		r := w.Last.Points[idx]
-
-		// 温度感来自转化热（§9/§10 损耗 → §17 TransformHeat）。
-		switch {
-		case r.TransformHeat >= heatScorching:
-			sense.Feelings = append(sense.Feelings, "灼热")
-		case r.TransformHeat >= heatWarm:
-			sense.Feelings = append(sense.Feelings, "温热")
-		default:
-			if dom, load := dominantElement(a.Qi); load >= natureMinLoad && (dom == Water || dom == Metal) {
-				sense.Feelings = append(sense.Feelings, "清凉") // 寒凉属性积存而转化热极低
-			}
-		}
 
 		// 震荡感来自流量冲击（§15）。
 		if r.FlowShock >= shockFeel {
@@ -241,14 +242,33 @@ func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64) A
 		sense.Flow = flowWord(a, &r)
 	}
 
-	// §24 Recognition：神识不足时只有 Detection，辨不出五行倾向。
-	if acuityOf(tier) >= natureAcuity {
-		if dom, load := dominantElement(a.Qi); load >= natureMinLoad {
-			if acuityOf(tier) >= 3 {
-				sense.Nature = []string{natureTentative[dom]}
-			} else {
-				sense.Nature = []string{natureVague[dom]}
-			}
+	// 痛感分型（§11.2）：痛感强度档 + 主导成因措辞。
+	if tok.Kind >= painDistension && tok.Pain.level >= 1 {
+		sense.Feelings = append(sense.Feelings, painKindWords[tok.Kind-1][tok.Pain.level])
+	}
+
+	// 炼化三档感知词（修订包 Part F）：只在有存气时渲染（空穴无"驳杂"可言）。
+	if _, load := dominantElement(a.Qi); load >= natureMinLoad {
+		sense.Feelings = append(sense.Feelings, refineWords[tok.Refine])
+	}
+
+	// 趋势（§14，单条）与复合模式（§16）。
+	if w.Last != nil {
+		if tw := trendWord(tok); tw != "" {
+			sense.Feelings = append(sense.Feelings, tw)
+		}
+	}
+	for _, p := range tok.Patterns {
+		sense.Feelings = append(sense.Feelings, patternWords[p])
+	}
+
+	// §24 Recognition：神识不足时只有 Detection，辨不出五行倾向
+	//（token 的 nature 签名由信号层判定，这里只过神识门槛）。
+	if acuityOf(tier) >= natureAcuity && tok.Nature >= 0 {
+		if acuityOf(tier) >= 3 {
+			sense.Nature = []string{natureTentative[tok.Nature]}
+		} else {
+			sense.Nature = []string{natureVague[tok.Nature]}
 		}
 	}
 
