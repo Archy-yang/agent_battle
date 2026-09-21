@@ -507,11 +507,6 @@ function startSeq(){st.seqMode=true;st.picked=["dan"];$("n-dan").classList.add("
 function clearSeq(){st.picked=["dan"];
   document.querySelectorAll(".node").forEach(n=>n.classList.remove("picked"));
   $("n-dan").classList.add("picked");render()}
-const SEQ_EVAL=[
-  {has:["yang"],not:["tu"],msg:"周天能行，但<em>阳枢的热意一轮轮积了下来</em>，尾段隐隐发烫。久行，必乱。",bad:true},
-  {has:["yang","tu"],msg:"土府的厚气行在前，<em>把阳枢的热意层层敛住</em>。整轮走完，气息沉稳绵长。"},
-  {has:["tu"],msg:"厚气缓缓一周，稳是稳，只是<em>变化不足</em>，难成自持之势。"},
-  {has:["qing"],msg:"木气温和绵长，<em>过于平缓</em>，自持难成。"}];
 function runSeq(){if(st.picked.length<2){toast("至少再点一处纳气之穴。");return}
   const seq=buildPath(st.picked.slice());
   animateFlow(seq,()=>{
@@ -522,8 +517,13 @@ function runSeq(){if(st.picked.length<2){toast("至少再点一处纳气之穴�
     document.querySelectorAll(".node").forEach(n=>n.classList.remove("picked"));
     st.tried=true;st.seqMode=false;st.runs=1;st.released=false;st.lastSeq=seq;
     $("hint").textContent="长按「凝神」，开始感知";
-    let ev=SEQ_EVAL.find(e=>e.has.every(k=>st.picked.includes(k))&&(!e.not||e.not.every(k=>!st.picked.includes(k))));
-    if(!ev)ev={msg:"此序可行，只是收效平平。"};
+    const iy=st.picked.indexOf("yang"),it=st.picked.indexOf("tu");
+    let ev;
+    if(iy>=0&&it<0)ev={bad:true,msg:"周天能行，但<em>阳枢的热意一轮轮积了下来</em>，尾段隐隐发烫。久行，必乱。"};
+    else if(iy>=0&&it>iy)ev={msg:"土府的厚气行在阳枢之后，<em>把热意层层敛住</em>。整轮走完，气息沉稳绵长。"};
+    else if(iy>=0&&it<iy)ev={bad:true,msg:"土府虽在序中，却行在阳枢<em>之前</em>——阳枢的热意无人承接，尾段发烫。"};
+    else if(it>=0)ev={msg:"厚气缓缓一周，稳是稳，只是<em>变化不足</em>，难成自持之势。"};
+    else ev={msg:"此序可行，只是收效平平。"};
     if(ev.bad){$("n-yang").classList.add("strain");$("c4").classList.add("hot")}
     line("一周天行毕。"+ev.msg);
     if(!ev.bad){kn("候选周天","纳引诸穴之序，兼顾生发与敛热。","gone");
