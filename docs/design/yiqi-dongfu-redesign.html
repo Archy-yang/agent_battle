@@ -58,6 +58,10 @@ svg.chan line.seen{opacity:.16}
 svg.chan line.on{opacity:.75;filter:drop-shadow(0 0 5px rgba(143,224,177,.5))}
 svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(232,154,114,.5))}
 
+.node.dark{display:none}
+.node.faint{width:20px;height:20px;border-style:dashed;background:transparent;
+  opacity:.55;color:transparent}
+.node.faint::after{content:""}
 .node{position:absolute;width:36px;height:36px;border-radius:50%;
   transform:translate(-50%,-50%);border:1px solid rgba(184,220,199,.2);
   background:#0a140f;display:grid;place-items:center;color:#7d9186;
@@ -211,13 +215,13 @@ svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(23
           <line id="c7" x1="64"  y1="224" x2="125" y2="162"/>
           <line id="c8" x1="125" y1="162" x2="125" y2="300"/>
         </svg>
-        <button class="node" id="n-shen" style="left:125px;top:52px"  data-name="未知" onclick="tapNode('shen')">？</button>
-        <button class="node" id="n-qing" style="left:62px;top:118px"  data-name="未知" onclick="tapNode('qing')">？</button>
-        <button class="node" id="n-yang" style="left:188px;top:118px" data-name="未知" onclick="tapNode('yang')">？</button>
-        <button class="node" id="n-tu"   style="left:80px;top:284px"  data-name="未知" onclick="tapNode('tu')">？</button>
-        <button class="node" id="n-jin"  style="left:186px;top:224px" data-name="未知" onclick="tapNode('jin')">？</button>
-        <button class="node" id="n-xuan" style="left:64px;top:224px"  data-name="未知" onclick="tapNode('xuan')">？</button>
-        <button class="node" id="n-zhong" style="left:125px;top:162px" data-name="未知" onclick="tapNode('zhong')">？</button>
+        <button class="node dark" id="n-shen" style="left:125px;top:52px"  data-name="未知" onclick="tapNode('shen')">？</button>
+        <button class="node dark" id="n-qing" style="left:62px;top:118px"  data-name="未知" onclick="tapNode('qing')">？</button>
+        <button class="node dark" id="n-yang" style="left:188px;top:118px" data-name="未知" onclick="tapNode('yang')">？</button>
+        <button class="node dark" id="n-tu"   style="left:80px;top:284px"  data-name="未知" onclick="tapNode('tu')">？</button>
+        <button class="node dark" id="n-jin"  style="left:186px;top:224px" data-name="未知" onclick="tapNode('jin')">？</button>
+        <button class="node dark" id="n-xuan" style="left:64px;top:224px"  data-name="未知" onclick="tapNode('xuan')">？</button>
+        <button class="node dark" id="n-zhong" style="left:125px;top:162px" data-name="未知" onclick="tapNode('zhong')">？</button>
         <button class="node known" id="n-dan" style="left:125px;top:300px" data-name="下丹田" onclick="tapNode('dan')">丹</button>
 
         <div class="nodedetail" id="detail">
@@ -309,17 +313,23 @@ function choice(label,sub,fn,cls){const b=document.createElement("button");
   b.className="choice "+(cls||"");b.innerHTML=label+(sub?`<small>${sub}</small>`:"");
   b.onclick=fn;return b}
 
-function discover(key,cls){const n=$("n-"+key);if(n.classList.contains("known"))return;
+function discover(key,cls){const n=$("n-"+key);
+  n.classList.remove("dark","faint");
+  if(n.classList.contains("known"))return;
   n.classList.add("known");if(cls)n.classList.add(cls);
   n.textContent=NODE_TXT[key][0][0]==="下"?"丹":NODE_TXT[key][0];
   n.setAttribute("data-name",NODE_TXT[key][0])}
 
+function revealBlobs(){["qing","yang","tu","xuan"].forEach(k=>{
+    const n=$("n-"+k);if(!n.classList.contains("known")){
+      n.classList.remove("dark");n.classList.add("faint");
+      n.textContent="";n.removeAttribute("data-name")}})}
 function tapNode(key){
   if(st.seqMode){
     if(key==="shen"||key==="jin"||key==="xuan"){toast("这几处尚未摸清，先不纳入周天之序。");return}
     if(st.picked.includes(key)){toast("此穴已在序中。");return}
     st.picked.push(key);$("n-"+key).classList.add("picked");render();return}
-  if(!st[key]&&key!=="dan"){toast("尚无所感，先凝神探一探。");return}
+  if(!st[key]&&key!=="dan"){toast("似有波动，尚未明晰。");return}
   const t=NODE_TXT[key];$("dName").textContent=t[0];$("dText").textContent=t[1];
   $("detail").classList.add("show")}
 function hideDetail(){$("detail").classList.remove("show")}
@@ -343,6 +353,7 @@ function doSense(){
   if(st.phase===0){
     st.phase=1;$("scene").classList.add("sensed");$("breath").classList.add("on");
     $("hint").textContent="雾气深处，隐有浮光";
+    revealBlobs();
     line("凝神片刻，你察觉四周并不空。空气里有某种缓慢流动的东西：一股<em>柔和、生发</em>，一股偏<em>清凉</em>，还有一两缕<em>温热</em>，一缕<em>厚重</em>。");
     kn("周围存在可感之气","这不再是错觉——它稳定地出现。");
     $("realm").innerHTML="<b>凡体</b> · 气感初萌";
