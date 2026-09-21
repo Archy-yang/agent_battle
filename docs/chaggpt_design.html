@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>内观 · 炼气至筑基交互原型</title>
+<style>
+:root{
+  --bg:#050906;--panel:#08100c;--ink:#edf7f1;--muted:#96aa9e;
+  --jade:#8fe0b1;--jade2:#c9f5d9;--gold:#e8c978;--warm:#ee9b6c;
+  --blue:#8bbaf0;--line:rgba(184,220,199,.16);--danger:#e97d78;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:#040705;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft Yahei",sans-serif}
+body{min-height:100vh}
+button,input{font:inherit}
+.app{max-width:460px;margin:auto;min-height:100vh;position:relative;overflow:hidden;background:
+ radial-gradient(circle at 50% 12%,rgba(93,166,130,.14),transparent 30%),
+ linear-gradient(180deg,#08110d,#050906 62%)}
+.top{position:absolute;z-index:20;top:0;left:0;right:0;padding:14px 16px 8px;display:flex;justify-content:space-between;font-size:11px;color:#abc0b4}
+.scene{height:56vh;min-height:430px;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.mist{position:absolute;inset:0;background:
+ radial-gradient(circle at 16% 26%,rgba(143,224,177,.12),transparent 13%),
+ radial-gradient(circle at 80% 24%,rgba(139,186,240,.08),transparent 14%),
+ radial-gradient(circle at 50% 79%,rgba(232,201,120,.06),transparent 18%)}
+.orb{position:absolute;width:12px;height:12px;border-radius:50%;background:rgba(143,224,177,.46);box-shadow:0 0 20px rgba(143,224,177,.38);opacity:.14;transition:.35s}
+.scene.sensed .orb{opacity:.9;animation:float 4s ease-in-out infinite}
+.o1{left:18%;top:24%}.o2{right:18%;top:32%;background:rgba(139,186,240,.42);animation-delay:.7s!important}.o3{left:31%;bottom:23%;background:rgba(232,201,120,.34);animation-delay:1.3s!important}
+@keyframes float{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-9px) scale(1.12)}}
+.body{position:relative;width:230px;height:340px}
+.silhouette{position:absolute;left:50%;transform:translateX(-50%);top:16px;width:108px;height:275px;border-radius:50% 50% 42% 42%/22% 22% 78% 78%;border:1px solid rgba(184,220,199,.14);background:linear-gradient(180deg,rgba(143,224,177,.03),rgba(143,224,177,.008))}
+.breath{position:absolute;left:50%;top:47%;transform:translate(-50%,-50%);width:210px;height:210px;border-radius:50%;border:1px solid rgba(143,224,177,.08)}
+.breath.on{animation:breathe 3s ease-in-out infinite}
+@keyframes breathe{0%,100%{transform:translate(-50%,-50%) scale(.86);opacity:.2}50%{transform:translate(-50%,-50%) scale(1.06);opacity:.75}}
+.node{position:absolute;width:34px;height:34px;border-radius:50%;border:1px solid rgba(184,220,199,.20);background:#0a140f;display:grid;place-items:center;color:#84988c;font-size:10px;transition:.3s;z-index:3}
+.node::after{content:attr(data-name);position:absolute;top:38px;left:50%;transform:translateX(-50%);font-size:9px;white-space:nowrap;color:#7e9186}
+.node.known{border-color:var(--jade);box-shadow:0 0 0 5px rgba(143,224,177,.06),0 0 18px rgba(143,224,177,.14);color:#d7f8e4}
+.node.hot{border-color:var(--warm);box-shadow:0 0 0 5px rgba(238,155,108,.06),0 0 18px rgba(238,155,108,.14);color:#ffd6bf}
+.node.earth{border-color:var(--gold);box-shadow:0 0 0 5px rgba(232,201,120,.06);color:#f4dfa8}
+.node.selected{outline:2px solid rgba(201,245,217,.6);outline-offset:4px}
+.n-qing{left:28px;top:126px}
+.n-yang{right:28px;top:126px}
+.n-dan{left:98px;top:210px}
+.n-tu{left:98px;top:286px}
+.n-shen{left:98px;top:52px}
+.pathline{position:absolute;height:2px;background:linear-gradient(90deg,rgba(143,224,177,.06),rgba(143,224,177,.34),rgba(143,224,177,.06));transform-origin:left center;opacity:.10;transition:.3s}
+.pathline.on{opacity:.85;box-shadow:0 0 12px rgba(143,224,177,.22)}
+.pathline.hot{background:linear-gradient(90deg,rgba(238,155,108,.08),rgba(238,155,108,.46),rgba(238,155,108,.08))}
+.l-dq{left:64px;top:143px;width:83px;transform:rotate(56deg)}
+.l-qy{left:61px;top:143px;width:108px}
+.l-yd{left:146px;top:143px;width:83px;transform:rotate(124deg)}
+.l-dt{left:115px;top:244px;width:58px;transform:rotate(90deg)}
+.l-tq{left:114px;top:300px;width:157px;transform:rotate(211deg)}
+.l-ty{left:114px;top:300px;width:157px;transform:rotate(329deg)}
+.cycle{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:228px;height:228px;border-radius:50%;border:1px solid rgba(143,224,177,.08);opacity:0}
+.cycle.on{opacity:1;animation:spin 7s linear infinite}
+.cycle::before{content:"";position:absolute;width:7px;height:7px;border-radius:50%;background:var(--jade);left:50%;top:-4px;box-shadow:0 0 12px rgba(143,224,177,.8)}
+@keyframes spin{to{transform:translate(-50%,-50%) rotate(360deg)}}
+.centerHint{position:absolute;bottom:17px;left:50%;transform:translateX(-50%);font-size:10px;color:#8ca094;background:rgba(5,9,6,.62);padding:6px 10px;border-radius:999px;border:1px solid rgba(184,220,199,.11);backdrop-filter:blur(8px);white-space:nowrap}
+.panel{position:relative;margin-top:-14px;border-radius:24px 24px 0 0;background:linear-gradient(180deg,rgba(10,19,14,.97),#06100b);border-top:1px solid var(--line);min-height:46vh;padding:18px 15px 130px}
+.narrative{font-size:16px;line-height:1.82;color:#e9f4ed;min-height:92px}
+.narrative em{font-style:normal;color:var(--jade2)}
+.micro{font-size:10px;line-height:1.55;color:#768a7e;margin-top:5px}
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.pill{font-size:10px;color:#aec2b6;border:1px solid rgba(184,220,199,.14);background:rgba(143,224,177,.035);padding:6px 8px;border-radius:999px}
+.pill.hot{color:#f1ba99;border-color:rgba(238,155,108,.27);background:rgba(238,155,108,.05)}
+.pill.gold{color:#e8d49c;border-color:rgba(232,201,120,.26);background:rgba(232,201,120,.05)}
+.choiceTitle{font-size:10px;color:#7e9286;margin:18px 0 8px}
+.choices{display:grid;gap:8px}
+.choice{border:1px solid rgba(184,220,199,.14);background:rgba(255,255,255,.018);color:#dceae2;border-radius:14px;padding:13px 14px;text-align:left;font-size:12px;line-height:1.5}
+.choice.primary{border-color:rgba(143,224,177,.4);background:rgba(143,224,177,.07)}
+.choice.warn{border-color:rgba(238,155,108,.35);background:rgba(238,155,108,.05)}
+.choice small{display:block;color:#81958a;font-size:9px;margin-top:4px}
+.routeBox{margin-top:13px;padding:11px;border:1px solid rgba(184,220,199,.12);border-radius:13px;background:rgba(255,255,255,.012)}
+.routeHead{display:flex;justify-content:space-between;font-size:10px;color:#84998d}
+.route{font-size:11px;line-height:1.7;color:#cfe0d6;margin-top:8px;min-height:20px}
+.routeActions{display:flex;gap:7px;margin-top:9px}
+.mini{flex:1;border:1px solid rgba(184,220,199,.14);background:#0a140f;color:#cbdad1;border-radius:10px;padding:9px;font-size:10px}
+.mini.primary{border-color:rgba(143,224,177,.38);background:rgba(143,224,177,.07)}
+.tune{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tuneBox{padding:10px;border:1px solid rgba(184,220,199,.12);border-radius:11px}
+.tuneBox b{font-size:10px}.tuneBox div{font-size:9px;color:#82958a;margin-top:4px}
+.slider{width:100%;margin-top:8px}
+.intent{display:flex;gap:7px;margin-top:14px}
+.intent input{flex:1;min-width:0;border-radius:13px;border:1px solid rgba(184,220,199,.14);background:#08120d;color:#dceae2;padding:12px 13px;outline:none;font-size:12px}
+.intent button{border:0;border-radius:13px;background:var(--jade);color:#0a150e;padding:0 14px;font-weight:750}
+.knownBox{margin-top:14px;border-top:1px solid rgba(184,220,199,.09);padding-top:12px}
+.knownHead{font-size:10px;color:#7e9286;margin-bottom:7px}
+.knownItem{font-size:10px;line-height:1.55;color:#a8bbb0;padding:8px 9px;border-radius:10px;background:rgba(255,255,255,.016);margin-top:6px}
+.knownItem b{color:#dceae2}
+.protocol{margin-top:10px;padding:11px;border:1px solid rgba(143,224,177,.27);border-radius:12px;background:rgba(143,224,177,.04)}
+.protocol b{font-size:11px;color:#cdf4db}.protocol p{font-size:10px;line-height:1.55;color:#9fb2a7;margin:6px 0 0}
+.progressCard{margin-top:12px;padding:11px;border-radius:12px;border:1px solid rgba(184,220,199,.11)}
+.progressRow{display:flex;justify-content:space-between;font-size:9px;color:#90a398;margin-top:7px}
+.bar{height:5px;border-radius:99px;background:#17221b;overflow:hidden;margin-top:5px}
+.bar i{display:block;height:100%;background:var(--jade);width:0;transition:.4s}
+.bar.gold i{background:var(--gold)}
+.footer{position:fixed;left:50%;bottom:0;transform:translateX(-50%);width:min(460px,100%);padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(180deg,rgba(5,9,6,0),rgba(5,9,6,.96) 28%);z-index:20}
+.mode{display:flex;justify-content:space-between;align-items:end;gap:8px}
+.modeText{font-size:9px;color:#718579;line-height:1.45}
+.longBtn{border:1px solid rgba(143,224,177,.35);background:rgba(143,224,177,.07);color:#d8f5e3;border-radius:999px;padding:10px 14px;font-size:11px}
+.toast{position:fixed;z-index:30;left:50%;top:58px;transform:translateX(-50%);width:min(390px,calc(100% - 30px));padding:10px 12px;border:1px solid rgba(184,220,199,.17);border-radius:12px;background:rgba(8,15,11,.95);font-size:10px;line-height:1.5;color:#dceae2;opacity:0;pointer-events:none;transition:.2s}
+.toast.show{opacity:1}
+.foundation{position:fixed;inset:0;z-index:50;background:radial-gradient(circle at center,rgba(143,224,177,.17),rgba(3,7,4,.97) 48%);display:none;align-items:center;justify-content:center;padding:30px}
+.foundation.show{display:flex}
+.foundationBox{text-align:center;max-width:340px}
+.foundationRing{width:150px;height:150px;border-radius:50%;border:1px solid rgba(143,224,177,.35);margin:auto;position:relative;animation:slowspin 12s linear infinite}
+.foundationRing::before,.foundationRing::after{content:"";position:absolute;border-radius:50%;border:1px solid rgba(143,224,177,.18);inset:14px}
+.foundationRing::after{inset:34px}
+@keyframes slowspin{to{transform:rotate(360deg)}}
+.foundation h2{font-size:28px;margin:22px 0 8px;font-weight:700}
+.foundation p{font-size:12px;line-height:1.7;color:#a9bcb0}
+.foundation button{margin-top:17px;border:1px solid rgba(143,224,177,.4);background:rgba(143,224,177,.09);color:#d9f5e3;border-radius:999px;padding:11px 18px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top"><span>子时 · 洞府</span><span id="realm">凡体 · 未入门</span></div>
+
+  <section class="scene" id="scene">
+    <div class="mist"></div>
+    <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
+    <div class="body">
+      <div class="silhouette"></div>
+      <div class="breath" id="breath"></div>
+      <div class="cycle" id="cycle"></div>
+      <div class="pathline l-dq" id="ldq"></div>
+      <div class="pathline l-qy" id="lqy"></div>
+      <div class="pathline l-yd" id="lyd"></div>
+      <div class="pathline l-dt" id="ldt"></div>
+      <div class="pathline l-tq" id="ltq"></div>
+      <div class="pathline l-ty" id="lty"></div>
+
+      <button class="node n-shen" id="shen" data-key="shen" data-name="神庭" onclick="tapNode('shen')">?</button>
+      <button class="node n-qing" id="qing" data-key="qing" data-name="未知" onclick="tapNode('qing')">?</button>
+      <button class="node n-yang" id="yang" data-key="yang" data-name="未知" onclick="tapNode('yang')">?</button>
+      <button class="node n-dan known" id="dan" data-key="dan" data-name="下丹田" onclick="tapNode('dan')">丹</button>
+      <button class="node n-tu" id="tu" data-key="tu" data-name="未知" onclick="tapNode('tu')">?</button>
+    </div>
+    <div class="centerHint" id="centerHint">长按“凝神”开始感知</div>
+  </section>
+
+  <section class="panel">
+    <div class="narrative" id="narrative"></div>
+    <div class="micro" id="micro"></div>
+    <div class="pills" id="pills"></div>
+
+    <div id="routeBuilder"></div>
+
+    <div class="choiceTitle">此刻，你想——</div>
+    <div class="choices" id="choices"></div>
+
+    <div class="intent">
+      <input id="intentInput" placeholder="传入一个心念，例如：先求稳，别急着加大流量">
+      <button onclick="sendIntent()">传念</button>
+    </div>
+
+    <div class="knownBox">
+      <div class="knownHead">逐渐被确认的东西</div>
+      <div id="known"></div>
+      <div id="protocol"></div>
+      <div id="foundationProgress"></div>
+    </div>
+  </section>
+</div>
+
+<div class="footer">
+  <div class="mode">
+    <div class="modeText" id="modeText">当前：未知探索<br>LLM 正在参与判断</div>
+    <button class="longBtn" id="focusBtn">按住凝神</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="foundation" id="foundation">
+  <div class="foundationBox">
+    <div class="foundationRing"></div>
+    <h2>筑基</h2>
+    <p>你已经停止主动引导，但周天仍在自行运转。灵气的流动不再依赖每一次心念推动，而成为身体自身的一部分。</p>
+    <button onclick="closeFoundation()">继续内观</button>
+  </div>
+</div>
+
+<script>
+const st={
+  phase:0,sensed:false,absorbed:false,
+  qing:false,yang:false,tu:false,
+  qingChecks:0,yangChecks:0,tuChecks:0,
+  baseProtocol:false,
+  routeMode:false,route:[],
+  flow:1,dwell:1,
+  cycleRuns:0,adapt:0,
+  lastEval:null,
+  selfSustain:0,stableTicks:0,
+  touchedFoundation:false,foundation:false
+};
+const names={dan:"丹田",qing:"青关",yang:"阳枢",tu:"土府",shen:"神庭"};
+const $=id=>document.getElementById(id);
+
+function toast(t){$("toast").textContent=t;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),1900)}
+function p(t,c=""){return `<span class="pill ${c}">${t}</span>`}
+function choice(label,sub,fn,cls=""){return `<button class="choice ${cls}" onclick="${fn}">${label}<small>${sub}</small></button>`}
+function known(t,d){return `<div class="knownItem"><b>${t}</b><br>${d}</div>`}
+function prog(label,val,gold=false){
+  return `<div class="progressRow"><span>${label}</span><span>${Math.round(val)}%</span></div><div class="bar ${gold?'gold':''}"><i style="width:${Math.min(100,val)}%"></i></div>`;
+}
+function discoverNode(key,name,cls="known"){
+  const n=$(key); n.classList.add(cls); n.textContent=name[0]; n.setAttribute("data-name",name);
+}
+function clearSelected(){document.querySelectorAll(".node").forEach(n=>n.classList.remove("selected"))}
+function routeText(){return st.route.length?st.route.map(x=>names[x]).join(" → "):"依次点身体上的穴位，组成一条路线"}
+function renderLines(){
+  ["ldq","lqy","lyd","ldt","ltq","lty"].forEach(x=>$(x).classList.remove("on","hot"));
+  const pairs=[];
+  for(let i=0;i<st.route.length-1;i++)pairs.push(st.route[i]+"-"+st.route[i+1]);
+  const map={"dan-qing":"ldq","qing-dan":"ldq","qing-yang":"lqy","yang-qing":"lqy","yang-dan":"lyd","dan-yang":"lyd","dan-tu":"ldt","tu-dan":"ldt","tu-qing":"ltq","qing-tu":"ltq","tu-yang":"lty","yang-tu":"lty"};
+  pairs.forEach(pair=>{if(map[pair])$(map[pair]).classList.add("on")});
+  if(st.lastEval && st.lastEval.type==="hot") $("lqy").classList.add("hot");
+}
+function evaluateRoute(){
+  const r=st.route.join("-");
+  if(r==="dan-qing-yang-dan"){
+    return {type:"hot",eff:88,stab:57,balance:48,msg:"效率很高，但阳枢的温热会逐轮积累，连续运行后明显失稳。"};
+  }
+  if(r==="dan-qing-yang-tu-dan"){
+    return {type:"good",eff:74,stab:86,balance:82,msg:"效率略低，但土府把阳枢的积热明显压了下来，整轮开始趋于平稳。"};
+  }
+  if(r==="dan-qing-tu-dan"){
+    return {type:"safe",eff:60,stab:93,balance:78,msg:"非常稳定，但循环中的变化不足，自维持倾向较弱。"};
+  }
+  if(r==="dan-tu-qing-dan"){
+    return {type:"safe",eff:55,stab:90,balance:72,msg:"能跑通，但流动迟缓，回到丹田时损耗较大。"};
+  }
+  return {type:"bad",eff:42,stab:62,balance:51,msg:"这条路线能够部分跑通，但存在明显阻滞或损耗，暂时不适合作为长期周天。"};
+}
+function routeBuilder(){
+  if(!st.routeMode)return "";
+  return `<div class="routeBox">
+    <div class="routeHead"><span>内观 · 试行路线</span><span>${st.route.length}/5 节点</span></div>
+    <div class="route">${routeText()}</div>
+    <div class="tune">
+      <div class="tuneBox"><b>推动力度</b><div>${["","轻","中","强"][st.flow]}</div>
+        <input class="slider" type="range" min="1" max="3" value="${st.flow}" oninput="st.flow=+this.value;render()">
+      </div>
+      <div class="tuneBox"><b>阳枢停留</b><div>${st.dwell} 息</div>
+        <input class="slider" type="range" min="1" max="3" value="${st.dwell}" oninput="st.dwell=+this.value;render()">
+      </div>
+    </div>
+    <div class="routeActions">
+      <button class="mini" onclick="clearRoute()">清空</button>
+      <button class="mini primary" onclick="runTrialRoute()">试行一周天</button>
+    </div>
+  </div>`;
+}
+function render(){
+  clearSelected();
+  renderLines();
+  let nar="",micro="",pills=[],choices="",knowns="",protocol="",mode="当前：未知探索<br>LLM 正在参与判断",fp="";
+
+  if(st.phase===0){
+    nar=`闭上眼，四周寂静。你还不知道这里是否存在所谓的“灵气”，也不知道身体中哪些地方真正能够承载它。`;
+    micro=`此时没有“技能栏”。第一件事只是确认：世界里到底有没有可以被感知的东西。`;
+    choices=choice("静下来感受周围","不主动吸收，只把注意力放到环境变化上","focus()", "primary");
+  }
+
+  if(st.phase>=1){
+    $("scene").classList.add("sensed"); $("breath").classList.add("on");
+    nar=`凝神片刻，你逐渐察觉到四周并不空。空气里有某种缓慢流动的东西，其中一股<em>柔和、生发</em>，另一股偏<em>清凉</em>。`;
+    micro=`这是 Perception，不是 World State。你仍然不知道精确浓度和公式。`;
+    pills=[p("可牵引的波动"),p("生发感明显"),p("清凉感较弱")];
+    knowns+=known("周围存在可感知之气","这个事实已经稳定出现，不再只是猜测。");
+    if(!st.absorbed) choices=choice("只引一缕入体","确认“感知到”能不能进一步变成“吸收到”","absorb()", "primary");
+  }
+
+  if(st.absorbed && !st.qing){
+    nar=`一缕气息真的进入了身体。它在左侧某处经过时明显变得更顺，然后才缓慢沉入下腹。`;
+    micro=`“吸收成功”是事实；“左侧为什么更顺”仍然未知。`;
+    pills=[p("气息入体"),p("下腹微胀"),p("左侧更顺")];
+    knowns+=known("低强度吸收可行","少量吸收没有造成明显损伤。");
+    choices=choice("沿同样方式再试几次","保持其他变量不变，确认左侧的顺畅是不是可重复","checkQing()", "primary");
+  }
+
+  if(st.qing && !st.baseProtocol){
+    discoverNode("qing","青关");
+    nar=`左侧那个位置已经被你稳定感知出来，暂时记作<em>青关</em>。现在真正重要的不是给它起名字，而是摸清它的安全边界。`;
+    micro=`连续稳定重复，才会从“现象”变成“知识”。`;
+    pills=[p("青关已识别"),p(`安全验证 ${st.qingChecks}/3`),p("高流量未知")];
+    knowns+=known("青关","当前性质的灵气经过这里更顺，但高流量仍存在未知风险。");
+    if(st.qingChecks<3){
+      choices=choice("继续低流量验证","把单次成功变成可重复的安全区","safeQing()", "primary")
+      +choice("试着加大一些流量","主动碰边界，但可能出现压力与失稳","highQing()", "warn");
+    }else{
+      choices=choice("让身体记住这套纳气方式","固化为基础 Protocol；以后普通纳气不再依赖 LLM","compileBase()", "primary");
+    }
+  }
+
+  if(st.baseProtocol && !st.yang){
+    discoverNode("qing","青关");
+    protocol=`<div class="protocol"><b>《青关纳气法》v1</b><p>低强度吸收 → 青关 → 丹田。正常运行由 Runtime 执行；异常才重新进入意识。</p></div>`;
+    mode="当前：基础纳气已知<br>Runtime 可自动执行";
+    nar=`青关纳气已经变成身体熟悉的节奏。几轮吐纳之后，你开始注意到：丹田里的气偶尔会自然向右侧偏移，并带来一丝<em>温热</em>。`;
+    micro=`旧问题已经交给 Runtime。新的未知开始浮现。`;
+    pills=[p("基础纳气已固化"),p("右侧偶有温热","hot")];
+    knowns+=known("《青关纳气法》","已知、可重复、可自动运行。");
+    choices=choice("保持纳气不变，只观察右侧","控制变量：不改吸收参数，只研究这个新节点","checkYang()", "primary");
+  }
+
+  if(st.yang && !st.tu){
+    discoverNode("qing","青关");discoverNode("yang","阳枢","hot");
+    nar=`右侧节点已经被稳定感知出来，暂记作<em>阳枢</em>。气息流入这里时更活跃、更温热，但连续经过几次后，热意会逐渐累积。`;
+    micro=`这已经暗示了一个重要问题：高效率不等于稳定。`;
+    pills=[p("阳枢已识别"),p(`验证 ${st.yangChecks}/2`),p("热意会累积","hot")];
+    knowns+=known("阳枢","气息经过时更活跃，但连续运行会产生明显温热与失稳倾向。");
+    if(st.yangChecks<2){
+      choices=choice("用同样低流量继续确认","确认温热不是偶然","safeYang()", "primary");
+    }else{
+      choices=choice("继续往下内观","寻找有没有能承接、缓和这股热意的节点","seekTu()", "primary");
+    }
+  }
+
+  if(st.tu && !st.routeMode && st.cycleRuns===0){
+    discoverNode("qing","青关");discoverNode("yang","阳枢","hot");discoverNode("tu","土府","earth");
+    nar=`继续内观后，你在更下方发现了第三个稳定节点。气息经过这里时会变得<em>厚重、缓慢</em>，但那种不断积累的热意也会随之减弱。你把它记作<em>土府</em>。`;
+    micro=`现在你第一次拥有足够多的节点，可以尝试自己组成一条完整周天。`;
+    pills=[p("青关：顺"),p("阳枢：活跃","hot"),p("土府：稳定","gold")];
+    knowns+=known("土府","流经此处时速度会变慢，但整体波动明显减弱。");
+    choices=choice("进入内观，自己试一条周天路线","依次点穴位，组成 Sequence；Engine 会按真实规则反馈","startRoute()", "primary");
+  }
+
+  if(st.routeMode){
+    discoverNode("qing","青关");discoverNode("yang","阳枢","hot");discoverNode("tu","土府","earth");
+    nar=`现在没有现成的“功法按钮”。你只能根据已经摸到的身体规律，试着把几个节点串成一条<em>可以回到丹田的路线</em>。`;
+    micro=`点身体上的节点组成路线。路径、推动力度和停留都会改变最终结果。`;
+    pills=[p("请直接点穴位"),p("路线必须回到丹田"),p("每次只试一周天")];
+    knowns+=known("可用节点","丹田、青关、阳枢、土府。它们各自表现出的性质不同。");
+  }
+
+  if(st.lastEval && st.cycleRuns>0 && !st.foundation){
+    const E=st.lastEval;
+    nar=`这一周天已经跑完。${E.msg}`;
+    micro=`真正的功法来自这种“路线 → 现象 → 调整 → 再验证”的循环，而不是掉落一本技能书。`;
+    pills=[p(`效率 ${E.eff}%`),p(`稳定 ${E.stab}%`,E.stab<70?"hot":""),p(`平衡 ${E.balance}%`,E.balance>80?"gold":"")];
+    if(st.route.join("-")==="dan-qing-yang-tu-dan"){
+      knowns+=known("候选周天","丹田 → 青关 → 阳枢 → 土府 → 丹田：目前兼顾效率与稳定。");
+      fp=foundationProgress();
+      if(st.cycleRuns<5){
+        choices=choice("按这条路线继续手动运行","每次仍需要主动推动，但身体会逐渐适应","repeatCycle()", "primary")
+          +choice("返回内观改路线","可以继续寻找别的解","startRoute()");
+      }else if(st.selfSustain<55){
+        choices=choice("继续反复运转，让身体记住节奏","适应度提高后，主动推动需求会逐渐下降","repeatCycle()", "primary");
+      }else if(!st.touchedFoundation){
+        choices=choice("这一轮，走到一半时松开心念","测试身体能不能在没有主动推动时自己续下去","releaseControl()", "primary");
+      }else if(st.selfSustain<85){
+        choices=choice("继续稳定运行，修正残余波动","短暂自循环已经出现，但还不足以成为真正的 Loop","stabilizeLoop()", "primary");
+      }else{
+        choices=choice("彻底松开心念，不再主动推动","这是最后一次测试：如果周天仍然自行维持，就真正进入筑基","finalRelease()", "primary");
+      }
+    }else{
+      choices=choice("回到内观，换一条路线","当前路线还不足以形成稳定周天","startRoute()", "primary");
+    }
+  }
+
+  if(st.foundation){
+    $("realm").textContent="筑基 · 初境";
+    nar=`你已经不再逐步推动气息，但周天仍在自行运转。青关、阳枢、土府与丹田之间第一次形成了真正稳定的<em>自循环</em>。`;
+    micro=`这不是“解锁 Loop API”，而是身体结构真的跨过了一个新的稳定态。`;
+    pills=[p("Autonomous Loop"),p("SelfSustain 92%"),p("稳定结构已内化","gold")];
+    knowns+=known("筑基","身体已经形成可长期自行维持的基础周天。");
+    protocol=`<div class="protocol"><b>基础周天 · Autonomous Loop</b><p>丹田 → 青关 → 阳枢 → 土府 → 丹田。无需逐次主动推动；Runtime 只在异常时唤醒意识。</p></div>`;
+    mode="当前：筑基稳态<br>基础周天自行运行";
+    fp=foundationProgress();
+    choices=choice("继续内观","筑基之后，可以开始研究更复杂的循环、功法和更高层结构","afterFoundation()", "primary");
+  }
+
+  $("narrative").innerHTML=nar;
+  $("micro").textContent=micro;
+  $("pills").innerHTML=pills.join("");
+  $("choices").innerHTML=choices;
+  $("known").innerHTML=knowns||known("暂无可靠知识","你还没有完成足够多的稳定观察。");
+  $("protocol").innerHTML=protocol;
+  $("routeBuilder").innerHTML=routeBuilder();
+  $("modeText").innerHTML=mode;
+  $("foundationProgress").innerHTML=fp;
+  renderLines();
+}
+
+function foundationProgress(){
+  const closure = st.lastEval ? (st.route[0]==="dan" && st.route[st.route.length-1]==="dan" ? 100 : 40) : 0;
+  const balance = st.lastEval ? st.lastEval.balance : 0;
+  const self = st.selfSustain;
+  const stable = Math.min(100, st.stableTicks);
+  const internal = Math.min(100, 55 + st.adapt*7);
+  return `<div class="progressCard">
+    <div class="knownHead">筑基迹象 · 身体当前趋向</div>
+    ${prog("闭合",closure)}
+    ${prog("规则平衡",balance)}
+    ${prog("自维持",self,true)}
+    ${prog("动态稳定",stable)}
+    ${prog("内化",internal)}
+  </div>`;
+}
+
+function focus(){st.sensed=true;st.phase=1;render();toast("第一次感知到周围存在可以被牵引的气息。")}
+function absorb(){st.absorbed=true;render();toast("气息真正进入了身体。")}
+function checkQing(){st.qing=true;st.qingChecks=1;render();toast("左侧的顺畅现象再次出现。")}
+function safeQing(){st.qingChecks++;render();toast("低流量安全区的可信度继续上升。")}
+function highQing(){toast("流量推高后，青关出现明显胀感。高流量暂时仍属于未知区。")}
+function compileBase(){st.baseProtocol=true;render();toast("基础纳气被固化，之后普通重复不再需要 LLM。")}
+function checkYang(){st.yang=true;st.yangChecks=1;render();toast("右侧的温热与活跃再次出现。")}
+function safeYang(){st.yangChecks++;render();toast("阳枢的温热不是偶然，它正在成为可靠观察。")}
+function seekTu(){st.tu=true;render();toast("更下方出现一个厚重、稳定的新节点。")}
+function startRoute(){st.routeMode=true;st.route=[];st.lastEval=null;render();toast("现在直接点身体穴位，自己组成一条周天路线。")}
+function clearRoute(){st.route=[];st.lastEval=null;render()}
+function tapNode(key){
+  if(!st.routeMode){toast(`${names[key]}：当前只能感知，不在路线编辑状态。`);return}
+  if(key==="shen"){toast("神庭目前还没有被真正摸清，暂时不适合纳入周天。");return}
+  if((key==="qing"&&!st.qing)||(key==="yang"&&!st.yang)||(key==="tu"&&!st.tu))return;
+  if(st.route.length>=5){toast("这一版周天最多先试 5 个节点。");return}
+  st.route.push(key);render();$(key).classList.add("selected");
+}
+function runTrialRoute(){
+  if(st.route.length<3){toast("至少需要多个节点才能形成可观察的周天。");return}
+  if(st.route[0]!=="dan" || st.route[st.route.length-1]!=="dan"){toast("现在这条路线没有回到丹田，还不能称为完整周天。");return}
+  st.lastEval=evaluateRoute();st.routeMode=false;st.cycleRuns=1;st.adapt=1;st.stableTicks=Math.max(20,st.lastEval.stab-35);
+  render();toast(st.lastEval.msg);
+}
+function repeatCycle(){
+  st.cycleRuns++;st.adapt++;
+  if(st.lastEval.type==="good"){
+    st.selfSustain=Math.min(70,st.selfSustain+12);
+    st.stableTicks=Math.min(78,st.stableTicks+10);
+  }else{
+    st.selfSustain=Math.min(35,st.selfSustain+4);
+    st.stableTicks=Math.min(55,st.stableTicks+4);
+  }
+  render();toast(`第 ${st.cycleRuns} 次周天跑完。你开始感觉到有些段落不再需要每一步都主动推动。`);
+}
+function releaseControl(){
+  st.touchedFoundation=true;
+  st.selfSustain=62;
+  st.stableTicks=68;
+  $("cycle").classList.add("on");
+  render();
+  toast("你松开了心念。气息竟然没有立刻停下，而是自己继续走了十余息。");
+}
+function stabilizeLoop(){
+  st.selfSustain=Math.min(86,st.selfSustain+9);
+  st.stableTicks=Math.min(92,st.stableTicks+10);
+  st.adapt++;
+  render();
+  toast("短暂自循环维持得更久，火性积累也被土府逐渐压回了稳定范围。");
+}
+function finalRelease(){
+  st.selfSustain=92;st.stableTicks=100;st.adapt=7;st.foundation=true;
+  $("cycle").classList.add("on");
+  render();
+  $("foundation").classList.add("show");
+}
+function closeFoundation(){$("foundation").classList.remove("show")}
+function afterFoundation(){toast("下一阶段可以围绕：更复杂功法、多个 Loop、炼丹/阵法以及金丹结构继续扩展。")}
+function sendIntent(){
+  const v=$("intentInput").value.trim();if(!v)return;
+  toast(`心念：“${v}”——它会影响 LLM 的研究策略，但不会直接修改世界状态。`);
+  $("intentInput").value="";
+}
+
+let holdTimer;
+const focusBtn=$("focusBtn");
+function holdStart(){holdTimer=setTimeout(()=>{focus();holdTimer=null},650)}
+function holdEnd(){if(holdTimer){clearTimeout(holdTimer);holdTimer=null;toast("再久一点，让注意力沉下去。")}}
+focusBtn.addEventListener("touchstart",e=>{e.preventDefault();holdStart()},{passive:false});
+focusBtn.addEventListener("touchend",holdEnd);
+focusBtn.addEventListener("mousedown",holdStart);
+focusBtn.addEventListener("mouseup",holdEnd);
+
+render();
+</script>
+</body>
+</html>

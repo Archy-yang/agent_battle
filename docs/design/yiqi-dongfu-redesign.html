@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>一炁周天 · 洞府改版设计稿</title>
+<style>
+:root{
+  --bg:#050a07;--panel:#07100b;--ink:#eaf4ee;--muted:#8ba294;
+  --jade:#8fe0b1;--gold:#e2c98c;--warm:#e89a72;--water:#8bb7e0;--metal:#cdd6da;
+  --line:rgba(184,220,199,.14);
+  --serif:"Noto Serif SC","Songti SC","STSong",serif;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:#030604;color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft Yahei",sans-serif}
+button,input,textarea{font:inherit;color:inherit}
+.app{position:fixed;inset:0;max-width:430px;margin:auto;overflow:hidden;
+  background:radial-gradient(circle at 50% 10%,rgba(93,166,130,.13),transparent 34%),
+             linear-gradient(180deg,#08110d,#040805 60%)}
+@media(min-width:720px){.app{border-left:1px solid var(--line);border-right:1px solid var(--line)}}
+
+/* ---------- 顶栏 ---------- */
+.top{position:absolute;z-index:20;top:0;left:0;right:0;
+  padding:calc(10px + env(safe-area-inset-top)) 16px 8px;
+  display:flex;justify-content:space-between;align-items:baseline;
+  background:linear-gradient(180deg,rgba(4,8,5,.92),rgba(4,8,5,0))}
+.top h1{margin:0;font:600 15px/1 var(--serif);letter-spacing:.14em;color:#dcefe4}
+.top .realm{font-size:11px;color:var(--muted)}
+.top .realm b{color:var(--gold);font-weight:600}
+
+/* ---------- 身体场景 ---------- */
+.scroll{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain;
+  padding:calc(44px + env(safe-area-inset-top)) 0 96px}
+.scene{height:54vh;min-height:400px;position:relative;display:flex;align-items:center;justify-content:center}
+.mist{position:absolute;inset:0}
+.mist i{position:absolute;width:10px;height:10px;border-radius:50%;
+  background:rgba(143,224,177,.5);box-shadow:0 0 18px rgba(143,224,177,.4);opacity:.1;transition:.6s}
+.mist i.m2{background:rgba(139,183,224,.45);box-shadow:0 0 18px rgba(139,183,224,.35)}
+.mist i.m3{background:rgba(226,201,140,.4);box-shadow:0 0 18px rgba(226,201,140,.3)}
+.sensed .mist i{opacity:.85;animation:drift 4.5s ease-in-out infinite}
+.mist i.m2{animation-delay:.8s}.mist i.m3{animation-delay:1.6s}
+@keyframes drift{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-10px) scale(1.15)}}
+
+.body{position:relative;width:250px;height:390px}
+.sil{position:absolute;left:50%;transform:translateX(-50%);top:6px;width:118px;height:372px;
+  border-radius:50% 50% 44% 44%/20% 20% 80% 80%;
+  border:1px solid rgba(184,220,199,.13);
+  background:linear-gradient(180deg,rgba(143,224,177,.035),rgba(143,224,177,.006))}
+.breath{position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);
+  width:220px;height:220px;border-radius:50%;border:1px solid rgba(143,224,177,.09)}
+.breath.on{animation:breathe 3.4s ease-in-out infinite}
+@keyframes breathe{0%,100%{transform:translate(-50%,-50%) scale(.85);opacity:.18}
+  50%{transform:translate(-50%,-50%) scale(1.05);opacity:.7}}
+svg.chan{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+svg.chan line{stroke:rgba(143,224,177,.1);stroke-width:1.5;transition:.5s}
+svg.chan line.on{stroke:rgba(143,224,177,.75);filter:drop-shadow(0 0 5px rgba(143,224,177,.5))}
+svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(232,154,114,.5))}
+
+.node{position:absolute;width:36px;height:36px;border-radius:50%;
+  transform:translate(-50%,-50%);border:1px solid rgba(184,220,199,.2);
+  background:#0a140f;display:grid;place-items:center;color:#7d9186;
+  font:400 12px/1 var(--serif);transition:.35s;z-index:3;padding:0;cursor:pointer}
+.node::after{content:attr(data-name);position:absolute;top:40px;left:50%;transform:translateX(-50%);
+  font-size:9px;white-space:nowrap;color:#71857a;letter-spacing:.08em}
+.node.known{border-color:var(--jade);color:#d9f6e6;
+  box-shadow:0 0 0 5px rgba(143,224,177,.05),0 0 16px rgba(143,224,177,.15)}
+.node.known.fire{border-color:var(--warm);color:#ffd9c2;
+  box-shadow:0 0 0 5px rgba(232,154,114,.05),0 0 16px rgba(232,154,114,.16)}
+.node.known.earth{border-color:var(--gold);color:#f2e0ac;
+  box-shadow:0 0 0 5px rgba(226,201,140,.05),0 0 16px rgba(226,201,140,.14)}
+.node.known.water{border-color:var(--water);color:#d3e5f8;
+  box-shadow:0 0 0 5px rgba(139,183,224,.05),0 0 16px rgba(139,183,224,.14)}
+.node.known.metal{border-color:var(--metal);color:#eef2f4;
+  box-shadow:0 0 0 5px rgba(205,214,218,.05),0 0 16px rgba(205,214,218,.12)}
+.node.picked{outline:2px solid rgba(201,245,217,.65);outline-offset:4px}
+.node.strain{border-color:var(--warm)!important;color:#ffd9c2!important;
+  box-shadow:0 0 0 5px rgba(232,154,114,.08),0 0 18px rgba(232,154,114,.25)!important}
+
+.nodedetail{position:absolute;z-index:10;left:50%;transform:translateX(-50%);
+  bottom:6px;width:min(320px,86%);padding:11px 13px;border-radius:13px;
+  border:1px solid var(--line);background:rgba(7,16,11,.94);backdrop-filter:blur(8px);
+  font-size:11px;line-height:1.7;color:#c6d8cd;display:none}
+.nodedetail.show{display:block}
+.nodedetail b{display:block;font:600 13px/1 var(--serif);color:#e4f5eb;margin-bottom:5px;letter-spacing:.1em}
+.nodedetail .x{position:absolute;right:8px;top:6px;border:0;background:none;color:#5c6f64;font-size:13px;cursor:pointer}
+
+.hint{position:absolute;bottom:-30px;left:50%;transform:translateX(-50%);
+  font-size:10px;color:#8ca094;background:rgba(5,9,6,.62);padding:6px 11px;
+  border-radius:999px;border:1px solid rgba(184,220,199,.1);white-space:nowrap}
+
+/* ---------- 叙事面板 ---------- */
+.panel{position:relative;margin-top:-12px;border-radius:22px 22px 0 0;
+  background:linear-gradient(180deg,rgba(10,19,14,.97),#060e09);
+  border-top:1px solid var(--line);padding:16px 16px 20px}
+.sec{font:600 10px/1 var(--serif);letter-spacing:.28em;color:#71857a;margin:20px 0 9px}
+.sec:first-child{margin-top:0}
+
+.stream{display:flex;flex-direction:column;gap:7px;min-height:64px}
+.ln{font-size:12.5px;line-height:1.75;color:#dcebe2}
+.ln em{font-style:normal;color:var(--jade)}
+.ln.rc{color:#b9cfc2;border-left:2px solid rgba(143,224,177,.35);padding-left:9px}
+.ln.voice{background:rgba(143,224,177,.045);border:1px solid rgba(143,224,177,.12);
+  border-radius:11px;padding:9px 11px;color:#cfe4d6}
+.ln.voice::before{content:"分身 · ";color:var(--jade);font-weight:600;font-size:10px;letter-spacing:.1em}
+.ln.ev{color:var(--gold);font-size:11.5px}
+
+/* ---------- 心念卡 ---------- */
+.choices{display:grid;gap:8px}
+.choice{border:1px solid var(--line);background:rgba(255,255,255,.018);color:#ddeae2;
+  border-radius:13px;padding:12px 14px;text-align:left;font-size:12.5px;line-height:1.55;cursor:pointer}
+.choice.primary{border-color:rgba(143,224,177,.4);background:rgba(143,224,177,.06)}
+.choice.warn{border-color:rgba(232,154,114,.35);background:rgba(232,154,114,.05)}
+.choice small{display:block;color:#7f9387;font-size:10px;margin-top:4px}
+.choice .ask{color:var(--gold)}
+
+/* ---------- 传念 ---------- */
+.intent{display:flex;gap:7px;margin-top:12px}
+.intent input{flex:1;min-width:0;border-radius:12px;border:1px solid var(--line);
+  background:#08120d;color:#ddeae2;padding:11px 12px;outline:none;font-size:12px}
+.intent input::placeholder{color:#5c6f64}
+.intent button{border:0;border-radius:12px;background:rgba(143,224,177,.16);color:#c4ecd3;
+  padding:0 14px;font-weight:600;cursor:pointer}
+
+/* ---------- 逐渐被确认的东西 ---------- */
+.knowledge{display:flex;flex-direction:column;gap:6px}
+.kn{font-size:11px;line-height:1.65;color:#a9bcb0;padding:8px 10px;border-radius:10px;
+  background:rgba(255,255,255,.015);border-left:2px solid rgba(143,224,177,.3)}
+.kn b{color:#dceae2;font-weight:600}
+.kn.gone{border-left-color:rgba(226,201,140,.4)}
+.art{margin-top:9px;padding:12px 13px;border:1px solid rgba(143,224,177,.28);
+  border-radius:12px;background:rgba(143,224,177,.04)}
+.art b{font:600 13px/1 var(--serif);color:#cdf2db;letter-spacing:.12em}
+.art p{font:400 11px/1.8 var(--serif);color:#9fb4a7;margin:7px 0 0}
+
+/* ---------- 筑基迹象 ---------- */
+.five{display:flex;flex-direction:column;gap:8px}
+.frow{display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:9px;
+  font-size:11px;color:#93a79b}
+.frow .dots{display:flex;gap:4px}
+.frow .dots i{width:7px;height:7px;border-radius:50%;border:1px solid rgba(143,224,177,.3)}
+.frow .dots i.f{background:var(--jade);border-color:var(--jade);box-shadow:0 0 6px rgba(143,224,177,.5)}
+.frow .word{color:#6d8175;font-size:10px}
+.frow.g .word{color:var(--gold)}
+
+/* ---------- 底部 ---------- */
+.footer{position:absolute;z-index:20;left:0;right:0;bottom:0;
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  background:linear-gradient(180deg,rgba(4,8,5,0),rgba(4,8,5,.96) 30%)}
+.mode{display:flex;justify-content:space-between;align-items:flex-end;gap:10px}
+.modeText{font-size:10px;line-height:1.6;color:#71857a}
+.modeText b{color:#a9bcb0;font-weight:600}
+.hold{border:1px solid rgba(143,224,177,.35);background:rgba(143,224,177,.07);
+  color:#d8f5e3;border-radius:999px;padding:11px 18px;font-size:12px;
+  letter-spacing:.2em;cursor:pointer;user-select:none;-webkit-user-select:none}
+.hold:active{background:rgba(143,224,177,.16)}
+
+/* ---------- 提示浮层 / 筑基 ---------- */
+.toast{position:fixed;z-index:40;left:50%;top:64px;transform:translateX(-50%);
+  width:min(390px,calc(100% - 32px));padding:10px 13px;border:1px solid rgba(184,220,199,.18);
+  border-radius:12px;background:rgba(8,15,11,.96);font-size:11px;line-height:1.6;
+  color:#ddeae2;opacity:0;pointer-events:none;transition:.25s}
+.toast.show{opacity:1}
+.ritual{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+  background:radial-gradient(circle at center,rgba(143,224,177,.16),rgba(3,7,4,.97) 52%);padding:30px}
+.ritual.show{display:flex}
+.ring{width:150px;height:150px;border-radius:50%;border:1px solid rgba(143,224,177,.4);
+  margin:auto;position:relative;animation:slow 12s linear infinite}
+.ring::before,.ring::after{content:"";position:absolute;border-radius:50%;
+  border:1px solid rgba(143,224,177,.2);inset:14px}
+.ring::after{inset:34px}
+@keyframes slow{to{transform:rotate(360deg)}}
+.ritual h2{font:700 30px/1 var(--serif);letter-spacing:.3em;margin:24px 0 10px;text-align:center}
+.ritual p{font-size:12px;line-height:1.9;color:#a9bcb0;text-align:center;max-width:300px}
+.ritual button{display:block;margin:20px auto 0;border:1px solid rgba(143,224,177,.4);
+  background:rgba(143,224,177,.08);color:#d9f5e3;border-radius:999px;padding:11px 20px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <h1>一炁周天</h1>
+    <span class="realm" id="realm"><b>凡体</b> · 未入之门</span>
+  </div>
+
+  <div class="scroll" id="scroll">
+    <section class="scene" id="scene">
+      <div class="mist">
+        <i style="left:16%;top:22%"></i><i class="m2" style="right:15%;top:30%"></i>
+        <i class="m3" style="left:28%;bottom:20%"></i><i style="right:26%;bottom:30%"></i>
+      </div>
+      <div class="body">
+        <div class="sil"></div>
+        <div class="breath" id="breath"></div>
+        <svg class="chan" viewBox="0 0 250 390">
+          <line id="c1" x1="125" y1="52"  x2="62"  y2="118"/>
+          <line id="c2" x1="62"  y1="118" x2="125" y2="162"/>
+          <line id="c3" x1="62"  y1="118" x2="125" y2="322"/>
+          <line id="c4" x1="188" y1="118" x2="125" y2="162"/>
+          <line id="c5" x1="80"  y1="284" x2="125" y2="162"/>
+          <line id="c6" x1="186" y1="224" x2="125" y2="162"/>
+          <line id="c7" x1="64"  y1="224" x2="125" y2="162"/>
+          <line id="c8" x1="125" y1="162" x2="125" y2="322"/>
+        </svg>
+        <button class="node" id="n-shen" style="left:125px;top:52px"  data-name="未知" onclick="tapNode('shen')">？</button>
+        <button class="node" id="n-qing" style="left:62px;top:118px"  data-name="未知" onclick="tapNode('qing')">？</button>
+        <button class="node" id="n-yang" style="left:188px;top:118px" data-name="未知" onclick="tapNode('yang')">？</button>
+        <button class="node" id="n-tu"   style="left:80px;top:284px"  data-name="未知" onclick="tapNode('tu')">？</button>
+        <button class="node" id="n-jin"  style="left:186px;top:224px" data-name="未知" onclick="tapNode('jin')">？</button>
+        <button class="node" id="n-xuan" style="left:64px;top:224px"  data-name="未知" onclick="tapNode('xuan')">？</button>
+        <button class="node" id="n-zhong" style="left:125px;top:162px" data-name="未知" onclick="tapNode('zhong')">？</button>
+        <button class="node known" id="n-dan" style="left:125px;top:322px" data-name="下丹田" onclick="tapNode('dan')">丹</button>
+
+        <div class="nodedetail" id="detail">
+          <button class="x" onclick="hideDetail()">✕</button>
+          <b id="dName"></b>
+          <span id="dText"></span>
+        </div>
+        <div class="hint" id="hint">长按「凝神」，开始感知</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="sec">感 知</div>
+      <div class="stream" id="stream"></div>
+
+      <div class="sec">此刻，你想——</div>
+      <div class="choices" id="choices"></div>
+
+      <div class="intent">
+        <input id="thought" placeholder="传一个念头，如：先求稳，别贪快">
+        <button onclick="sendThought()">传念</button>
+      </div>
+
+      <div class="sec">逐渐被确认的东西</div>
+      <div class="knowledge" id="known"></div>
+
+      <div class="sec" id="fiveSec" style="display:none">筑基迹象</div>
+      <div class="five" id="five" style="display:none"></div>
+    </section>
+  </div>
+
+  <div class="footer">
+    <div class="mode">
+      <div class="modeText" id="modeText">当前：<b>暗中摸索</b><br>分身尚不知此身可承气与否</div>
+      <button class="hold" id="holdBtn">凝神</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="ritual" id="ritual">
+  <div>
+    <div class="ring"></div>
+    <h2>筑 基</h2>
+    <p>你已不再推动气息，周天却仍在自行运转。灵气往来不再依赖每一次心念，而成了这具身体自己的呼吸。</p>
+    <button onclick="document.getElementById('ritual').classList.remove('show')">继续内观</button>
+  </div>
+</div>
+
+<script>
+/* 洞府改版设计稿 —— 交互剧本（真拓扑：神庭→青关→中庭/下丹田，诸穴归中庭、中庭归丹田）。
+   定性词与档位，全稿无数字、无机器词汇。 */
+const $=id=>document.getElementById(id);
+const st={phase:0,absorbed:false,qing:false,qingTried:0,strain:false,
+  baseArt:false,yang:false,yangTried:0,tu:false,seqMode:false,picked:[],
+  tried:false,runs:0,self:0,stable:0,released:false,founded:false};
+
+const NODE_TXT={
+  dan:["下丹田","气息最终归伏之处。纳气入体后，总有一缕沉沉坠向这里。"],
+  qing:["青关","木性柔和生发之气经此更顺。高流量则胀，边界尚未摸清。"],
+  yang:["阳枢","火性之气过此活跃温热，连行数轮，热意会渐渐积下。"],
+  tu:["土府","厚重温缓。气流经此放缓，躁性也随之一层层敛下去。"],
+  zhong:["中庭","诸路气息交汇之处。行经此穴，各气相触，或济或冲。"],
+  shen:["神庭","居高处，偶有微弱波动，尚未摸清它的脾气。"],
+  jin:["金门","清肃收敛之气经此，锋利而干净。"],
+  xuan:["玄泉","清凉下行，能抚平燥热。"]};
+
+function toast(t){$("toast").textContent=t;$("toast").classList.add("show");
+  clearTimeout(toast.t);toast.t=setTimeout(()=>$("toast").classList.remove("show"),2200)}
+function line(html,cls){const d=document.createElement("div");d.className="ln"+(cls?" "+cls:"");
+  d.innerHTML=html;$("stream").prepend(d)}
+function kn(t,d,cls){const k=document.createElement("div");k.className="kn"+(cls?" "+cls:"");
+  k.innerHTML=`<b>${t}</b>　${d}`;$("known").prepend(k)}
+function choice(label,sub,fn,cls){const b=document.createElement("button");
+  b.className="choice "+(cls||"");b.innerHTML=label+(sub?`<small>${sub}</small>`:"");
+  b.onclick=fn;return b}
+
+function discover(key,cls){const n=$("n-"+key);if(n.classList.contains("known"))return;
+  n.classList.add("known");if(cls)n.classList.add(cls);
+  n.textContent=NODE_TXT[key][0][0]==="下"?"丹":NODE_TXT[key][0];
+  n.setAttribute("data-name",NODE_TXT[key][0])}
+
+function tapNode(key){
+  if(st.seqMode){
+    if(key==="shen"||key==="jin"||key==="xuan"){toast("这几处尚未摸清，先不纳入周天之序。");return}
+    if(st.picked.includes(key)){toast("此穴已在序中。");return}
+    st.picked.push(key);$("n-"+key).classList.add("picked");render();return}
+  if(!st[key]&&key!=="dan"){toast("尚无所感，先凝神探一探。");return}
+  const t=NODE_TXT[key];$("dName").textContent=t[0];$("dText").textContent=t[1];
+  $("detail").classList.add("show")}
+function hideDetail(){$("detail").classList.remove("show")}
+
+function sendThought(){const v=$("thought").value.trim();if(!v)return;
+  $("thought").value="";
+  line(`你传下一念：<em>「${v}」</em>`, "rc");
+  toast("念头已至。它影响分身摸索的取向，不直接改动身内流转。")}
+
+/* —— 凝神（长按或点击） —— */
+let timer=null,fired=false;
+function holdStart(){timer=setTimeout(()=>{fired=true;doSense()},600)}
+function holdEnd(){if(timer){clearTimeout(timer);timer=null}if(!fired){doSense()}fired=false}
+$("holdBtn").addEventListener("touchstart",e=>{e.preventDefault();holdStart()},{passive:false});
+$("holdBtn").addEventListener("touchend",holdEnd);
+$("holdBtn").addEventListener("mousedown",holdStart);
+$("holdBtn").addEventListener("mouseup",holdEnd);
+
+function doSense(){
+  if(st.founded){toast("周天自转，凝神只是静观。");return}
+  if(st.phase===0){
+    st.phase=1;$("scene").classList.add("sensed");$("breath").classList.add("on");
+    $("hint").textContent="雾气深处，隐有浮光";
+    line("凝神片刻，你察觉四周并不空。空气里有某种缓慢流动的东西：一股<em>柔和、生发</em>，一股偏<em>清凉</em>，还有一两缕<em>温热</em>，一缕<em>厚重</em>。");
+    kn("周围存在可感之气","这不再是错觉——它稳定地出现。");
+    $("realm").innerHTML="<b>凡体</b> · 气感初萌";
+    $("modeText").innerHTML="当前：<b>暗中摸索</b><br>分身正在辨认周身可承气之处";
+    render();toast("第一次感知到，世间有可牵引之物。");return}
+  line("你静静体会周身。诸处感受如常，没有新的发现——或许该<em>引一缕入体</em>试试了。");
+  render()}
+
+function render(){
+  const C=$("choices");C.innerHTML="";
+  ["c1","c2","c3","c4","c5","c6","c7","c8"].forEach(id=>$(id).classList.remove("on","hot"));
+  if(st.qing){$("c1").classList.add("on");$("c2").classList.add("on");$("c3").classList.add("on")}
+  if(st.baseArt){$("c8").classList.add("on")}
+  if(st.yang){$("c4").classList.add("hot")}
+  if(st.tu){$("c5").classList.add("on")}
+  if(st.seqMode&&st.picked.length>1){
+    $("c5").classList.add("on");$("c6").classList.add("on")}
+
+  if(st.phase===0){
+    C.appendChild(choice("静下来，先感受周围","不急着吸纳，只把注意力沉入环境变化",doSense,"primary"));return}
+
+  if(st.phase>=1&&!st.absorbed){
+    C.appendChild(choice("引一缕气息入体","试试「感知到」能否变成「纳入身」",absorb,"primary"));return}
+
+  if(st.absorbed&&!st.qing){
+    C.appendChild(choice("循着原路，再引一次","同样的路径、同样的分量——看左侧那条顺畅是否重现",tryQing,"primary"));
+    C.appendChild(choice("试着加大流量","主动去碰边界，可能有胀、可能有失稳",strainQing,"warn"));return}
+
+  if(st.qing&&st.qingTried<3){
+    C.appendChild(choice("继续低流量验证","把单次顺利，变成可信的安全之径",tryQing,"primary"));
+    if(!st.strain)C.appendChild(choice("试着加大流量","青关高流量仍是未知之地",strainQing,"warn"));
+    return}
+
+  if(st.qing&&!st.baseArt){
+    C.appendChild(choice("让身体记住这门引气","反复验证过的东西，该沉淀为口诀了",compileArt,"primary"));return}
+
+  if(st.baseArt&&!st.yang){
+    C.appendChild(choice("纳气照旧，只观察右侧那缕温热","不改分毫，只盯新出现的变动",checkYang,"primary"));return}
+
+  if(st.yang&&st.yangTried<2){
+    C.appendChild(choice("低流量再走一趟阳枢","确认那股温热并非偶然",tryYang,"primary"));return}
+
+  if(st.yang&&!st.tu){
+    C.appendChild(choice("继续内观下行","找一找有没有能承接、敛住这股热意的地方",seekTu,"primary"));return}
+
+  if(st.tu&&!st.tried){
+    if(!st.seqMode){
+      C.appendChild(choice("进入内观，组一组周天之序","点选身前诸穴，分身自会沿经脉导气归元",startSeq,"primary"))
+    }else{
+      C.appendChild(choice("试行一周天","以此序引气，看身内如何回应",runSeq,"primary"));
+      C.appendChild(choice("重新点选","清空当前之序",clearSeq));
+      C.appendChild(choice("罢了，退出内观","回到洞府静观",()=>{st.seqMode=false;st.picked=[];render()}))
+    }return}
+
+  if(st.tried&&!st.founded){
+    if(st.picked.includes("tu")&&st.picked.includes("yang")){
+      if(st.runs<3){
+        C.appendChild(choice("按此序继续运转","每轮仍需心意推动，但身体在渐渐适应",repeat,"primary"))
+      }else if(st.self<55){
+        C.appendChild(choice("继续运转，让身体记住节奏","自持之势渐足后，推动可省",repeat,"primary"))
+      }else if(!st.released){
+        C.appendChild(choice("行至半途，松开心念","试试不加推动，周天能否自续",release,"primary"))
+      }else if(st.self<85){
+        C.appendChild(choice("稳住残余波动","短暂自循环已现，还差一口气",stabilize,"primary"))
+      }else{
+        C.appendChild(choice("彻底松开，不再推动","若周天仍自行维持——便是筑基",finalRelease,"primary"))
+      }
+    }else{
+      C.appendChild(choice("回到内观，另组一序","此序难以为继，换一条路",()=>{st.tried=false;st.seqMode=true;st.picked=[];render()},"primary"))
+    }
+    C.appendChild(choice("静观其变","先不动，看看身内自行的动静",()=>toast("气息缓缓流动，无甚变化。")))
+    return}
+
+  if(st.founded){
+    C.appendChild(choice("继续内观","筑基之后，还有更深的结构待人摸索",()=>toast("后续之门，尚未开启。"),"primary"))
+  }
+}
+
+/* —— 各步 —— */
+function absorb(){st.absorbed=true;
+  line("一缕气息真的入了体。它行至<em>左侧某处</em>明显更顺，随后缓缓沉入<em>下腹</em>。");
+  kn("低分量引气可行","未觉损伤。");
+  $("realm").innerHTML="<b>炼气</b> · 引气入体";render();
+  toast("气息真正进入了身体。")}
+function tryQing(){st.qingTried++;st.qing=true;
+  if(st.qingTried>=3){discover("qing");
+    line("左侧那处已能稳定寻见，暂记作<em>青关</em>。此气过彼，如水就渠。");
+    kn("青关","木气经此更顺；高流量仍属未知。");
+    $("realm").innerHTML="<b>炼气</b> · 气感初成";
+    toast("左侧的顺畅三度重现——现象成了知识。")}
+  else{line("同样的路径，同样的顺畅。<em>不是偶然。</em>");
+    toast("低流量下，青关再度顺畅。")}}
+function strainQing(){st.strain=true;
+  $("n-qing").classList.add("strain");
+  line("流量一加，青关处<em>胀意陡起</em>，气流滞涩。你赶紧收了力，胀意缓缓退去。");
+  kn("青关 · 边界","高流量必胀。安全之径，在轻不在重。","gone");
+  toast("青关的高流量，暂时是禁区。")}
+function compileArt(){st.baseArt=true;
+  line("<em>《青关引气诀》</em>成。此后寻常引气，身体自会依诀而行，不必再事事经心。");
+  addArt("青关引气诀","轻引一缕，循左侧而入，过青关，归下丹田。行之有度，胀满不生。");
+  $("modeText").innerHTML="当前：<b>渐渐上手</b><br>寻常引气已由分身依诀自行";
+  render();toast("口诀已成，寻常引气不再劳心。")}
+function checkYang(){st.yang=true;st.yangTried=1;discover("yang","fire");
+  line("右侧那处已能稳定寻见，暂记作<em>阳枢</em>。气过此穴，<em>温热活跃</em>——只是连行数轮，热意会一层层积下来。");
+  kn("阳枢","火气过此活跃；久行积热，恐生失稳。","gone");
+  toast("右侧的温热再次出现。")}
+function tryYang(){st.yangTried++;
+  if(st.yangTried>=2){line("阳枢的温热<em>再度重现</em>，且较上次更沉。积热，是真的。");
+    toast("温热非偶然，它在累积。")}
+  else{line("温热如约而至，与前言相符。");toast("阳枢的温热复现了。")}}
+function seekTu(){st.tu=true;discover("tu","earth");
+  line("再往下探，你寻见一处<em>厚重缓行</em>之地，暂记作<em>土府</em>。气过此处慢了下来，躁性也似被抚平几分。");
+  kn("土府","气流经此放缓，躁性渐敛。");
+  toast("寻得一处能敛热的所在。")}
+function startSeq(){st.seqMode=true;st.picked=["dan"];$("n-dan").classList.add("picked");
+  $("hint").textContent="点选欲纳引之穴（归元于下丹田）";
+  line("没有现成的功法可依。你只需<em>点选诸穴</em>定下引气之序，分身自会沿经脉导气，归元于下丹田。");
+  render();toast("已在序中的：下丹田（归元之处）。")}
+function clearSeq(){st.picked=["dan"];
+  document.querySelectorAll(".node").forEach(n=>n.classList.remove("picked"));
+  $("n-dan").classList.add("picked");render()}
+const SEQ_EVAL=[
+  {has:["yang"],not:["tu"],msg:"周天能行，但<em>阳枢的热意一轮轮积了下来</em>，尾段隐隐发烫。久行，必乱。",bad:true},
+  {has:["yang","tu"],msg:"土府的厚气行在前，<em>把阳枢的热意层层敛住</em>。整轮走完，气息沉稳绵长。"},
+  {has:["tu"],msg:"厚气缓缓一周，稳是稳，只是<em>变化不足</em>，难成自持之势。"},
+  {has:["qing"],msg:"木气温和绵长，<em>过于平缓</em>，自持难成。"}];
+function runSeq(){if(st.picked.length<2){toast("至少再点一处纳气之穴。");return}
+  st.tried=true;st.seqMode=false;st.runs=1;st.released=false;
+  $("hint").textContent="长按「凝神」，开始感知";
+  let ev=SEQ_EVAL.find(e=>e.has.every(k=>st.picked.includes(k))&&(!e.not||e.not.every(k=>!st.picked.includes(k))));
+  if(!ev)ev={msg:"此序可行，只是收效平平。"};
+  if(ev.bad){$("n-yang").classList.add("strain");$("c4").classList.add("hot")}
+  line("一周天行毕。"+ev.msg);
+  document.querySelectorAll(".node").forEach(n=>n.classList.remove("picked"));
+  if(!ev.bad){kn("候选周天","纳引诸穴之序，兼顾生发与敛热。",  "gone");
+    $("fiveSec").style.display="";$("five").style.display="";
+    st.self=30;st.stable=25}
+  $("modeText").innerHTML="当前：<b>试周天</b><br>身体在轮转中慢慢适应";
+  render();toast(ev.bad?"此序有隐忧。":"此序可立。")}
+function repeat(){st.runs++;st.self=Math.min(60,st.self+11);st.stable=Math.min(60,st.stable+9);
+  line(`第${["一","二","三","四","五","六","七"][st.runs-1]}轮行毕。有些段落，已不再需要步步推动。`);
+  five();render()}
+function release(){st.released=true;st.self=Math.max(st.self,62);st.stable=Math.max(st.stable,66);
+  $("breath").classList.add("on");
+  line("你松开了心念。<em>气息竟没有停下</em>，自行续走了许久，才缓缓歇下。");
+  five();render();toast("不推而自行——自持初现。")}
+function stabilize(){st.self=Math.min(86,st.self+9);st.stable=Math.min(88,st.stable+10);
+  line("残余的波动被土府一层层压平，自循环<em>维持得更久了</em>。");
+  five();render()}
+function finalRelease(){st.founded=true;st.self=92;st.stable=96;
+  $("breath").classList.add("on");$("realm").innerHTML="<b>筑基</b> · 初境";
+  $("modeText").innerHTML="当前：<b>周天自转</b><br>异常方唤心神，寻常不再打扰";
+  line("你彻底松开。周天<em>自行运转，往复不休</em>——青关生发，阳枢温养，土府敛热，皆归丹田。");
+  kn("筑基","此身已能自行维系基础周天。","gone");
+  five();render();
+  setTimeout(()=>$("ritual").classList.add("show"),700)}
+
+function five(){
+  const rows=[["闭合",st.tried?4:0,["未现","隐现","渐显","将成","圆满"]],
+    ["调衡",st.stable/20,["未现","隐现","渐显","将成","圆满"]],
+    ["自持",st.self/20,["未现","隐现","渐显","将成","圆满"]],
+    ["安稳",st.stable/20,["未现","隐现","渐显","将成","圆满"]],
+    ["内化",Math.min(100,40+st.runs*7)/20,["未现","隐现","渐显","将成","圆满"]]];
+  $("five").innerHTML=rows.map(([k,v,w])=>{
+    const n=Math.max(0,Math.min(5,Math.round(v)));
+    const idx=Math.min(4,Math.max(0,n-1));
+    return `<div class="frow${n>=4?" g":""}"><span>${k}</span>
+      <span class="dots">${[0,1,2,3,4].map(i=>`<i class="${i<n?"f":""}"></i>`).join("")}</span>
+      <span class="word">${n===0?"未现":w[idx]}</span></div>`}).join("")}
+
+function addArt(name,text){const d=document.createElement("div");d.className="art";
+  d.innerHTML=`<b>《${name}》</b><p>${text}</p>`;$("known").prepend(d)}
+
+/* 开场 */
+line("闭上眼，四周寂静。你还不知世间有无「灵气」，也不知此身何处可承它。");
+kn("暂无可靠知识","完成足够稳定的观察后，此处自会生枝添叶。");
+render();
+</script>
+</body>
+</html>
