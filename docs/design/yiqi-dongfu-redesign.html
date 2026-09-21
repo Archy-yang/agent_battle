@@ -53,8 +53,9 @@ button,input,textarea{font:inherit;color:inherit}
 @keyframes breathe{0%,100%{transform:translate(-50%,-50%) scale(.85);opacity:.18}
   50%{transform:translate(-50%,-50%) scale(1.05);opacity:.7}}
 svg.chan{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-svg.chan line{stroke:rgba(143,224,177,.1);stroke-width:1.5;transition:.5s}
-svg.chan line.on{stroke:rgba(143,224,177,.75);filter:drop-shadow(0 0 5px rgba(143,224,177,.5))}
+svg.chan line{stroke:rgba(143,224,177,.75);stroke-width:1.5;transition:.5s;opacity:0}
+svg.chan line.seen{opacity:.16}
+svg.chan line.on{opacity:.75;filter:drop-shadow(0 0 5px rgba(143,224,177,.5))}
 svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(232,154,114,.5))}
 
 .node{position:absolute;width:36px;height:36px;border-radius:50%;
@@ -272,7 +273,8 @@ svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(23
 const $=id=>document.getElementById(id);
 const st={phase:0,absorbed:false,qing:false,qingTried:0,strain:false,
   baseArt:false,yang:false,yangTried:0,tu:false,seqMode:false,picked:[],
-  tried:false,runs:0,self:0,stable:0,released:false,founded:false};
+  tried:false,runs:0,self:0,stable:0,released:false,founded:false,
+  seen:[]};
 
 const NODE_TXT={
   dan:["下丹田","气息最终归伏之处。纳气入体后，总有一缕沉沉坠向这里。"],
@@ -349,15 +351,15 @@ function doSense(){
   line("你静静体会周身。诸处感受如常，没有新的发现——或许该<em>引一缕入体</em>试试了。");
   render()}
 
+function seeChan(){for(let i=0;i<arguments.length;i++)if(!st.seen.includes(arguments[i]))st.seen.push(arguments[i])}
 function render(){
   const C=$("choices");C.innerHTML="";
-  ["c1","c2","c3","c4","c5","c6","c7","c8"].forEach(id=>$(id).classList.remove("on","hot"));
-  if(st.qing){$("c1").classList.add("on");$("c2").classList.add("on");$("c3").classList.add("on")}
-  if(st.baseArt){$("c8").classList.add("on")}
+  ["c1","c2","c3","c4","c5","c6","c7","c8"].forEach(id=>{
+    const el=$(id);el.classList.remove("on","hot","seen");
+    if(st.seen.includes(id))el.classList.add("seen")});
+  if(st.baseArt){$("c3").classList.add("on")}
   if(st.yang){$("c4").classList.add("hot")}
   if(st.tu){$("c5").classList.add("on")}
-  if(st.seqMode&&st.picked.length>1){
-    $("c5").classList.add("on");$("c6").classList.add("on")}
 
   if(st.phase===0){
     C.appendChild(choice("静下来，先感受周围","不急着吸纳，只把注意力沉入环境变化",doSense,"primary"));return}
@@ -420,7 +422,7 @@ function render(){
 }
 
 /* —— 各步 —— */
-function absorb(){if(st.absorbed)return;st.absorbed=true;
+function absorb(){if(st.absorbed)return;st.absorbed=true;seeChan("c3");
   line("一缕气息真的入了体。它行至<em>左侧某处</em>明显更顺，随后缓缓沉入<em>下腹</em>。");
   kn("低分量引气可行","未觉损伤。");
   $("realm").innerHTML="<b>炼气</b> · 引气入体";render();
@@ -438,12 +440,12 @@ function strainQing(){st.strain=true;
   line("流量一加，青关处<em>胀意陡起</em>，气流滞涩。你赶紧收了力，胀意缓缓退去。");
   kn("青关 · 边界","高流量必胀。安全之径，在轻不在重。","gone");
   toast("青关的高流量，暂时是禁区。")}
-function compileArt(){if(st.baseArt)return;st.baseArt=true;
+function compileArt(){if(st.baseArt)return;st.baseArt=true;seeChan("c3");
   line("<em>《青关引气诀》</em>成。此后寻常引气，身体自会依诀而行，不必再事事经心。");
   addArt("青关引气诀","轻引一缕，循左侧而入，过青关，归下丹田。行之有度，胀满不生。");
   $("modeText").innerHTML="当前：<b>渐渐上手</b><br>寻常引气已由分身依诀自行";
   render();toast("口诀已成，寻常引气不再劳心。")}
-function checkYang(){if(st.yang||!st.baseArt)return;st.yang=true;st.yangTried=1;discover("yang","fire");
+function checkYang(){if(st.yang||!st.baseArt)return;st.yang=true;st.yangTried=1;discover("yang","fire");seeChan("c4");
   line("右侧那处已能稳定寻见，暂记作<em>阳枢</em>。气过此穴，<em>温热活跃</em>——只是连行数轮，热意会一层层积下来。");
   kn("阳枢","火气过此活跃；久行积热，恐生失稳。","gone");
   toast("右侧的温热再次出现。")}
@@ -451,7 +453,7 @@ function tryYang(){st.yangTried++;
   if(st.yangTried>=2){line("阳枢的温热<em>再度重现</em>，且较上次更沉。积热，是真的。");
     toast("温热非偶然，它在累积。")}
   else{line("温热如约而至，与前言相符。");toast("阳枢的温热复现了。")}}
-function seekTu(){if(st.tu||!st.yang)return;st.tu=true;discover("tu","earth");
+function seekTu(){if(st.tu||!st.yang)return;st.tu=true;discover("tu","earth");seeChan("c5","c8");
   line("再往下探，你寻见一处<em>厚重缓行</em>之地，暂记作<em>土府</em>。气过此处慢了下来，躁性也似被抚平几分。");
   kn("土府","气流经此放缓，躁性渐敛。");
   toast("寻得一处能敛热的所在。")}
@@ -468,6 +470,10 @@ const SEQ_EVAL=[
   {has:["tu"],msg:"厚气缓缓一周，稳是稳，只是<em>变化不足</em>，难成自持之势。"},
   {has:["qing"],msg:"木气温和绵长，<em>过于平缓</em>，自持难成。"}];
 function runSeq(){if(st.picked.length<2){toast("至少再点一处纳气之穴。");return}
+  seeChan("c8");
+  if(st.picked.includes("yang"))seeChan("c4");
+  if(st.picked.includes("tu"))seeChan("c5");
+  if(st.picked.includes("qing"))seeChan("c1","c2");
   st.tried=true;st.seqMode=false;st.runs=1;st.released=false;
   $("hint").textContent="长按「凝神」，开始感知";
   let ev=SEQ_EVAL.find(e=>e.has.every(k=>st.picked.includes(k))&&(!e.not||e.not.every(k=>!st.picked.includes(k))));
