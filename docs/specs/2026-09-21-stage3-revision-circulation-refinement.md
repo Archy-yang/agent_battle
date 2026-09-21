@@ -1,0 +1,277 @@
+# stage_3 修订包：经脉方向性 · 周天拓扑 · 气炼化模型 v0.1
+
+> 状态：待评审。本修订包合入三方共识（本会话分析 + DeepSeek 炼化模型 + DeepSeek 拓扑分析），
+> 通过后按"先改文档再改代码"驱动 cult 引擎、感知层与设计稿的对应修订。
+>
+> 修订原则：不推翻 M1 机制（定点算术、纳气、归流、五行交互全部保留），
+> 只做三处语义扩展：①经脉逆流做功 ②周天=边序列 ③气的炼化维度（导出量）。
+
+---
+
+## Part A. 经脉方向性与丹田外推
+
+### A1 [固定原则] 经脉有天然流向，丹田是泵
+
+现有拓扑（不变）：
+
+```text
+神庭 → 青关
+青关 → 中庭
+青关 → 下丹田          ← 捷径
+阳枢 / 土府 / 金门 / 玄泉 → 中庭
+中庭 → 下丹田          ← 主汇入
+下丹田：无出向经脉
+```
+
+扩展语义：
+
+- **顺流**（沿天然向，最终归丹田）：现有 Transfer 公式原样适用，省力
+- **逆流**（反向传输，唯有丹田可发起外推）：需要做功，产生额外损耗与热
+
+### A2 逆流做功 [v0.1 参数待标定]
+
+```text
+ReverseWorkCost = BaseWork × (1 + LoadRatio_dst × K_back) × (1 - Conductance)
+ReverseHeat = ReverseWorkCost × K_heat
+```
+
+- 逆流是"火候"的物理来源：推得猛 → 热与压力上升 → 走火风险。不新增任何专用规则，
+  从传输规则自然涌现（宪法 §16）
+- 唯有丹田可发起外推：穴与穴之间不得自行逆流（意识经丹田调度，修真语义一致）
+
+### A3 守恒约束 [固定原则]
+
+循环中的总量变化必须逐项可归因：
+
+```text
+ΔQi_total = Σ Intake（环境输入，逐穴计量）
+          - Σ Diffuse（逸散，去向=环境）
+          - Σ TransformLoss（转化损耗，去向=热）
+          - Σ ReverseWorkLoss（逆流损耗，去向=热）
+```
+
+任何"凭空增益"都是 bug。进 §22 测试清单。
+
+---
+
+## Part B. BodyGraph：节点画像与边属性
+
+### B1 [固定原则] 节点特殊性表达为参数画像，禁止类型枚举
+
+依宪法 §8：底层代码不得出现 `if node.type == "hub"`。
+中庭与丹田的特殊性全部落在参数取值上：
+
+```text
+普通穴位：  Capacity 低-中 / Retention 中 / Affinity 偏向本行 / Throughput 中
+中庭画像：  Capacity 中 / Retention 低 / Throughput 高
+            Affinity[5] ≈ 1.0（不偏任何一行）/ base_stability 高
+丹田画像：  Capacity 最高 / Retention 最高 / 可发起外推（唯一）
+```
+
+### B2 边属性
+
+```text
+Edge { from, to, conductance, damage, flow }
+```
+
+conductance 受 双端 Openness × 五行亲和 × (1 - Damage) 调制（stage_2 §10 现状确认）。
+
+### B3 丹田双入口 [固定原则]
+
+```text
+捷径：青关 → 丹田（快、单属性直入）
+主汇：中庭 → 丹田（慢、多属性混合后入）
+```
+
+两路并行。策略含义：初期走捷径快速引气入体；含多穴交互的周天必经主汇。
+
+### B4 中庭 = 五行反应炉
+
+多路异属性气同 Tick 汇入中庭并发生五行交互（相生相济 / 相克相冲）。
+"土府敛阳枢之热"的物理本体是**中庭的火土承接转化**，不是土府直接作用于阳枢。
+中庭多次中转会推高其 Pressure / 压低 Stability——周天的天然瓶颈，
+构成"绕开中庭（捷径）还是经过中庭（多属性交互）"的核心策略权衡。
+
+---
+
+## Part C. 周天 = 边序列
+
+### C1 [固定原则] 路径评估，不是集合评估
+
+```text
+Sequence { path: [ {from, to}, ... ] }   // 边的序列
+```
+
+评估量沿路径逐边逐穴累计：
+
+```text
+CycleEfficiency   = 沿路径总有效流量 / 初始投入
+CycleStability    = 路径上各节点 Stability 的最小值
+HeatAccumulation  = 路径各节点 ThermalLoad 变化之和
+```
+
+`丹田→青关→中庭→阳枢→…` 与逆序路径结果不同（热积累轨迹不同）。
+设计稿 SEQ_EVAL 的集合评估依此废弃。
+
+### C2 路径自动中转
+
+玩家/Agent 点选穴位序列，BodyGraph 自动展开为边序列；
+两相邻点选无直接边时经中庭自动中转（中转即承压）。
+
+### C3 周天示例（主轨）
+
+```text
+丹田 →(逆c3) 青关 →(c2) 中庭 →(逆c4) 阳枢 →(c4) 中庭 →(逆c5) 土府 →(c5) 中庭 →(c8) 丹田
+```
+
+途经：青关（木性入口）→ 中庭（交互枢纽）→ 阳枢（火性生热）→ 中庭 → 土府（敛热）→ 主汇归元。
+穴位边过边 Intake（stage_3 §7 逐穴独立计量，现状保留）——炼气是"边流动边补充"，
+不是搬运。
+
+---
+
+## Part D. 气炼化模型（Refinement）
+
+### D1 [固定原则] "精纯"是涌现命名，不是属性
+
+Engine 无 `purity` 字段。"更少更精纯" = 以下现象的总和，由玩家/Agent 命名：
+
+```text
+总量减少（循环烧蚀）/ 五行向身体收敛 / 更听话（控制误差降）/
+更能存（逸散降）/ 更有效（转化效率升）
+```
+
+### D2 Refinement = 导出量 [固定原则]
+
+```text
+Refinement = clamp((Match - MatchMin) / (MatchMax - MatchMin), 0, 1)
+Match      = Σ_e NatureRatio[e] × BodyAffinity[e]
+BodyAffinity[e] = CharacterAffinity[e] × Σ_i (轨道上穴位 Affinity[i,e] 的加权)
+```
+
+- **不落存储字段**，任何时刻可从气的构成与身体状态重算
+- **相对性**：同一股气在甲身为精氣、在乙身为粗气（未来战斗/交易规则的涌现源）
+- **身体变化即重算**：受伤、Adaptation 变化 → 今日精纯明日变粗
+- **收敛目标 = 身体 × 轨道 的合成向量**：走哪条周天轨道决定炼成什么气——
+  此为流派差异总开关，实现时不得退化为只看 CharacterAffinity
+
+### D3 筛选机制（炼化的物理本体）
+
+穴位按亲和"留与散"：Retention_effective[i,e] = Retention[i] × AcupointAffinity[i,e]。
+亲和高的成分留下并强化，亲和低的成分逸散或转化。
+循环一次 = 一次筛选：总量下降，构成向收敛方向移动。
+
+### D4 五个敏感化乘子 [全部 v0.1 参数，K_* 待标定]
+
+```text
+逸散：    DiffuseAmount   × (1 - Refinement × K_refine)
+稳定：    StabilityContribution × (1 + Refinement_avg × K_stab)
+转化：    TransformAmount × (1 + Refinement × K_transform)
+控制：    ControlErrorMax × (1 - Refinement × K_control)
+抗冲击：  FlowShock_effective × (1 - Refinement × K_shock)
+```
+
+无新算子、无新公式结构，全部为已有公式的小乘子。
+
+### D5 防经验值退化 [固定原则 + 标定项]
+
+1. Refinement 可因身体状态变化而下降（自动成立，D2 导出语义保证）
+2. 变化发生在分布上，不是总量单调增长
+3. (1 - R) 渐进动力学：越精纯越难再精
+4. **双重收敛限速**：Intake 已按亲和加权，若筛选再立即收敛，玩家将看不到
+   炼化过程——标定时须保证新纳之气有明显"驳杂期"
+
+### D6 烧蚀动机闭环 [必须成立的命题]
+
+"更少"是被迫的，"更精"是副产品，次序不能倒：
+
+```text
+丹田装满 → BackPressure ↑ → 吸收困难 → 必须循环腾挪 → 烧蚀杂气 → 可继续纳气
+```
+
+若 Monte Carlo 显示"不循环也永远吸得进"，则整个炼化机制空转——
+这是标定阶段必须证伪的失败模式。
+
+---
+
+## Part E. 三阶段判据（引擎可检测）
+
+```text
+引气入体  环境 → 穴位（关隘）→ 丹田（容器）
+          判据：丹田.Load > 0 且存在有效 Channel 且 青关.EffectiveOpenness 达标
+          现状：已实现 ✓
+
+炼气      丹田外推 → 经脉巡行 → 穴位边过边纳 → 归元丹田
+          判据：完成 ≥1 条闭合边序列 且 CycleEfficiency ≥ 阈值 且 MinimumCycleStability ≥ 阈值
+          且 NewDamage 低位
+
+筑基      五判据不变（Closure/RuleBalance/SelfSustain/DynamicStability/Internalization）
+          Refinement 高是 SelfSustain 的物理基础（逸散低、稳定高、控制误差低），
+          但不进筑基判据——筑基只认结构，气的品质通过行为间接体现
+```
+
+两条合法路径并存：先炼纯再扩轨 / 先搭轨循环中炼纯——效率不同，皆为涌现路径。
+
+---
+
+## Part F. 感知映射（确定性，不调用 LLM）
+
+```text
+Refinement 低 → "驳杂、活跃、偶有逸散感"
+Refinement 中 → "更听话了，推动阻力减小，逸散感减弱"
+Refinement 高 → "几乎不再自行散掉，停止推动也能在原地停留"
+```
+
+与境界文档 §20 同构：数值 → Sensory Model → 模板文本。玩家与 LLM 同一信息边界。
+
+---
+
+## Part G. 标定命题清单（Monte Carlo，M2 验证 1 顺路采集）
+
+```text
+P1 烧蚀动机闭环：不循环则终将吸不进；循环后纳气恢复（D6，必须成立）
+P2 轨道-流派：不同主轨产生不同终态五行构成（D2，必须成立）
+P3 双重收敛速度：新纳之气存在可感知驳杂期（D5-4）
+P4 守恒归因：任一循环 ΔQi 总量逐项归账（A3）
+P5 逆流火候：外推强度与热积累/失稳呈单调关系（A2）
+P6 中庭瓶颈：多次中转 → 中庭 Pressure 上升可感知（B4）
+```
+
+---
+
+## Part H. 新增测试清单
+
+```text
+T1 守恒：循环前后逐项归账，无凭空增益（A3）
+T2 逆流：唯有丹田可发起；穴间意图逆流被回执拒绝（A2）
+T3 路径评估：同集合不同顺序 → 不同 HeatAccumulation（C1）
+T4 Refinement 导出性：状态序列化中无 refinement 字段；同状态重算结果一致（D2）
+T5 身体跌变：穴位受损 → Refinement 重算下降（D2）
+T6 感知映射：Refinement 三档 → 对应定性文本，零数字泄漏（Part F）
+T7 炼气判据：闭合边序列 + 效率/稳定达标才入炼气；瞬时达标随即发散不算（Part E）
+```
+
+---
+
+## Part I. 落地改动清单（文档通过后执行）
+
+```text
+engine（backend/cult）：
+  - Transfer 增加逆流语义与做功/热公式（A2）
+  - BodyGraph 参数画像落中庭/丹田（B1-B3）
+  - Sequence 从穴位列表改为边序列；评估沿路径累计（C1）
+  - 筛选机制与五个乘子（D3-D4）
+  - rule_version 入会话状态与重放（宪法 §18）
+
+感知层（backend/cult/perception）：
+  - PerceptToken 中间层、趋势/滞回（境界文档 §14-15，随本包一并落）
+  - Refinement 三档定性词（Part F）
+
+设计稿（docs/design/yiqi-dongfu-redesign.html）：
+  - SEQ_EVAL 集合评估 → 路径评估（顺序影响结果）
+  - 点选自动经中庭中转；气流方向动态显示
+  - 中庭瓶颈可感知（多次中转后的反馈文案）
+
+前端：pilot 侧提示词同步（分身需知"逆流做功/边过边纳"的可探索表象，
+      仍不泄露公式——感知隔离律不变）
+```
