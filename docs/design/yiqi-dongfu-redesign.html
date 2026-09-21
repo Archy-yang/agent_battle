@@ -54,11 +54,8 @@ button,input,textarea{font:inherit;color:inherit}
   50%{transform:translate(-50%,-50%) scale(1.05);opacity:.7}}
 svg.chan{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 svg.chan line{stroke:rgba(143,224,177,.75);stroke-width:1.5;transition:.5s;opacity:0}
-svg.chan line.seen{opacity:.12}
-svg.chan line.on{opacity:.55;filter:drop-shadow(0 0 5px rgba(143,224,177,.5));
-  animation:chanbreathe 3s ease-in-out infinite}
-@keyframes chanbreathe{0%,100%{opacity:.35}50%{opacity:.7}}
-svg.chan line.flow{opacity:.95;stroke-dasharray:5 13;
+svg.chan line.afterglow{opacity:.28;transition:opacity 2.8s ease}
+svg.chan line.flow{opacity:.95;stroke-dasharray:5 13;transition:none;
   animation:dashmove .45s linear infinite;
   filter:drop-shadow(0 0 6px rgba(143,224,177,.7))}
 @keyframes dashmove{to{stroke-dashoffset:-18}}
@@ -389,7 +386,9 @@ function animateFlow(seq,done,step){step=step||520;
   let i=0;
   const next=()=>{if(i>=seq.length){
       setTimeout(()=>{seq.forEach(e=>{const el=$(e.id);
-        el.classList.remove("flow");el.style.animationDirection=""});done()},420);return}
+        el.classList.remove("flow");el.style.animationDirection="";
+        el.classList.add("afterglow");
+        setTimeout(()=>el.classList.remove("afterglow"),2800)});done()},420);return}
     const e=seq[i++];const el=$(e.id);
     el.style.animationDirection=e.rev?"reverse":"normal";
     el.classList.add("flow");setTimeout(next,step)};
@@ -397,11 +396,8 @@ function animateFlow(seq,done,step){step=step||520;
 function render(){
   const C=$("choices");C.innerHTML="";
   ["c1","c2","c3","c4","c5","c6","c7","c8"].forEach(id=>{
-    const el=$(id);el.classList.remove("on","hot","seen");
-    if(st.seen.includes(id))el.classList.add("seen")});
-  if(st.baseArt){$("c3").classList.add("on")}
-  if(st.yang){$("c4").classList.add("hot")}
-  if(st.tu){$("c5").classList.add("on")}
+    const el=$(id);el.classList.remove("flow");
+    if(!el.classList.contains("afterglow"))el.style.opacity=""});
 
   if(st.phase===0){
     C.appendChild(choice("静下来，先感受周围","不急着吸纳，只把注意力沉入环境变化",doSense,"primary"));return}
@@ -483,7 +479,11 @@ function strainQing(){st.strain=true;
   line("流量一加，青关处<em>胀意陡起</em>，气流滞涩。你赶紧收了力，胀意缓缓退去。");
   kn("青关 · 边界","高流量必胀。安全之径，在轻不在重。","gone");
   toast("青关的高流量，暂时是禁区。")}
+let routineTimer=null,loopTimer=null;
 function compileArt(){if(st.baseArt)return;st.baseArt=true;seeChan("c3");
+  routineTimer=setInterval(()=>{
+    if(st.baseArt&&!document.hidden)animateFlow([{id:"c3",rev:false}],()=>{},400)
+  },6000);
   line("<em>《青关引气诀》</em>成。此后寻常引气，身体自会依诀而行，不必再事事经心。");
   addArt("青关引气诀","轻引一缕，循左侧而入，过青关，归下丹田。行之有度，胀满不生。");
   $("modeText").innerHTML="当前：<b>渐渐上手</b><br>寻常引气已由分身依诀自行";
@@ -543,6 +543,10 @@ function stabilize(){st.self=Math.min(86,st.self+9);st.stable=Math.min(88,st.sta
   line("残余的波动被土府一层层压平，自循环<em>维持得更久了</em>。");
   five();render()}
 function finalRelease(){st.founded=true;st.self=92;st.stable=96;
+  if(routineTimer){clearInterval(routineTimer);routineTimer=null}
+  if(st.lastSeq)loopTimer=setInterval(()=>{
+    if(!document.hidden)animateFlow(st.lastSeq,()=>{},340)
+  },8000);
   $("breath").classList.add("on");$("realm").innerHTML="<b>筑基</b> · 初境";
   $("modeText").innerHTML="当前：<b>周天自转</b><br>异常方唤心神，寻常不再打扰";
   line("你彻底松开。周天<em>自行运转，往复不休</em>——青关生发，阳枢温养，土府敛热，皆归丹田。");
