@@ -216,7 +216,8 @@ svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(23
           <line id="c5" x1="80"  y1="284" x2="125" y2="162"/>
           <line id="c6" x1="186" y1="224" x2="125" y2="162"/>
           <line id="c7" x1="64"  y1="224" x2="125" y2="162"/>
-          <line id="c8" x1="125" y1="162" x2="125" y2="300"/>
+          <line id="c9" x1="125" y1="300" x2="80"  y2="284"/>
+          <line id="c10" x1="188" y1="118" x2="125" y2="52"/>
         </svg>
         <button class="node dark" id="n-shen" style="left:125px;top:52px"  data-name="未知" onclick="tapNode('shen')">？</button>
         <button class="node dark" id="n-qing" style="left:62px;top:118px"  data-name="未知" onclick="tapNode('qing')">？</button>
@@ -369,18 +370,31 @@ function seeChan(){for(let i=0;i<arguments.length;i++)if(!st.seen.includes(argum
 
 /* 经脉表（天然流向=归流丹田）；边序列展开（无直接边经中庭自动中转）；
    行进动画：气动了才见线，行过后由 render 落为淡痕 */
-const CH={"shen-qing":["c1",false],"qing-zhong":["c2",false],"qing-dan":["c3",false],
-  "yang-zhong":["c4",false],"tu-zhong":["c5",false],"jin-zhong":["c6",false],
-  "xuan-zhong":["c7",false],"zhong-dan":["c8",false]};
+const CH={"dan-tu":["c9",false],"tu-zhong":["c5",false],"zhong-yang":["c4",false],
+  "yang-shen":["c10",false],"shen-qing":["c1",false],"qing-dan":["c3",false],
+  "qing-zhong":["c2",false],"jin-zhong":["c6",false],"xuan-zhong":["c7",false]};
+const RING=["dan","tu","zhong","yang","shen","qing"];
 function edgeFor(a,b){if(CH[a+"-"+b])return{id:CH[a+"-"+b][0],rev:false};
   if(CH[b+"-"+a])return{id:CH[b+"-"+a][0],rev:true};return null}
-function buildPath(order){const seq=[];
-  const push=(a,b)=>{if(a===b)return;const e=edgeFor(a,b);
-    if(e)seq.push(e);else{const e1=edgeFor(a,"zhong"),e2=edgeFor("zhong",b);
-      if(e1)seq.push(e1);if(e2)seq.push(e2)}};
-  for(let i=0;i<order.length-1;i++)push(order[i],order[i+1]);
-  if(order[order.length-1]!=="dan")push(order[order.length-1],"dan");
-  return seq}
+function walkForward(a,b,out,nodes){
+  if((a==="jin"||a==="xuan")&&a!==b){const e=CH[a+"-zhong"];
+    out.push({id:e[0],rev:e[1]});nodes.push("zhong");a="zhong"}
+  let g=0;
+  while(a!==b&&g++<8){const nx=RING[(RING.indexOf(a)+1)%RING.length];
+    const e=CH[a+"-"+nx];if(!e)return false;
+    out.push({id:e[0],rev:e[1]});if(!nodes.includes(nx))nodes.push(nx);a=nx}
+  return a===b}
+function buildPath(order){
+  /* 单向环：玩家点选的是欲经之穴，气按环向顺序依次经过，末归丹田 */
+  const seq=[],nodes=["dan"];let ok=true;
+  const wps=order.slice(1).filter(k=>RING.includes(k));
+  wps.sort((a,b)=>RING.indexOf(a)-RING.indexOf(b));
+  let cur="dan";
+  for(const w of wps){if(w===cur)continue;
+    if(!walkForward(cur,w,seq,nodes)){ok=false;break}
+    cur=w}
+  if(ok&&cur!=="dan"&&!walkForward(cur,"dan",seq,nodes))ok=false;
+  return ok?{seq,nodes}:null}
 function animateFlow(seq,done,step){step=step||520;
   if(!seq.length){done();return}
   let i=0;
@@ -395,7 +409,7 @@ function animateFlow(seq,done,step){step=step||520;
   next()}
 function render(){
   const C=$("choices");C.innerHTML="";
-  ["c1","c2","c3","c4","c5","c6","c7","c8"].forEach(id=>{
+  ["c1","c2","c3","c4","c5","c6","c7","c9","c10"].forEach(id=>{
     const el=$(id);el.classList.remove("flow");
     if(!el.classList.contains("afterglow"))el.style.opacity=""});
 
@@ -508,22 +522,22 @@ function clearSeq(){st.picked=["dan"];
   document.querySelectorAll(".node").forEach(n=>n.classList.remove("picked"));
   $("n-dan").classList.add("picked");render()}
 function runSeq(){if(st.picked.length<2){toast("至少再点一处纳气之穴。");return}
-  const seq=buildPath(st.picked.slice());
+  const built=buildPath(st.picked.slice());
+  if(!built){toast("这两处之间，环向一时走不通。");return}
+  const seq=built.seq;
   animateFlow(seq,()=>{
     seq.forEach(e=>seeChan(e.id));
-    if(seq.some(e=>["c2","c4","c5","c6","c7","c8"].includes(e.id))){
-      const z=$("n-zhong");z.classList.remove("dark");z.classList.add("faint");
-      z.textContent="";z.removeAttribute("data-name")}
+    built.nodes.forEach(k=>{const n=$("n-"+k);
+      if(!n.classList.contains("known")){
+        n.classList.remove("dark");n.classList.add("faint");
+        n.textContent="";n.removeAttribute("data-name")}})
     document.querySelectorAll(".node").forEach(n=>n.classList.remove("picked"));
     st.tried=true;st.seqMode=false;st.runs=1;st.released=false;st.lastSeq=seq;
     $("hint").textContent="长按「凝神」，开始感知";
-    const iy=st.picked.indexOf("yang"),it=st.picked.indexOf("tu");
+    const wp=st.picked.slice(1).filter(k=>RING.includes(k));
     let ev;
-    if(iy>=0&&it<0)ev={bad:true,msg:"周天能行，但<em>阳枢的热意一轮轮积了下来</em>，尾段隐隐发烫。久行，必乱。"};
-    else if(iy>=0&&it>iy)ev={msg:"土府的厚气行在阳枢之后，<em>把热意层层敛住</em>。整轮走完，气息沉稳绵长。"};
-    else if(iy>=0&&it<iy)ev={bad:true,msg:"土府虽在序中，却行在阳枢<em>之前</em>——阳枢的热意无人承接，尾段发烫。"};
-    else if(it>=0)ev={msg:"厚气缓缓一周，稳是稳，只是<em>变化不足</em>，难成自持之势。"};
-    else ev={msg:"此序可行，只是收效平平。"};
+    if(wp.length>=2)ev={msg:"环道顺畅。土府厚气先行铺路，<em>阳枢的热意随环层层化开</em>，归元时气息沉稳绵长。"};
+    else ev={msg:"小环初成，能走通，只是<em>途经太少</em>，热意化不开，难成自持之势。"};
     if(ev.bad){$("n-yang").classList.add("strain");$("c4").classList.add("hot")}
     line("一周天行毕。"+ev.msg);
     if(!ev.bad){kn("候选周天","纳引诸穴之序，兼顾生发与敛热。","gone");
