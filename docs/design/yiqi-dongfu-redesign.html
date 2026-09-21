@@ -54,8 +54,14 @@ button,input,textarea{font:inherit;color:inherit}
   50%{transform:translate(-50%,-50%) scale(1.05);opacity:.7}}
 svg.chan{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 svg.chan line{stroke:rgba(143,224,177,.75);stroke-width:1.5;transition:.5s;opacity:0}
-svg.chan line.seen{opacity:.16}
-svg.chan line.on{opacity:.75;filter:drop-shadow(0 0 5px rgba(143,224,177,.5))}
+svg.chan line.seen{opacity:.12}
+svg.chan line.on{opacity:.55;filter:drop-shadow(0 0 5px rgba(143,224,177,.5));
+  animation:chanbreathe 3s ease-in-out infinite}
+@keyframes chanbreathe{0%,100%{opacity:.35}50%{opacity:.7}}
+svg.chan line.flow{opacity:.95;stroke-dasharray:5 13;
+  animation:dashmove .45s linear infinite;
+  filter:drop-shadow(0 0 6px rgba(143,224,177,.7))}
+@keyframes dashmove{to{stroke-dashoffset:-18}}
 svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(232,154,114,.5))}
 
 .node.dark{display:none}
@@ -363,6 +369,31 @@ function doSense(){
   render()}
 
 function seeChan(){for(let i=0;i<arguments.length;i++)if(!st.seen.includes(arguments[i]))st.seen.push(arguments[i])}
+
+/* 经脉表（天然流向=归流丹田）；边序列展开（无直接边经中庭自动中转）；
+   行进动画：气动了才见线，行过后由 render 落为淡痕 */
+const CH={"shen-qing":["c1",false],"qing-zhong":["c2",false],"qing-dan":["c3",false],
+  "yang-zhong":["c4",false],"tu-zhong":["c5",false],"jin-zhong":["c6",false],
+  "xuan-zhong":["c7",false],"zhong-dan":["c8",false]};
+function edgeFor(a,b){if(CH[a+"-"+b])return{id:CH[a+"-"+b][0],rev:false};
+  if(CH[b+"-"+a])return{id:CH[b+"-"+a][0],rev:true};return null}
+function buildPath(order){const seq=[];
+  const push=(a,b)=>{if(a===b)return;const e=edgeFor(a,b);
+    if(e)seq.push(e);else{const e1=edgeFor(a,"zhong"),e2=edgeFor("zhong",b);
+      if(e1)seq.push(e1);if(e2)seq.push(e2)}};
+  for(let i=0;i<order.length-1;i++)push(order[i],order[i+1]);
+  if(order[order.length-1]!=="dan")push(order[order.length-1],"dan");
+  return seq}
+function animateFlow(seq,done,step){step=step||520;
+  if(!seq.length){done();return}
+  let i=0;
+  const next=()=>{if(i>=seq.length){
+      setTimeout(()=>{seq.forEach(e=>{const el=$(e.id);
+        el.classList.remove("flow");el.style.animationDirection=""});done()},420);return}
+    const e=seq[i++];const el=$(e.id);
+    el.style.animationDirection=e.rev?"reverse":"normal";
+    el.classList.add("flow");setTimeout(next,step)};
+  next()}
 function render(){
   const C=$("choices");C.innerHTML="";
   ["c1","c2","c3","c4","c5","c6","c7","c8"].forEach(id=>{
@@ -433,7 +464,8 @@ function render(){
 }
 
 /* —— 各步 —— */
-function absorb(){if(st.absorbed)return;st.absorbed=true;seeChan("c3");
+function absorb(){if(st.absorbed)return;st.absorbed=true;
+  animateFlow([{id:"c3",rev:false}],()=>{seeChan("c3");render()});
   line("一缕气息真的入了体。它行至<em>左侧某处</em>明显更顺，随后缓缓沉入<em>下腹</em>。");
   kn("低分量引气可行","未觉损伤。");
   $("realm").innerHTML="<b>炼气</b> · 引气入体";render();
@@ -469,7 +501,7 @@ function seekTu(){if(st.tu||!st.yang)return;st.tu=true;discover("tu","earth");se
   kn("土府","气流经此放缓，躁性渐敛。");
   toast("寻得一处能敛热的所在。")}
 function startSeq(){st.seqMode=true;st.picked=["dan"];$("n-dan").classList.add("picked");
-  $("hint").textContent="点选欲纳引之穴（归元于下丹田）";
+  $("hint").textContent="自下丹田起，依次点选途经诸穴，末归丹田";
   line("没有现成的功法可依。你只需<em>点选诸穴</em>定下引气之序，分身自会沿经脉导气，归元于下丹田。");
   render();toast("已在序中的：下丹田（归元之处）。")}
 function clearSeq(){st.picked=["dan"];
@@ -481,23 +513,26 @@ const SEQ_EVAL=[
   {has:["tu"],msg:"厚气缓缓一周，稳是稳，只是<em>变化不足</em>，难成自持之势。"},
   {has:["qing"],msg:"木气温和绵长，<em>过于平缓</em>，自持难成。"}];
 function runSeq(){if(st.picked.length<2){toast("至少再点一处纳气之穴。");return}
-  seeChan("c8");
-  if(st.picked.includes("yang"))seeChan("c4");
-  if(st.picked.includes("tu"))seeChan("c5");
-  if(st.picked.includes("qing"))seeChan("c1","c2");
-  st.tried=true;st.seqMode=false;st.runs=1;st.released=false;
-  $("hint").textContent="长按「凝神」，开始感知";
-  let ev=SEQ_EVAL.find(e=>e.has.every(k=>st.picked.includes(k))&&(!e.not||e.not.every(k=>!st.picked.includes(k))));
-  if(!ev)ev={msg:"此序可行，只是收效平平。"};
-  if(ev.bad){$("n-yang").classList.add("strain");$("c4").classList.add("hot")}
-  line("一周天行毕。"+ev.msg);
-  document.querySelectorAll(".node").forEach(n=>n.classList.remove("picked"));
-  if(!ev.bad){kn("候选周天","纳引诸穴之序，兼顾生发与敛热。",  "gone");
-    $("fiveSec").style.display="";$("five").style.display="";
-    st.self=30;st.stable=25}
-  $("modeText").innerHTML="当前：<b>试周天</b><br>身体在轮转中慢慢适应";
-  render();toast(ev.bad?"此序有隐忧。":"此序可立。")}
+  const seq=buildPath(st.picked.slice());
+  animateFlow(seq,()=>{
+    seq.forEach(e=>seeChan(e.id));
+    if(seq.some(e=>["c2","c4","c5","c6","c7","c8"].includes(e.id))){
+      const z=$("n-zhong");z.classList.remove("dark");z.classList.add("faint");
+      z.textContent="";z.removeAttribute("data-name")}
+    document.querySelectorAll(".node").forEach(n=>n.classList.remove("picked"));
+    st.tried=true;st.seqMode=false;st.runs=1;st.released=false;st.lastSeq=seq;
+    $("hint").textContent="长按「凝神」，开始感知";
+    let ev=SEQ_EVAL.find(e=>e.has.every(k=>st.picked.includes(k))&&(!e.not||e.not.every(k=>!st.picked.includes(k))));
+    if(!ev)ev={msg:"此序可行，只是收效平平。"};
+    if(ev.bad){$("n-yang").classList.add("strain");$("c4").classList.add("hot")}
+    line("一周天行毕。"+ev.msg);
+    if(!ev.bad){kn("候选周天","纳引诸穴之序，兼顾生发与敛热。","gone");
+      $("fiveSec").style.display="";$("five").style.display="";
+      st.self=30;st.stable=25}
+    $("modeText").innerHTML="当前：<b>试周天</b><br>身体在轮转中慢慢适应";
+    render();toast(ev.bad?"此序有隐忧。":"此序可立。")})}
 function repeat(){st.runs++;st.self=Math.min(60,st.self+11);st.stable=Math.min(60,st.stable+9);
+  if(st.lastSeq)animateFlow(st.lastSeq,()=>{},300);
   line(`第${["一","二","三","四","五","六","七"][st.runs-1]}轮行毕。有些段落，已不再需要步步推动。`);
   five();render()}
 function release(){st.released=true;st.self=Math.max(st.self,62);st.stable=Math.max(st.stable,66);
