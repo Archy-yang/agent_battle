@@ -60,6 +60,17 @@ type Acupoint struct {
 	// Activity[e] 五行活性 ∈ [0,1000]（§11-12）。
 	Activity [ElementCount]int64
 
+	// RefineMatchMin / RefineMatchMax 是炼化度归一化区间的锚定覆盖
+	// （修订包 D2/SA4-③ [v0.1 参数]）：0 = 自动推导（MatchMin=亲和有效值
+	// 均值、MatchMax=最大值，refinement.go）。非 0 时钉死该穴位的归一化
+	// 区间——用于修真世界丹田画像：相生循环使完全单行构成不可达（木恒有
+	// ~4%/Tick 转化为火），推导 MatchMax（max_e AffinityEff）高估收敛锚，
+	// 区间偏宽导致炼化吸引子到不了中档（SA4 根因③）。仍是输入侧参数：
+	// 公式结构不变，且逐穴位设置，保留 D2"同一股气在甲身精、乙身粗"的
+	// 相对性。不参与任何序列化断言（T4 只锁 refinement 不落存储）。
+	RefineMatchMin int64
+	RefineMatchMax int64
+
 	// PreviousFlow 上一 Tick 总流量（量，千分位，§15 FlowShock）。
 	// CurrentFlow 只统计经脉流量（进入的 Delivered + 流出的 Actual）：
 	// §15 的语境是"突然猛推一股灵气"的 Sequence 流量冲击；环境吸收是

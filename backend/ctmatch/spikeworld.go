@@ -47,13 +47,17 @@ func SpikeWorld() *cult.World {
 		Perception: 500,
 		BodyGraph: cult.BodyGraph{
 			Acupoints: []cult.Acupoint{
-				pt("下丹田", all(1000), 200000, 20000, 1000, 800, 950),                                       // 0 汇点
-				pt("青关", [cult.ElementCount]int64{1200, 750, 900, 850, 1000}, 10000, 8000, 400, 800, 950), // 1 主纳
-				pt("阳枢", [cult.ElementCount]int64{1100, 900, 800, 800, 800}, 6000, 4000, 500, 500, 900),   // 2
-				pt("土府", [cult.ElementCount]int64{800, 850, 1250, 750, 800}, 8000, 5000, 800, 650, 950),   // 3
-				pt("金门", [cult.ElementCount]int64{800, 750, 800, 1300, 850}, 5000, 4000, 600, 300, 920),   // 4 近闭
-				pt("玄泉", [cult.ElementCount]int64{900, 800, 800, 800, 1200}, 7000, 4000, 700, 700, 940),   // 5
-				pt("神庭", [cult.ElementCount]int64{1050, 1050, 800, 800, 800}, 3000, 3000, 300, 900, 880),  // 6 脆
+				// 丹田亲和画像 [v0.1 参数]（SA6 P3 调参）：温和逐元素梯度，
+				// 主行（木，CharacterAffinity 主导行）1000，其余 920~950 不等——
+				// 给 D3 筛选"留与散"提供丹田侧差分（原先全 1000 无差可筛，
+				// 炼化吸引子 0.271 爬不进中档）。
+				pt("下丹田", [cult.ElementCount]int64{1000, 930, 950, 940, 920}, 200000, 20000, 1000, 800, 950), // 0 汇点
+				pt("青关", [cult.ElementCount]int64{1200, 750, 900, 850, 1000}, 10000, 8000, 400, 800, 950),    // 1 主纳
+				pt("阳枢", [cult.ElementCount]int64{1100, 900, 800, 800, 800}, 6000, 4000, 500, 500, 900),      // 2
+				pt("土府", [cult.ElementCount]int64{800, 850, 1250, 750, 800}, 8000, 5000, 800, 650, 950),      // 3
+				pt("金门", [cult.ElementCount]int64{800, 750, 800, 1300, 850}, 5000, 4000, 600, 300, 920),      // 4 近闭
+				pt("玄泉", [cult.ElementCount]int64{900, 800, 800, 800, 1200}, 7000, 4000, 700, 700, 940),      // 5
+				pt("神庭", [cult.ElementCount]int64{1050, 1050, 800, 800, 800}, 3000, 3000, 300, 900, 880),     // 6 脆
 				// 中庭（修订包 B1 参数画像）：高吞吐（6000，普通穴之上）、
 				// 低 Retention（300）、Affinity[5] ≈ 1.0 不偏任何一行（五行反应炉，
 				// B7）、base_stability 高。特殊性全在参数取值，无 type 字段。
@@ -86,5 +90,14 @@ func SpikeWorld() *cult.World {
 		Activity:    [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
 		Temperature: 1000,
 	}
-	return cult.NewWorld(char, env)
+	w := cult.NewWorld(char, env)
+	// 丹田炼化归一化锚定 [v0.1 参数]（SA6 P3 调参，SA4 根因③）：
+	// MatchMax 原推导锚 = max_e AffinityEff（假设其余四行归零的完全收敛），
+	// 但相生循环使木恒有 ~4%/Tick 转化为火，单行构成物理不可达——区间偏宽，
+	// 炼化吸引子（实测构成 Match≈1006）被映射到 0.28。锚定改为相生循环下
+	// 可达收敛构成：MatchMin=910（≈均匀构成锚）、MatchMax=1080（≈可达收敛
+	// 构成 Match）。仅此穴位钉死区间，公式结构与相对性不变。
+	w.Character.BodyGraph.Acupoints[0].RefineMatchMin = 910
+	w.Character.BodyGraph.Acupoints[0].RefineMatchMax = 1080
+	return w
 }

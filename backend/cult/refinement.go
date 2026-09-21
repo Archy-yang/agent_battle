@@ -12,6 +12,8 @@ package cult
 //	Refine[i]        = clamp((Match[i] - MatchMin) / (MatchMax - MatchMin), 0, 1)
 //	MatchMin         = (Σ_e AffinityEff[i,e]) / 5   （均匀构成）
 //	MatchMax         = max_e AffinityEff[i,e]        （完全收敛）
+//	（穴位画像可用 RefineMatchMin/RefineMatchMax 钉死区间，SA4-③ [v0.1
+//	  参数]：锚定在相生循环下物理可达的收敛构成。公式结构不变。）
 //
 // 全程定点整数；Refinement=0 ⇒ D4 全部乘子 = 1（无炼化时行为与旧公式一致）。
 // 空穴（无气）炼化度为 0；五行亲和无梯度（MatchMax == MatchMin）时
@@ -44,12 +46,21 @@ func refineOf(a *Acupoint, c *Character) int64 {
 	// MatchMin = (Σ_e AffinityEff) / 5：对亲和值（千分位）求普通整数均值，
 	// 不用 fpDiv（5 是计数，不是千分位标度量）。
 	matchMin := (sum + ElementCount/2) / ElementCount
-	if max <= matchMin {
+	matchMax := max
+	// 归一化区间锚定覆盖（SA4-③ [v0.1 参数]）：穴位画像可钉死区间
+	// （spikeworld 丹田画像），公式结构不变；0 = 自动推导。
+	if a.RefineMatchMin > 0 {
+		matchMin = a.RefineMatchMin
+	}
+	if a.RefineMatchMax > 0 {
+		matchMax = a.RefineMatchMax
+	}
+	if matchMax <= matchMin {
 		return 0
 	}
 	match := int64(0)
 	for e := 0; e < ElementCount; e++ {
 		match += fpMul(fpDiv(a.Qi[e], load), affEff[e])
 	}
-	return fpClamp(fpDiv(match-matchMin, max-matchMin), 0, One)
+	return fpClamp(fpDiv(match-matchMin, matchMax-matchMin), 0, One)
 }
