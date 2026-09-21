@@ -100,9 +100,9 @@ svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(23
 .sec.row .tgl{border:0;background:none;color:#7f9387;font-size:10px;
   letter-spacing:.1em;cursor:pointer;padding:2px 4px}
 .stream{display:flex;flex-direction:column;gap:7px}
-.stream.fold{max-height:3.9em;overflow:hidden;
-  -webkit-mask-image:linear-gradient(180deg,#000 55%,transparent);
-  mask-image:linear-gradient(180deg,#000 55%,transparent)}
+.stream.fold{max-height:3.9em;overflow:hidden;justify-content:flex-end;
+  -webkit-mask-image:linear-gradient(0deg,#000 55%,transparent);
+  mask-image:linear-gradient(0deg,#000 55%,transparent)}
 .stream.open{max-height:236px;overflow-y:auto;overscroll-behavior:contain;
   -webkit-mask-image:none;mask-image:none}
 .ln{font-size:12.5px;line-height:1.75;color:#dcebe2}
@@ -291,11 +291,17 @@ function toggleStream(){streamOpen=!streamOpen;
   $("stream").classList.toggle("fold",!streamOpen);
   $("stream").classList.toggle("open",streamOpen);
   $("tgl").textContent=streamOpen?"收 起":"展 开"}
-function line(html,cls){const first=$("stream").firstElementChild;
-  if(first&&first.textContent===html.replace(/<[^>]+>/g,""))return;
+function line(html,cls){const box=$("stream");
+  const last=box.lastElementChild;
+  if(last&&last.textContent===html.replace(/<[^>]+>/g,""))return;
+  const stick=streamOpen?box.scrollHeight-box.scrollTop-box.clientHeight<24:true;
   const d=document.createElement("div");d.className="ln"+(cls?" "+cls:"");
-  d.innerHTML=html;$("stream").prepend(d)}
-function kn(t,d,cls){const k=document.createElement("div");k.className="kn"+(cls?" "+cls:"");
+  d.innerHTML=html;box.append(d);
+  if(streamOpen&&stick)box.scrollTop=box.scrollHeight}
+function kn(t,d,cls){
+  const old=Array.from($("known").children).find(e=>e.querySelector("b")&&e.querySelector("b").textContent===t);
+  if(old)old.remove();
+  const k=document.createElement("div");k.className="kn"+(cls?" "+cls:"");
   k.innerHTML=`<b>${t}</b>　${d}`;$("known").prepend(k)}
 function choice(label,sub,fn,cls){const b=document.createElement("button");
   b.className="choice "+(cls||"");b.innerHTML=label+(sub?`<small>${sub}</small>`:"");
@@ -414,7 +420,7 @@ function render(){
 }
 
 /* —— 各步 —— */
-function absorb(){st.absorbed=true;
+function absorb(){if(st.absorbed)return;st.absorbed=true;
   line("一缕气息真的入了体。它行至<em>左侧某处</em>明显更顺，随后缓缓沉入<em>下腹</em>。");
   kn("低分量引气可行","未觉损伤。");
   $("realm").innerHTML="<b>炼气</b> · 引气入体";render();
@@ -432,12 +438,12 @@ function strainQing(){st.strain=true;
   line("流量一加，青关处<em>胀意陡起</em>，气流滞涩。你赶紧收了力，胀意缓缓退去。");
   kn("青关 · 边界","高流量必胀。安全之径，在轻不在重。","gone");
   toast("青关的高流量，暂时是禁区。")}
-function compileArt(){st.baseArt=true;
+function compileArt(){if(st.baseArt)return;st.baseArt=true;
   line("<em>《青关引气诀》</em>成。此后寻常引气，身体自会依诀而行，不必再事事经心。");
   addArt("青关引气诀","轻引一缕，循左侧而入，过青关，归下丹田。行之有度，胀满不生。");
   $("modeText").innerHTML="当前：<b>渐渐上手</b><br>寻常引气已由分身依诀自行";
   render();toast("口诀已成，寻常引气不再劳心。")}
-function checkYang(){st.yang=true;st.yangTried=1;discover("yang","fire");
+function checkYang(){if(st.yang||!st.baseArt)return;st.yang=true;st.yangTried=1;discover("yang","fire");
   line("右侧那处已能稳定寻见，暂记作<em>阳枢</em>。气过此穴，<em>温热活跃</em>——只是连行数轮，热意会一层层积下来。");
   kn("阳枢","火气过此活跃；久行积热，恐生失稳。","gone");
   toast("右侧的温热再次出现。")}
@@ -445,7 +451,7 @@ function tryYang(){st.yangTried++;
   if(st.yangTried>=2){line("阳枢的温热<em>再度重现</em>，且较上次更沉。积热，是真的。");
     toast("温热非偶然，它在累积。")}
   else{line("温热如约而至，与前言相符。");toast("阳枢的温热复现了。")}}
-function seekTu(){st.tu=true;discover("tu","earth");
+function seekTu(){if(st.tu||!st.yang)return;st.tu=true;discover("tu","earth");
   line("再往下探，你寻见一处<em>厚重缓行</em>之地，暂记作<em>土府</em>。气过此处慢了下来，躁性也似被抚平几分。");
   kn("土府","气流经此放缓，躁性渐敛。");
   toast("寻得一处能敛热的所在。")}
