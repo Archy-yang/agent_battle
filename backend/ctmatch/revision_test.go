@@ -19,8 +19,8 @@ import (
 	"agentbattle/backend/cult"
 )
 
-// revWorld 建一个丹田预载木气的 SPIKE 世界（下丹田是唯一纯汇点，
-// 逆流外推只能由它发起）。
+// revWorld 建一个丹田预载木气的 SPIKE 世界（下丹田是核点——Capacity 全图
+// 最大，A1 v0.2 核点判据；逆流外推只能由它发起）。
 func revWorld(seed uint64) *CultSession {
 	w := SpikeWorld()
 	w.Character.BodyGraph.Acupoints[0].Qi[cult.Wood] = 50000
@@ -173,7 +173,7 @@ func TestReverseEdgeProtocolCompilesAndTrials(t *testing.T) {
 func TestCompileRejectsIllegalEdges(t *testing.T) {
 	g := &SpikeWorld().Character.BodyGraph
 
-	// 非汇点发起逆流：青关→神庭（天然向 神庭→青关），青关有出向经脉。
+	// 非核点发起逆流：青关→神庭（天然向 神庭→青关），青关非核点（Capacity 低于下丹田）。
 	badRev := `
 protocol: bad_reverse_v1
 actions:
@@ -181,9 +181,9 @@ actions:
 `
 	_, err := Compile([]byte(badRev), g)
 	if err == nil {
-		t.Fatal("非汇点逆流边应被拒绝编译")
+		t.Fatal("非核点逆流边应被拒绝编译")
 	}
-	if !strings.Contains(err.Error(), "pure sink") {
+	if !strings.Contains(err.Error(), "core point") {
 		t.Errorf("错误信息应说明逆流资格: %v", err)
 	}
 

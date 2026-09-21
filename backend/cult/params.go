@@ -204,10 +204,13 @@ const (
 )
 
 // RuleVersion 是底层规则版本标识（宪法 §18 Rule Versioning）。
-// 修订包 2026-09-21-circulation-refinement（逆流做功/逐元素筛选/炼化乘子）
-// 属 Rule Semantic Change 而非 Parameter Tuning：0.1.0 → 0.2.0。
+// 0.1.0 → 0.2.0（2026-09-21-circulation-refinement）：逆流做功/逐元素筛选/
+// 炼化乘子，Rule Semantic Change。
+// 0.2.0 → 0.3.0（修订包 A1 v0.2 主环拓扑）：逆流发起判据由"纯汇点（无出向
+// 经脉）"改为核点判据（CorePointOf，Capacity 最大穴位），Rule Semantic
+// Change 而非 Parameter Tuning。
 // 同 World 状态 + 同 Ops + 同 RuleVersion + 同 Seed ⇒ 逐位一致重演。
-const RuleVersion = "0.2.0-circulation"
+const RuleVersion = "0.3.0-mainloop"
 
 // ---------------------------------------------------------------------------
 // 定点算术

@@ -90,7 +90,9 @@ func TestCultAPIScriptSessionFlow(t *testing.T) {
 	if v0.PilotKind != "script" || v0.Acuity != 1 {
 		t.Fatalf("unexpected session header: %+v", v0)
 	}
-	if len(v0.Points) != 8 || len(v0.Body.Channels) != 8 {
+	// 8 穴 9 脉（A1 v0.2 主环拓扑：8 脉 + 新增 丹田→土府、阳枢→神庭，
+	// 移除 阳枢→中庭、中庭→丹田）。
+	if len(v0.Points) != 8 || len(v0.Body.Channels) != 9 {
 		t.Fatalf("body graph not exposed: %d points, %d channels", len(v0.Points), len(v0.Body.Channels))
 	}
 	if len(v0.Protocols) != 1 || v0.Protocols[0].Status != StatusDraft {

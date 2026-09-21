@@ -94,8 +94,8 @@ type Step struct {
 	Channel int // 经脉下标（编译期解析，边序列校验的产物）
 	// Reverse 标记本步为逆流边（修订包 C1/A2）：声明流向与经脉天然向
 	// 相反（实际气从 To 端流向 From 端——即 From=发起端）。编译期已校验
-	// 发起端是纯汇点（唯有丹田可发起外推，B1）；运行期映射
-	// FlowRequest{Reverse:true}，引擎仍保留最终否决权。
+	// 发起端是核点（Capacity 最大穴位，A1 v0.2 核点判据——唯有丹田可发起
+	// 外推，B1）；运行期映射 FlowRequest{Reverse:true}，引擎仍保留最终否决权。
 	Reverse bool
 	Element int // 元素：cult.Wood..Water；-1 = 混合（五均分）
 	Amount  int64
@@ -206,7 +206,7 @@ type yamlProtocol struct {
 
 // Compile 解析并静态校验一份 Protocol YAML（针对指定身体图）。
 // 穴位/经脉存在性、边序列合法性（修订包 C1：每条 guide 边须是图中真实
-// 经脉，任一方向；逆流边只允许纯汇点发起）、参数域（档位/强度/流量/
+// 经脉，任一方向；逆流边只允许核点发起）、参数域（档位/强度/流量/
 // 阈值）任一非法即拒绝，错误信息给出全部理由。
 func Compile(data []byte, g *cult.BodyGraph) (*Protocol, error) {
 	var y yamlProtocol
@@ -360,7 +360,7 @@ func compileGuide(gd *yamlGuide, g *cult.BodyGraph, nameIdx map[string]int) (Ste
 		return Step{}, fmt.Errorf("guide: unknown acupoint %q", gd.To)
 	}
 	// 边序列校验（修订包 C1）：每条边须是真实经脉（任一方向）；
-	// 逆流边（声明向与天然向相反）只允许纯汇点发起（A2，结构判据同引擎核）。
+	// 逆流边（声明向与天然向相反）只允许核点发起（A2，结构判据同引擎核）。
 	ch, rev, found := edgeFor(g, from, to)
 	if !found {
 		if from == to {
@@ -368,8 +368,8 @@ func compileGuide(gd *yamlGuide, g *cult.BodyGraph, nameIdx map[string]int) (Ste
 		}
 		return Step{}, fmt.Errorf("guide: no channel %q -> %q (path not connected)", gd.From, gd.To)
 	}
-	if rev && !isPureSink(g, from) {
-		return Step{}, fmt.Errorf("guide: reverse edge %q -> %q denied: only a pure sink may push against the natural flow", gd.From, gd.To)
+	if rev && !isCorePoint(g, from) {
+		return Step{}, fmt.Errorf("guide: reverse edge %q -> %q denied: only the core point may push against the natural flow", gd.From, gd.To)
 	}
 	elem, err := parseElement(gd.Element)
 	if err != nil {
@@ -446,8 +446,9 @@ func pointIndex(g *cult.BodyGraph) map[string]int {
 // 每条边 {from,to} 须是 BodyGraph 真实经脉，任一方向皆可）：
 // 先找天然向 fi→ti（顺流边）；再找 ti→fi（逆流边，reverse=true——实际气
 // 从 fi 端推向 ti 端）。两向皆无或 fi==ti 则 found=false。
-// 注意：逆流边的发起资格（纯汇点，A2）由调用方另行校验——编译期与
-// 意图路径都用 isPureSink，与引擎核 runTransfers 的出向表判据一致。
+// 注意：逆流边的发起资格（核点，A1 v0.2/A2）由调用方另行校验——编译期与
+// 意图路径都用 isCorePoint，与引擎核 runTransfers 同用 cult.CorePointOf，
+// 判据单点实现，无漂移。
 func edgeFor(g *cult.BodyGraph, fi, ti int) (channel int, reverse, found bool) {
 	if fi == ti {
 		return -1, false, false
@@ -465,16 +466,12 @@ func edgeFor(g *cult.BodyGraph, fi, ti int) (channel int, reverse, found bool) {
 	return -1, false, false
 }
 
-// isPureSink 报告节点 i 是否为纯汇点（无出向经脉）——丹田画像的结构
-// 判据（修订包 B1，无 type 字段——宪法 §8），与引擎核 runTransfers 的
-// 出向表一致。唯有纯汇点可发起逆流外推（修订包 A2）。
-func isPureSink(g *cult.BodyGraph, i int) bool {
-	for _, c := range g.Channels {
-		if c.From == i {
-			return false
-		}
-	}
-	return true
+// isCorePoint 报告节点 i 是否为核点（修订包 A1 v0.2：Capacity 最大的穴位）——
+// 丹田画像的结构判据（B1，无 type 字段——宪法 §8）。实现单点在
+// cult.CorePointOf，本包不复制判据逻辑；旧"纯汇点（无出向经脉）"判据在
+// 主环拓扑下失效（丹田有出向边 丹→土）。唯有核点可发起逆流外推（修订包 A2）。
+func isCorePoint(g *cult.BodyGraph, i int) bool {
+	return i == cult.CorePointOf(g)
 }
 
 // parseElement 解析元素名（英文/中文）；""、"mixed"、"all" 表示混合（-1）。

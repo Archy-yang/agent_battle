@@ -41,7 +41,8 @@ type FlowRequest struct {
 	// Amount[e] 是对元素 e 的请求流量；0 表示不请求。
 	Amount [ElementCount]int64
 	// Reverse 标记逆流传输（修订包 A2）：沿天然向反向行走。
-	// 唯有"无出向经脉"的纯汇点（丹田画像，B1）可发起；其余一律被引擎拒绝。
+	// 唯有核点（Capacity 最大的穴位，A1 v0.2 核点判据——丹田画像，B1）
+	// 可发起；其余一律被引擎拒绝。
 	Reverse bool
 }
 
@@ -113,7 +114,7 @@ type TransferReport struct {
 	// Reverse 标记本条为逆流传输（A2）：Actual 沿天然向反向行走
 	// （从 To 端流向 From 端），From/To 仍为经脉天然端点。
 	Reverse bool
-	// Rejected 标记逆流请求被引擎拒绝（A2：发起者不是纯汇点），
+	// Rejected 标记逆流请求被引擎拒绝（A2：发起者不是核点），
 	// 此时无任何流量发生。
 	Rejected bool
 	// WorkCost[e] 是逆流做功代价（从发起汇点按元素扣除；A2）。
@@ -444,12 +445,30 @@ func loadRatio(a *Acupoint, load int64) int64 {
 	return fpDiv(load, cap)
 }
 
+// CorePointOf 返回身体图的核点下标（修订包 A1 v0.2）：Capacity 最大的穴位。
+//
+// 结构判据而非类型枚举（宪法 §8）：丹田画像的特殊性——唯可发起逆流外推
+// （A2）——全部落在其"Capacity 最高"的参数事实上，无 type 字段。
+// 旧判据"纯汇点（无出向经脉）"在主环拓扑（A1 v0.2）下失效：丹田是环上的
+// 泵，有出向边 丹→土。并列时取下标最小者，保证确定性。
+// ctmatch 的协议编译/意图路径与本引擎核同用本函数，避免两份判据漂移。
+func CorePointOf(g *BodyGraph) int {
+	core := 0
+	for i := 1; i < len(g.Acupoints); i++ {
+		if g.Acupoints[i].Capacity > g.Acupoints[core].Capacity {
+			core = i
+		}
+	}
+	return core
+}
+
 // runTransfers 实现 §8-9（含修订包 A2 逆流做功）。
 //
 // 逆流语义（A2/B1）：请求带 Reverse 标记时，Actual 沿经脉天然向反向行走
-// （从 To 端流向 From 端）。唯有"无出向经脉"的纯汇点（B1 丹田画像，不设
-// type 字段——宪法 §8）可发起逆流；其余逆流请求被拒绝（Rejected），
-// 穴与穴之间不得逆流。逆流在常规传输损耗之外另付做功代价：
+// （从 To 端流向 From 端）。唯有核点（Capacity 最大的穴位，A1 v0.2 核点
+// 判据——B1 丹田画像，不设 type 字段——宪法 §8）可发起逆流；其余逆流请求
+// 被拒绝（Rejected）——逆经脉而行，唯丹田能推得动，穴与穴之间不得逆流。
+// 逆流在常规传输损耗之外另付做功代价：
 //
 //	WorkCost = Actual × BaseWork × (1 + LoadRatio_dst × KBack) × (1 - Conductance)
 //	ReverseHeat = WorkCost × KHeat → 逆流目的地 ThermalLoad
@@ -458,13 +477,9 @@ func runTransfers(w *World, refines []int64) []TransferReport {
 	reports := make([]TransferReport, 0, len(w.Ops.Requests))
 	controlErrMax := fpMul(ControlErrorBase, One-w.Character.Control)
 
-	// 出向表：节点是否有出向经脉（B1 画像判据——丹田是唯一无出向的汇点）。
-	outgoing := make([]bool, len(g.Acupoints))
-	for _, c := range g.Channels {
-		if c.From >= 0 && c.From < len(g.Acupoints) {
-			outgoing[c.From] = true
-		}
-	}
+	// 核点判据（修订包 A1 v0.2）：逆流发起资格 = 发起者（逆流请求的 To 端）
+	// 是核点（CorePointOf，见上）。
+	core := CorePointOf(g)
 
 	for _, req := range w.Ops.Requests {
 		if req.Channel < 0 || req.Channel >= len(g.Channels) {
@@ -479,8 +494,8 @@ func runTransfers(w *World, refines []int64) []TransferReport {
 		// 端点选取：顺流 From→To；逆流 To→From（A2）。
 		src, dst := &g.Acupoints[ch.From], &g.Acupoints[ch.To]
 		if req.Reverse {
-			if outgoing[ch.To] {
-				// 发起者不是纯汇点（非丹田画像）——穴与穴之间不得逆流。
+			if ch.To != core {
+				// 发起者不是核点——逆经脉而行，唯丹田能推得动。
 				tr.Rejected = true
 				reports = append(reports, tr)
 				continue

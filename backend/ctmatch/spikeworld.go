@@ -7,10 +7,14 @@ package ctmatch
 // 设计目标：存在一条"新手粗档位即可达成"的稳定吐纳路径，但不给任何提示。
 //   - 青关：主纳穴。开度大开、通量宽（8000），混合引流 large（每行 1280）
 //     足以对冲 trace/small/medium 各档吸收的反压平衡——单穴"吸+引"即可闭环。
-//   - 下丹田：巨容汇点（200000），引流去处，30+ Tick 内不会自己顶到不适档。
-//     丹田双入口拓扑（修订包 B3）：青关→下丹田为捷径（快、单属性直入），
-//     中庭→下丹田为主汇（慢、多属性混合后入）；丹田无出向经脉——
-//     唯一可发起逆流外推的纯汇点（修订包 A2/B1，无 type 字段）。
+//   - 下丹田：巨容储库（200000，全图 Capacity 最大 → A1 v0.2 核点判据下
+//     唯一可发起逆流外推者，cult.CorePointOf）与主环的泵。
+//   - 主环拓扑（修订包 A1 v0.2，取代旧归流树）：
+//
+//	下丹田 → 土府 → 中庭 → 阳枢 → 神庭 → 青关 → 归下丹田
+//
+//     环向 = 天然流向（顺流省力）；旁支 青关/金门/玄泉 → 中庭 维持归流
+//     枢纽角色。引气入体不变：青关 → 丹田仍为天然向，M1 开局体验原样。
 //   - 神庭：脆穴（容量 3000、开度 0.90）。在它上面用 large 吸收会迅速过载
 //     受损——为 M2 的"不适→自主调整"提供真实触发点。
 //   - 环境五行接近均衡（木略盛）：混合引流才可能对冲混合吸收，
@@ -21,7 +25,7 @@ package ctmatch
 
 import "agentbattle/backend/cult"
 
-// SpikeWorld 构造 SPIKE 修炼世界（8 穴位 / 8 经脉 / 五行近均衡环境）。
+// SpikeWorld 构造 SPIKE 修炼世界（8 穴位 / 9 经脉 / 五行近均衡环境）。
 func SpikeWorld() *cult.World {
 	pt := func(name string, aff [cult.ElementCount]int64, cap, tp, ret int64, open, stab int64) cult.Acupoint {
 		return cult.Acupoint{
@@ -56,14 +60,24 @@ func SpikeWorld() *cult.World {
 				pt("中庭", all(1000), 9000, 6000, 300, 750, 930), // 7 中枢
 			},
 			Channels: []cult.Channel{
-				{Name: "青关→下丹田", From: 1, To: 0, BaseConductance: 950, Throughput: 8000},
-				{Name: "青关→中庭", From: 1, To: 7, BaseConductance: 700, Throughput: 6000},
-				{Name: "中庭→下丹田", From: 7, To: 0, BaseConductance: 850, Throughput: 12000},
-				{Name: "阳枢→中庭", From: 2, To: 7, BaseConductance: 700, Throughput: 6000},
+				// 主环（修订包 A1 v0.2：环向 = 天然流向，丹田是环上的泵与储库）。
+				// 下丹田→土府：[v0.1 参数] 新增（泵的出口），量级沿用原主汇
+				// 中庭→丹田（850/12000）。
+				{Name: "下丹田→土府", From: 0, To: 3, BaseConductance: 850, Throughput: 12000},
+				// 土府→中庭：M1 原边，方向不变。
 				{Name: "土府→中庭", From: 3, To: 7, BaseConductance: 700, Throughput: 6000},
+				// 中庭→阳枢：原 阳枢→中庭 反向（A1 v0.2 唯一改向段），参数沿用。
+				{Name: "中庭→阳枢", From: 7, To: 2, BaseConductance: 700, Throughput: 6000},
+				// 阳枢→神庭：[v0.1 参数] 新增，量级沿用原 阳枢→中庭（700/6000）。
+				{Name: "阳枢→神庭", From: 2, To: 6, BaseConductance: 700, Throughput: 6000},
+				// 神庭→青关：M1 原边，方向不变。
+				{Name: "神庭→青关", From: 6, To: 1, BaseConductance: 600, Throughput: 5000},
+				// 青关→下丹田：M1 原边（主环收尾段，兼作引气入体捷径），方向不变。
+				{Name: "青关→下丹田", From: 1, To: 0, BaseConductance: 950, Throughput: 8000},
+				// 非环旁支（A1 v0.2 保留）：维持中庭的归流枢纽角色。
+				{Name: "青关→中庭", From: 1, To: 7, BaseConductance: 700, Throughput: 6000},
 				{Name: "金门→中庭", From: 4, To: 7, BaseConductance: 600, Throughput: 5000},
 				{Name: "玄泉→中庭", From: 5, To: 7, BaseConductance: 700, Throughput: 6000},
-				{Name: "神庭→青关", From: 6, To: 1, BaseConductance: 600, Throughput: 5000},
 			},
 		},
 	}

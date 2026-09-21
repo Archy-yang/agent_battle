@@ -452,8 +452,8 @@ func (s *CultSession) opsFromIntents(intents []Intent, res *TickResult) (cult.Op
 				continue
 			}
 			// 边解析（修订包 C1/A2）：天然向为顺流；反向则视为逆流意图，
-			// 发起端须是纯汇点（唯丹田可发起外推）——否则走"此路不通"
-			// 回执路径，产出定性回执，引擎不接触逆流请求。
+			// 发起端须是核点（A1 v0.2：Capacity 最大穴位，唯丹田可发起外推）
+			// ——否则走"此路不通"回执路径，产出定性回执，引擎不接触逆流请求。
 			ch, rev, found := edgeFor(g, from, to)
 			if !found {
 				drop(it, "no channel "+it.From+"->"+it.To)
@@ -461,7 +461,7 @@ func (s *CultSession) opsFromIntents(intents []Intent, res *TickResult) (cult.Op
 				plans = append(plans, plan)
 				continue
 			}
-			if rev && !isPureSink(g, from) {
+			if rev && !isCorePoint(g, from) {
 				drop(it, "reverse flow denied "+it.From+"->"+it.To)
 				plan.rejected, plan.outcome, plan.detail = true, WordRejected, WhyNotBackflow
 				plans = append(plans, plan)

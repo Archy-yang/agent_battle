@@ -14,8 +14,8 @@ import (
 //	下丹田(0) ← 青关(1) ← 神庭(2)
 //	channel 0: 青关→下丹田；channel 1: 神庭→青关
 //
-// 下丹田是唯一无出向经脉的纯汇点（B1 丹田画像）。满 Control 使控制
-// 误差 ε ≡ 0，隔离变量。
+// 下丹田是核点（A1 v0.2 核点判据：Capacity 最大穴位，B1 丹田画像）。
+// 满 Control 使控制误差 ε ≡ 0，隔离变量。
 
 func revAcupoint(name string, qi [ElementCount]int64) Acupoint {
 	return Acupoint{
@@ -53,7 +53,10 @@ func revWorld() *World {
 		Activity:    [ElementCount]int64{1000, 1000, 1000, 1000, 1000},
 		Temperature: 1000,
 	}
-	return NewWorld(char, env)
+	w := NewWorld(char, env)
+	// 丹田画像（B1）：Capacity 全图最高（A1 v0.2 核点判据的唯一结构依据）。
+	w.Character.BodyGraph.Acupoints[0].Capacity = 200000
+	return w
 }
 
 // checkConservation 断言一个 Tick 报告的守恒恒等式（修订包 A3：精确整数，
@@ -88,15 +91,15 @@ func TestConservation_MultiTick(t *testing.T) {
 	}
 }
 
-// TestReverse_DantianOnly（T2，A2）：唯有丹田（纯汇点画像）可发起逆流；
-// 非丹田发起的逆流传输在引擎层被拒绝（Rejected，无任何流量）。
+// TestReverse_DantianOnly（T2，A2）：唯有丹田（核点画像，A1 v0.2 核点判据）
+// 可发起逆流；非核点发起的逆流传输在引擎层被拒绝（Rejected，无任何流量）。
 // 会话层回执属后续任务，此处只锁引擎语义。
 func TestReverse_DantianOnly(t *testing.T) {
 	w := revWorld()
 	w.Ops = Ops{Requests: []FlowRequest{
-		// 合法：发起者下丹田是纯汇点（沿 青关→丹田 反向行走）。
+		// 合法：发起者下丹田是核点（Capacity 全图最大；沿 青关→丹田 反向行走）。
 		{Channel: 0, Reverse: true, Amount: [ElementCount]int64{2000, 0, 0, 0, 0}},
-		// 非法：发起者青关有出向经脉（青关→丹田）——穴与穴之间不得逆流。
+		// 非法：发起者青关不是核点（Capacity 低于丹田）——穴与穴之间不得逆流。
 		{Channel: 1, Reverse: true, Amount: [ElementCount]int64{500, 0, 0, 0, 0}},
 	}}
 	rep := Advance(w)
