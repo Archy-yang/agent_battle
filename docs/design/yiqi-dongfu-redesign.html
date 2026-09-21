@@ -85,7 +85,7 @@ svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(23
 .nodedetail b{display:block;font:600 13px/1 var(--serif);color:#e4f5eb;margin-bottom:5px;letter-spacing:.1em}
 .nodedetail .x{position:absolute;right:8px;top:6px;border:0;background:none;color:#5c6f64;font-size:13px;cursor:pointer}
 
-.hint{position:absolute;bottom:-30px;left:50%;transform:translateX(-50%);
+.hint{position:absolute;bottom:-16px;left:50%;transform:translateX(-50%);
   font-size:10px;color:#8ca094;background:rgba(5,9,6,.62);padding:6px 11px;
   border-radius:999px;border:1px solid rgba(184,220,199,.1);white-space:nowrap}
 
@@ -96,7 +96,15 @@ svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(23
 .sec{font:600 10px/1 var(--serif);letter-spacing:.28em;color:#71857a;margin:20px 0 9px}
 .sec:first-child{margin-top:0}
 
-.stream{display:flex;flex-direction:column;gap:7px;min-height:64px}
+.sec.row{display:flex;justify-content:space-between;align-items:center}
+.sec.row .tgl{border:0;background:none;color:#7f9387;font-size:10px;
+  letter-spacing:.1em;cursor:pointer;padding:2px 4px}
+.stream{display:flex;flex-direction:column;gap:7px}
+.stream.fold{max-height:3.9em;overflow:hidden;
+  -webkit-mask-image:linear-gradient(180deg,#000 55%,transparent);
+  mask-image:linear-gradient(180deg,#000 55%,transparent)}
+.stream.open{max-height:236px;overflow-y:auto;overscroll-behavior:contain;
+  -webkit-mask-image:none;mask-image:none}
 .ln{font-size:12.5px;line-height:1.75;color:#dcebe2}
 .ln em{font-style:normal;color:var(--jade)}
 .ln.rc{color:#b9cfc2;border-left:2px solid rgba(143,224,177,.35);padding-left:9px}
@@ -195,12 +203,12 @@ svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(23
         <svg class="chan" viewBox="0 0 250 390">
           <line id="c1" x1="125" y1="52"  x2="62"  y2="118"/>
           <line id="c2" x1="62"  y1="118" x2="125" y2="162"/>
-          <line id="c3" x1="62"  y1="118" x2="125" y2="322"/>
+          <line id="c3" x1="62"  y1="118" x2="125" y2="300"/>
           <line id="c4" x1="188" y1="118" x2="125" y2="162"/>
           <line id="c5" x1="80"  y1="284" x2="125" y2="162"/>
           <line id="c6" x1="186" y1="224" x2="125" y2="162"/>
           <line id="c7" x1="64"  y1="224" x2="125" y2="162"/>
-          <line id="c8" x1="125" y1="162" x2="125" y2="322"/>
+          <line id="c8" x1="125" y1="162" x2="125" y2="300"/>
         </svg>
         <button class="node" id="n-shen" style="left:125px;top:52px"  data-name="未知" onclick="tapNode('shen')">？</button>
         <button class="node" id="n-qing" style="left:62px;top:118px"  data-name="未知" onclick="tapNode('qing')">？</button>
@@ -209,7 +217,7 @@ svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(23
         <button class="node" id="n-jin"  style="left:186px;top:224px" data-name="未知" onclick="tapNode('jin')">？</button>
         <button class="node" id="n-xuan" style="left:64px;top:224px"  data-name="未知" onclick="tapNode('xuan')">？</button>
         <button class="node" id="n-zhong" style="left:125px;top:162px" data-name="未知" onclick="tapNode('zhong')">？</button>
-        <button class="node known" id="n-dan" style="left:125px;top:322px" data-name="下丹田" onclick="tapNode('dan')">丹</button>
+        <button class="node known" id="n-dan" style="left:125px;top:300px" data-name="下丹田" onclick="tapNode('dan')">丹</button>
 
         <div class="nodedetail" id="detail">
           <button class="x" onclick="hideDetail()">✕</button>
@@ -221,8 +229,8 @@ svg.chan line.hot{stroke:rgba(232,154,114,.8);filter:drop-shadow(0 0 5px rgba(23
     </section>
 
     <section class="panel">
-      <div class="sec">感 知</div>
-      <div class="stream" id="stream"></div>
+      <div class="sec row">感 知 <button class="tgl" id="tgl" onclick="toggleStream()">展 开</button></div>
+      <div class="stream fold" id="stream"></div>
 
       <div class="sec">此刻，你想——</div>
       <div class="choices" id="choices"></div>
@@ -278,7 +286,14 @@ const NODE_TXT={
 
 function toast(t){$("toast").textContent=t;$("toast").classList.add("show");
   clearTimeout(toast.t);toast.t=setTimeout(()=>$("toast").classList.remove("show"),2200)}
-function line(html,cls){const d=document.createElement("div");d.className="ln"+(cls?" "+cls:"");
+let streamOpen=false;
+function toggleStream(){streamOpen=!streamOpen;
+  $("stream").classList.toggle("fold",!streamOpen);
+  $("stream").classList.toggle("open",streamOpen);
+  $("tgl").textContent=streamOpen?"收 起":"展 开"}
+function line(html,cls){const first=$("stream").firstElementChild;
+  if(first&&first.textContent===html.replace(/<[^>]+>/g,""))return;
+  const d=document.createElement("div");d.className="ln"+(cls?" "+cls:"");
   d.innerHTML=html;$("stream").prepend(d)}
 function kn(t,d,cls){const k=document.createElement("div");k.className="kn"+(cls?" "+cls:"");
   k.innerHTML=`<b>${t}</b>　${d}`;$("known").prepend(k)}
