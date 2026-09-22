@@ -1,33 +1,29 @@
-/* src/cult/cult.css —— 修炼五屏视觉（逐字复用 docs/design/yiqi-zhoutian-ui-draft.html 的 token）。
-   墨夜为底，青玉为气，鎏金为引，朱砂为界。 */
+/* src/cult/cult.css —— 单页洞府视觉。逐字采用 docs/design/yiqi-dongfu-redesign.html
+   的 token 与形制：墨夜为底，青玉为气，鎏金为引。类名统一加 cu- 前缀防全局泄漏
+   （本文件被 App.vue 全局引入）。 */
 @import url('https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&display=swap');
 
 .cult-root {
-  --ink: #0C1216;
-  --panel: #141D23;
-  --panel-2: #1B272E;
-  --line: #2A3941;
-  --moon: #E9E4D6;
-  --mist: #8FA096;
-  --gold: #C9A454;
-  --jade: #7FB8A4;
+  --ink: #eaf4ee;
+  --muted: #8ba294;
+  --jade: #8fe0b1;
+  --gold: #e2c98c;
+  --warm: #e89a72;
+  --water: #8bb7e0;
+  --metal: #cdd6da;
+  --line: rgba(184, 220, 199, .14);
   --cinnabar: #C0523F;
-  --w-wood: #7FA86B;
-  --w-fire: #C0523F;
-  --w-earth: #C9A454;
-  --w-metal: #AEB8C0;
-  --w-water: #6E93B8;
-  --grey-dim: #5A6B74;
+  --serif: 'Noto Serif SC', 'Songti SC', 'STSong', serif;
 
-  background: linear-gradient(178deg, #10181D 0%, #0C1418 55%, #0A1114 100%);
-  color: var(--moon);
-  font-family: 'Noto Serif SC', serif;
+  background: radial-gradient(circle at 50% 10%, rgba(93, 166, 130, .13), transparent 34%),
+    linear-gradient(180deg, #08110d, #040805 60%);
+  color: var(--ink);
+  font-family: var(--serif);
   font-size: 15px;
   line-height: 1.7;
   -webkit-font-smoothing: antialiased;
-  /* 手机/桌面通吃：固定定位精确接管整个视口（无视全局 .wrap 内边距
-     与浏览器动态工具栏），只有 .c-body 内滚，外层永不滚动——
-     轮询刷新不再引起整页跳动 */
+  /* 手机/桌面通吃：固定定位精确接管整个视口，只有 .cu-scroll 内滚，
+     外层永不滚动——轮询刷新不再引起整页跳动 */
   position: fixed;
   inset: 0;
   border-radius: 0;
@@ -37,39 +33,314 @@
   overflow: hidden;
   overscroll-behavior: contain;
 }
+.cult-root button, .cult-root input, .cult-root textarea { font: inherit; color: inherit; }
 .cult-root .kai { font-family: 'Ma Shan Zheng', cursive; font-weight: 400; }
 .cult-root .ui { font-family: 'Noto Sans SC', sans-serif; }
 
-/* —— 顶栏（会话头） —— */
-.c-status {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 10px 18px 4px; font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: var(--mist);
+/* —— 顶栏 —— */
+.cu-top {
+  flex: none; z-index: 20;
+  padding: calc(10px + env(safe-area-inset-top)) 16px 8px;
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  background: linear-gradient(180deg, rgba(4, 8, 5, .92), rgba(4, 8, 5, 0));
 }
-.c-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 14px 8px; }
-.c-head .who { display: flex; align-items: center; gap: 9px; }
-.c-head .avatar {
-  width: 34px; height: 34px; border-radius: 50%; flex: none;
-  border: 1px solid var(--gold); display: flex; align-items: center; justify-content: center;
-  font-family: 'Ma Shan Zheng', cursive; font-size: 19px; color: var(--gold);
-  background: rgba(201, 164, 84, .08);
+.cu-top h1 {
+  margin: 0; font: 600 15px/1 var(--serif);
+  letter-spacing: .14em; color: #dcefe4;
 }
-.c-head .nm { font-family: 'Ma Shan Zheng', cursive; font-size: 17px; letter-spacing: 1px; }
-.c-head .rl { font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: var(--mist); letter-spacing: 1px; }
-.c-head .mini {
-  font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: var(--mist);
-  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; background: rgba(20, 29, 35, .8);
+.cu-top .realm { font-size: 11px; color: var(--muted); flex: 1; text-align: center; }
+.cu-top .realm b { color: var(--gold); font-weight: 600; }
+.cu-top .exit {
+  background: none; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font-family: 'Noto Sans SC', sans-serif; font-size: 10px;
+  padding: 3px 10px; cursor: pointer;
+}
+.cu-err {
+  flex: none; color: var(--warm); font-family: 'Noto Sans SC', sans-serif;
+  font-size: 10.5px; padding: 0 16px 4px;
+}
+.cu-loading { padding: 40px 16px; text-align: center; color: var(--muted); font-size: 12px; }
+
+/* —— 滚动体 —— */
+.cu-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: calc(20px + env(safe-area-inset-top)) 0 96px;
+}
+.cu-page { min-height: 100%; }
+
+/* —— 身体场景 —— */
+.cu-scene {
+  height: 50vh; min-height: 380px; position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.mist { position: absolute; inset: 0; }
+.mist i {
+  position: absolute; width: 10px; height: 10px; border-radius: 50%;
+  background: rgba(143, 224, 177, .5); box-shadow: 0 0 18px rgba(143, 224, 177, .4);
+  opacity: .14; transition: .6s;
+}
+.mist i.m2 { background: rgba(139, 183, 224, .45); box-shadow: 0 0 18px rgba(139, 183, 224, .35); }
+.mist i.m3 { background: rgba(226, 201, 140, .4); box-shadow: 0 0 18px rgba(226, 201, 140, .3); }
+.cu-scene.sensed .mist i { opacity: .7; animation: cu-drift 4.5s ease-in-out infinite; }
+.mist i.m2 { animation-delay: .8s; }
+.mist i.m3 { animation-delay: 1.6s; }
+@keyframes cu-drift {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-10px) scale(1.15); }
 }
 
-/* —— 屏体 —— */
-.c-body {
-  flex: 1; overflow-y: auto; padding: 2px 14px 8px;
-  display: flex; flex-direction: column; gap: 9px; min-height: 0;
+.cu-body { position: relative; width: 250px; height: 390px; }
+.cu-body .sil {
+  position: absolute; left: 50%; transform: translateX(-50%); top: 6px;
+  width: 118px; height: 372px; border-radius: 50% 50% 44% 44% / 20% 20% 80% 80%;
+  border: 1px solid rgba(184, 220, 199, .13);
+  background: linear-gradient(180deg, rgba(143, 224, 177, .035), rgba(143, 224, 177, .006));
 }
-/* 满屏屏体（洞府）：内容自身定高，感知流内滚——外层不滚、布局不跳 */
-.c-full {
-  height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 9px;
+.cu-body .breath {
+  position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%);
+  width: 220px; height: 220px; border-radius: 50%;
+  border: 1px solid rgba(143, 224, 177, .09); opacity: .18;
 }
-.c-full .c-sense { flex: 1; min-height: 140px; }
+.cu-body .breath.on { animation: cu-breathe 3.4s ease-in-out infinite; }
+@keyframes cu-breathe {
+  0%, 100% { transform: translate(-50%, -50%) scale(.85); opacity: .18; }
+  50% { transform: translate(-50%, -50%) scale(1.05); opacity: .7; }
+}
+
+/* 经脉：零静态——平时完全不可见；flow = 行进中的气流，afterglow = 余辉渐隐 */
+svg.chan { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+svg.chan line { stroke: rgba(143, 224, 177, .75); stroke-width: 1.5; opacity: 0; transition: .5s; }
+svg.chan line.flow {
+  opacity: .95; stroke-dasharray: 5 13;
+  animation: cu-dash .45s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(143, 224, 177, .7));
+}
+@keyframes cu-dash { to { stroke-dashoffset: -18; } }
+svg.chan line.afterglow { opacity: .28; transition: opacity 2.8s ease; animation: none; }
+
+/* 穴位：已知显名，未知 = 模糊小波动（虚线淡圈，无名字无「?」，不提示总数） */
+.cu-body .node {
+  position: absolute; width: 36px; height: 36px; border-radius: 50%;
+  transform: translate(-50%, -50%); border: 1px solid rgba(184, 220, 199, .2);
+  background: #0a140f; display: grid; place-items: center; color: #7d9186;
+  font: 400 12px/1 var(--serif); transition: .35s; z-index: 3; padding: 0; cursor: pointer;
+}
+.cu-body .node::after {
+  content: attr(data-name); position: absolute; top: 40px; left: 50%;
+  transform: translateX(-50%); font-size: 9px; white-space: nowrap;
+  color: #71857a; letter-spacing: .08em;
+}
+.cu-body .node.faint {
+  width: 20px; height: 20px; border-style: dashed; background: transparent;
+  opacity: .5; cursor: default; animation: cu-ripple 3.2s ease-in-out infinite;
+}
+@keyframes cu-ripple {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: .5; }
+  50% { transform: translate(-50%, -50%) scale(1.25); opacity: .28; }
+}
+.cu-body .node.known {
+  border-color: var(--jade); color: #d9f6e6;
+  box-shadow: 0 0 0 5px rgba(143, 224, 177, .05), 0 0 16px rgba(143, 224, 177, .15);
+}
+.cu-body .node.known.fire { border-color: var(--warm); color: #ffd9c2; box-shadow: 0 0 0 5px rgba(232, 154, 114, .05), 0 0 16px rgba(232, 154, 114, .16); }
+.cu-body .node.known.earth { border-color: var(--gold); color: #f2e0ac; box-shadow: 0 0 0 5px rgba(226, 201, 140, .05), 0 0 16px rgba(226, 201, 140, .14); }
+.cu-body .node.known.water { border-color: var(--water); color: #d3e5f8; box-shadow: 0 0 0 5px rgba(139, 183, 224, .05), 0 0 16px rgba(139, 183, 224, .14); }
+.cu-body .node.known.metal { border-color: var(--metal); color: #eef2f4; box-shadow: 0 0 0 5px rgba(205, 214, 218, .05), 0 0 16px rgba(205, 214, 218, .12); }
+.cu-body .node.picked { outline: 2px solid rgba(201, 245, 217, .65); outline-offset: 4px; }
+
+/* 点穴详情浮卡 */
+.cu-body .nodedetail {
+  position: absolute; z-index: 10; left: 50%; transform: translateX(-50%);
+  bottom: 6px; width: min(320px, 86%); padding: 11px 13px; border-radius: 13px;
+  border: 1px solid var(--line); background: rgba(7, 16, 11, .94);
+  backdrop-filter: blur(8px); font-size: 11px; line-height: 1.7; color: #c6d8cd;
+}
+.cu-body .nodedetail b {
+  display: block; font: 600 13px/1 var(--serif); color: #e4f5eb;
+  margin-bottom: 5px; letter-spacing: .1em;
+}
+.cu-body .nodedetail .x {
+  position: absolute; right: 8px; top: 6px; border: 0; background: none;
+  color: #5c6f64; font-size: 13px; cursor: pointer;
+}
+.cu-hint {
+  position: absolute; bottom: -14px; left: 50%; transform: translateX(-50%);
+  font-size: 10px; color: #8ca094; background: rgba(5, 9, 6, .62); padding: 6px 11px;
+  border-radius: 999px; border: 1px solid rgba(184, 220, 199, .1); white-space: nowrap;
+}
+
+/* —— 叙事面板 —— */
+.cu-panel {
+  position: relative; margin-top: 14px; border-radius: 22px 22px 0 0;
+  background: linear-gradient(180deg, rgba(10, 19, 14, .97), #060e09);
+  border-top: 1px solid var(--line); padding: 16px 16px 20px;
+}
+.sec {
+  font: 600 10px/1 var(--serif); letter-spacing: .28em; color: #71857a; margin: 20px 0 9px;
+}
+.sec.row { display: flex; justify-content: space-between; align-items: center; }
+.sec .tgl {
+  border: 0; background: none; color: #7f9387; font-size: 10px;
+  letter-spacing: .1em; cursor: pointer; padding: 2px 4px;
+}
+
+/* 感知流：折起 ~两行只露最新（flex-end + 顶部渐隐），展开限高内滚 */
+.cu-stream { display: flex; flex-direction: column; gap: 7px; }
+.cu-stream.fold {
+  max-height: 3.9em; overflow: hidden; justify-content: flex-end;
+  -webkit-mask-image: linear-gradient(0deg, #000 55%, transparent);
+  mask-image: linear-gradient(0deg, #000 55%, transparent);
+}
+.cu-stream.open {
+  max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
+  -webkit-mask-image: none; mask-image: none;
+}
+.ln { font-size: 12.5px; line-height: 1.75; color: #dcebe2; }
+.ln.rc {
+  color: #b9cfc2; border-left: 2px solid rgba(143, 224, 177, .35); padding-left: 9px;
+}
+.ln.voice {
+  background: rgba(143, 224, 177, .045); border: 1px solid rgba(143, 224, 177, .12);
+  border-radius: 11px; padding: 9px 11px; color: #cfe4d6;
+}
+.ln.voice::before {
+  content: '分身 · '; color: var(--jade); font-weight: 600; font-size: 10px; letter-spacing: .1em;
+}
+.ln.ev { color: var(--gold); font-size: 11.5px; }
+
+/* 分身请示卡（置顶） */
+.cu-request {
+  margin-top: 10px; padding: 11px 13px; border-radius: 13px;
+  border: 1px solid rgba(226, 201, 140, .4); background: rgba(226, 201, 140, .05);
+}
+.cu-request .rt {
+  font-family: 'Noto Sans SC', sans-serif; font-size: 9.5px; color: var(--gold);
+  letter-spacing: 2px; margin-bottom: 4px;
+}
+.cu-request .rx { font-size: 12px; line-height: 1.7; color: #e9e2cf; }
+.cu-request .btns { display: flex; gap: 8px; margin-top: 9px; }
+.cu-request .go, .cu-request .halt {
+  flex: 1; text-align: center; font-family: 'Noto Sans SC', sans-serif; font-size: 11px;
+  border-radius: 8px; padding: 6px 0; cursor: pointer; background: none;
+}
+.cu-request .go { border: 1px solid rgba(143, 224, 177, .45); color: #c9ecd7; }
+.cu-request .halt { border: 1px solid rgba(232, 154, 114, .5); color: var(--warm); }
+.cu-request button:disabled { opacity: .45; cursor: default; }
+
+/* 心念卡 */
+.cu-choices { display: grid; gap: 8px; }
+.choice {
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .018); color: #ddeae2;
+  border-radius: 13px; padding: 12px 14px; text-align: left; font-size: 12.5px;
+  line-height: 1.55; cursor: pointer; font-family: var(--serif);
+}
+.choice.primary { border-color: rgba(143, 224, 177, .4); background: rgba(143, 224, 177, .06); }
+.choice.warn { border-color: rgba(232, 154, 114, .35); background: rgba(232, 154, 114, .05); }
+.choice:disabled { opacity: .5; cursor: default; }
+.choice small { display: block; color: #7f9387; font-size: 10px; margin-top: 4px; font-family: 'Noto Sans SC', sans-serif; }
+
+/* 传念 */
+.cu-intent { display: flex; gap: 7px; margin-top: 12px; }
+.cu-intent input {
+  flex: 1; min-width: 0; border-radius: 12px; border: 1px solid var(--line);
+  background: #08120d; color: #ddeae2; padding: 11px 12px; outline: none; font-size: 12px;
+}
+.cu-intent input::placeholder { color: #5c6f64; }
+.cu-intent button {
+  border: 0; border-radius: 12px; background: rgba(143, 224, 177, .16); color: #c4ecd3;
+  padding: 0 14px; font-weight: 600; cursor: pointer;
+}
+.cu-intent button:disabled { opacity: .45; cursor: default; }
+
+/* 逐渐被确认的东西 */
+.cu-know-empty { font-size: 11px; color: #6d8175; line-height: 1.8; }
+.cu-knowledge { display: flex; flex-direction: column; gap: 6px; }
+.kn {
+  font-size: 11px; line-height: 1.65; color: #a9bcb0; padding: 8px 10px; border-radius: 10px;
+  background: rgba(255, 255, 255, .015); border-left: 2px solid rgba(143, 224, 177, .3);
+}
+.kn b { color: #dceae2; font-weight: 600; }
+.kn.hyp { border-left-color: rgba(226, 201, 140, .4); }
+.cu-art {
+  margin-top: 6px; padding: 12px 13px; border: 1px solid rgba(143, 224, 177, .28);
+  border-radius: 12px; background: rgba(143, 224, 177, .04);
+}
+.cu-art b { font: 600 13px/1 var(--serif); color: #cdf2db; letter-spacing: .12em; }
+.cu-art p { font: 400 11px/1.8 var(--serif); color: #9fb4a7; margin: 7px 0 0; }
+.cu-art p.meta { font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: #7f9387; }
+
+/* 筑基迹象：五点档点阵 + 档位词（band 数字绝不渲染） */
+.cu-five { display: flex; flex-direction: column; gap: 8px; }
+.frow {
+  display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 9px;
+  font-size: 11px; color: #93a79b;
+}
+.frow .fk { font-family: var(--serif); }
+.frow .dots { display: flex; gap: 4px; }
+.frow .dots i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid rgba(143, 224, 177, .3); }
+.frow .dots i.f { background: var(--jade); border-color: var(--jade); box-shadow: 0 0 6px rgba(143, 224, 177, .5); }
+.frow .word { color: #6d8175; font-size: 10px; font-family: 'Noto Sans SC', sans-serif; }
+.frow.g .word { color: var(--gold); }
+
+/* 底部阶段行 */
+.cu-footer {
+  position: absolute; z-index: 20; left: 0; right: 0; bottom: 0;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(4, 8, 5, 0), rgba(4, 8, 5, .96) 30%);
+  display: flex; justify-content: space-between; align-items: flex-end; gap: 10px;
+  /* 渐隐底幕不拦点击：心念卡可滚到幕布之下仍可按 */
+  pointer-events: none;
+}
+.cu-footer .hold { pointer-events: auto; }
+.cu-footer .modeText { font-size: 10px; line-height: 1.6; color: #71857a; font-family: 'Noto Sans SC', sans-serif; }
+.cu-footer .modeText b { color: #a9bcb0; font-weight: 600; }
+.cu-footer .hold {
+  border: 1px solid rgba(143, 224, 177, .35); background: rgba(143, 224, 177, .07);
+  color: #d8f5e3; border-radius: 999px; padding: 11px 18px; font-size: 12px;
+  letter-spacing: .2em; cursor: pointer; user-select: none; -webkit-user-select: none;
+  font-family: var(--serif); flex: none;
+}
+.cu-footer .hold:active { background: rgba(143, 224, 177, .16); }
+.cu-footer .hold:disabled { opacity: .45; cursor: default; }
+
+/* 提示浮层 */
+.cu-toast {
+  position: absolute; z-index: 40; left: 50%; top: 64px; transform: translateX(-50%);
+  width: min(390px, calc(100% - 32px)); padding: 10px 13px;
+  border: 1px solid rgba(184, 220, 199, .18); border-radius: 12px;
+  background: rgba(8, 15, 11, .96); font-size: 11px; line-height: 1.6; color: #ddeae2;
+  opacity: 0; pointer-events: none; transition: .25s;
+}
+.cu-toast.show { opacity: 1; }
+
+/* 筑基仪式浮层 */
+.cu-ritual {
+  position: absolute; inset: 0; z-index: 50; display: none;
+  align-items: center; justify-content: center; padding: 30px;
+  background: radial-gradient(circle at center, rgba(143, 224, 177, .16), rgba(3, 7, 4, .97) 52%);
+}
+.cu-ritual.show { display: flex; }
+.cu-ritual .ring {
+  width: 150px; height: 150px; border-radius: 50%;
+  border: 1px solid rgba(143, 224, 177, .4); margin: auto; position: relative;
+  animation: cu-slow 12s linear infinite;
+}
+.cu-ritual .ring::before, .cu-ritual .ring::after {
+  content: ''; position: absolute; border-radius: 50%;
+  border: 1px solid rgba(143, 224, 177, .2); inset: 14px;
+}
+.cu-ritual .ring::after { inset: 34px; }
+@keyframes cu-slow { to { transform: rotate(360deg); } }
+.cu-ritual h2 {
+  font: 400 30px/1 'Ma Shan Zheng', cursive; letter-spacing: .3em;
+  margin: 24px 0 10px; text-align: center; color: var(--ink);
+}
+.cu-ritual p { font-size: 12px; line-height: 1.9; color: #a9bcb0; text-align: center; max-width: 300px; }
+.cu-ritual button {
+  display: block; margin: 20px auto 0; border: 1px solid rgba(143, 224, 177, .4);
+  background: rgba(143, 224, 177, .08); color: #d9f5e3; border-radius: 999px;
+  padding: 11px 20px; cursor: pointer;
+}
 
 /* —— 开局仪式（本尊入世） —— */
 .c-gate {
@@ -83,239 +354,22 @@
   box-shadow: inset 0 0 0 2px rgba(242, 233, 220, .35), 0 4px 18px rgba(192, 82, 63, .25);
   transform: rotate(-3deg);
 }
-.c-gate h2 { font-size: 44px; letter-spacing: 6px; line-height: 1.1; font-weight: 400; color: var(--moon); }
-.c-gate .sub { color: var(--mist); font-size: 12px; max-width: 34ch; margin: 0; }
+.c-gate h2 { font-size: 44px; letter-spacing: 6px; line-height: 1.1; font-weight: 400; color: var(--ink); margin: 0; }
+.c-gate .sub { color: var(--muted); font-size: 12px; max-width: 34ch; margin: 0; }
 .c-gate textarea {
   width: 100%; resize: none; border: 1px solid var(--line); border-radius: 12px;
-  background: rgba(12, 18, 22, .6); color: var(--moon); padding: 10px 12px;
-  font-family: 'Noto Serif SC', serif; font-size: 13px; line-height: 1.6;
+  background: rgba(8, 18, 13, .6); color: var(--ink); padding: 10px 12px;
+  font-family: var(--serif); font-size: 13px; line-height: 1.6;
 }
 .c-gate textarea:focus { outline: none; border-color: var(--gold); }
 .c-gate .awaken {
   width: 100%; padding: 12px 0; border-radius: 12px; cursor: pointer;
-  border: 1px solid var(--gold); background: rgba(201, 164, 84, .12);
+  border: 1px solid var(--gold); background: rgba(226, 201, 140, .1);
   font-family: 'Ma Shan Zheng', cursive; font-size: 22px; letter-spacing: 4px; color: var(--gold);
 }
 .c-gate .awaken:disabled { opacity: .6; }
-.c-gate .demo { font-size: 10.5px; color: var(--mist); display: flex; align-items: center; gap: 6px; }
-.c-gate .err { color: var(--cinnabar); font-size: 11px; margin: 0; }
-.c-status .back {
-  background: none; border: 1px solid var(--line); border-radius: 999px;
-  color: var(--mist); font-family: 'Noto Sans SC', sans-serif; font-size: 10px;
-  padding: 2px 10px; cursor: pointer;
-}
-.c-card {
-  border: 1px solid var(--line); border-radius: 14px; background: rgba(27, 39, 46, .66);
-  padding: 10px 13px; flex: none;
-}
-.c-card .t {
-  font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: var(--mist);
-  letter-spacing: 2px; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
-}
-.c-card .t::before {
-  content: ""; width: 5px; height: 5px; border-radius: 1px; background: var(--gold); transform: rotate(45deg);
-}
-
-/* —— 洞府 —— */
-.c-env { display: flex; gap: 6px; }
-.c-env .e {
-  flex: 1; text-align: center; border: 1px solid var(--line); border-radius: 9px;
-  padding: 5px 2px 4px; background: rgba(12, 18, 22, .5);
-}
-.c-env .d { width: 7px; height: 7px; border-radius: 50%; margin: 0 auto 3px; }
-.c-env .w { font-family: 'Noto Sans SC', sans-serif; font-size: 9px; color: var(--mist); }
-.c-figure { position: relative; height: 150px; flex: none; display: flex; align-items: center; justify-content: center; }
-.c-figure svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.c-figure .qi {
-  font-family: 'Ma Shan Zheng', cursive; font-size: 60px; color: var(--jade);
-  text-shadow: 0 0 26px rgba(127, 184, 164, .45);
-}
-.c-figure .st {
-  position: absolute; bottom: 0; left: 0; right: 0; text-align: center;
-  font-family: 'Noto Sans SC', sans-serif; font-size: 10.5px; color: var(--mist); letter-spacing: 2px;
-}
-.c-figure .st b { color: var(--moon); font-weight: 500; }
-.c-spin { transform-origin: 150px 75px; animation: c-spin 46s linear infinite; }
-.c-spin2 { transform-origin: 150px 75px; animation: c-spin 70s linear infinite reverse; }
-@keyframes c-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .c-spin, .c-spin2 { animation: none; } }
-
-.c-sense { flex: 1; min-height: 120px; overflow-y: auto; }
-.c-sense .ln { display: flex; gap: 8px; font-size: 11.5px; line-height: 1.55; padding: 2.5px 0; color: var(--moon); }
-.c-sense .ln em {
-  font-family: 'Noto Sans SC', sans-serif; font-style: normal; font-size: 9px; color: var(--jade);
-  flex: none; padding-top: 3px; font-variant-numeric: tabular-nums;
-}
-.c-sense .ln.hl { color: var(--gold); }
-.c-sense .ln.rc em { color: var(--gold); }
-.c-voice {
-  border: 1px solid rgba(201, 164, 84, .4); border-radius: 12px; background: rgba(201, 164, 84, .06);
-  padding: 8px 12px; font-size: 11.5px; line-height: 1.6; flex: none;
-}
-.c-voice .vt { font-family: 'Noto Sans SC', sans-serif; font-size: 9px; color: var(--gold); letter-spacing: 2px; margin-bottom: 3px; }
-
-/* 四动作 */
-.c-acts { display: flex; gap: 9px; padding: 2px 6px 8px; }
-.c-acts .a { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: none; cursor: pointer; padding: 0; }
-.c-acts .c {
-  width: 46px; height: 46px; border-radius: 50%; border: 1px solid var(--line);
-  display: flex; align-items: center; justify-content: center;
-  font-family: 'Ma Shan Zheng', cursive; font-size: 21px; color: var(--moon); background: var(--panel-2);
-}
-.c-acts .a.main .c { border-color: var(--gold); color: var(--gold); box-shadow: 0 0 16px rgba(201, 164, 84, .22); }
-.c-acts .a.halt .c { border-color: rgba(192, 82, 63, .6); color: var(--cinnabar); }
-.c-acts .w { font-family: 'Noto Sans SC', sans-serif; font-size: 9.5px; color: var(--mist); }
-.c-acts .a:disabled { opacity: .45; cursor: default; }
-
-/* 意图面板（纳/引的内联单） */
-.c-sheet {
-  border: 1px solid var(--gold); border-radius: 12px; background: rgba(201, 164, 84, .05);
-  padding: 9px 12px; font-family: 'Noto Sans SC', sans-serif; font-size: 11px; color: var(--mist);
-}
-.c-sheet .row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; flex-wrap: wrap; }
-.c-sheet select {
-  background: var(--panel); color: var(--moon); border: 1px solid var(--line);
-  border-radius: 8px; padding: 4px 8px; font-size: 11px; font-family: 'Noto Sans SC', sans-serif;
-}
-.c-chip {
-  font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: var(--mist);
-  border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px;
-  background: none; cursor: pointer;
-}
-.c-chip.on { color: var(--gold); border-color: var(--gold); }
-.c-sheet .go {
-  background: none; border: 1px solid var(--gold); color: var(--gold);
-  border-radius: 8px; padding: 4px 14px; font-size: 11px; cursor: pointer;
-}
-.c-sheet .cancel { background: none; border: 1px solid var(--line); color: var(--mist); border-radius: 8px; padding: 4px 14px; font-size: 11px; cursor: pointer; }
-
-/* —— 内视 —— */
-.c-legend { display: flex; gap: 10px; flex-wrap: wrap; font-family: 'Noto Sans SC', sans-serif; font-size: 9px; color: var(--mist); padding: 0 2px 4px; }
-.c-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
-.c-bodymap svg { width: 100%; height: auto; }
-.c-node-label { font-family: 'Noto Serif SC', serif; font-size: 10.5px; fill: var(--moon); }
-.c-node-sub { font-family: 'Noto Sans SC', sans-serif; font-size: 8px; fill: var(--mist); }
-.c-meridian { stroke: #33424B; stroke-width: 1.4; fill: none; }
-.c-meridian.hurt { stroke: var(--cinnabar); stroke-dasharray: 3 4; opacity: .8; }
-.c-meridian.flow { stroke: var(--jade); stroke-width: 1.8; opacity: .55; }
-.c-acu { stroke-width: 1.2; cursor: pointer; }
-.c-acu-ring { fill: none; opacity: .35; }
-.c-detail .row {
-  display: flex; justify-content: space-between; font-size: 11px; padding: 2.5px 0;
-  border-bottom: 1px dashed rgba(42, 57, 65, .6);
-}
-.c-detail .row:last-child { border-bottom: none; }
-.c-detail .k { color: var(--mist); font-family: 'Noto Sans SC', sans-serif; font-size: 10px; }
-.c-detail .v { color: var(--moon); }
-.c-detail .v.jade { color: var(--jade); }
-.c-detail .note { font-size: 9.5px; color: var(--mist); margin-top: 5px; font-family: 'Noto Sans SC', sans-serif; }
-
-/* —— 参悟 —— */
-.c-tag {
-  display: inline-block; font-family: 'Noto Sans SC', sans-serif; font-size: 9px;
-  border-radius: 4px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px;
-}
-.c-tag.wait { color: var(--gold); border: 1px solid rgba(201, 164, 84, .5); }
-.c-tag.ok { color: var(--jade); border: 1px solid rgba(127, 184, 164, .5); }
-.c-tag.no { color: var(--cinnabar); border: 1px solid rgba(192, 82, 63, .5); }
-.c-hyp .hd { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.c-hyp .hz { font-size: 12.5px; line-height: 1.5; }
-.c-hyp .cf { font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: var(--gold); flex: none; }
-.c-confbar { height: 3px; border-radius: 2px; background: rgba(42, 57, 65, .9); margin: 7px 0 6px; overflow: hidden; }
-.c-confbar i { display: block; height: 100%; background: var(--gold); }
-.c-hyp .ev { font-family: 'Noto Sans SC', sans-serif; font-size: 9.5px; color: var(--mist); line-height: 1.7; }
-.c-exp .meta { font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: var(--mist); line-height: 1.7; }
-.c-prog { height: 5px; border-radius: 3px; background: rgba(42, 57, 65, .9); margin-top: 7px; overflow: hidden; }
-.c-prog i { display: block; height: 100%; background: linear-gradient(90deg, var(--jade), #9CCBB9); }
-.c-ask { border: 1px solid rgba(192, 82, 63, .55); border-radius: 12px; background: rgba(192, 82, 63, .07); padding: 9px 12px; }
-.c-ask .at { font-family: 'Noto Sans SC', sans-serif; font-size: 9px; color: var(--cinnabar); letter-spacing: 2px; margin-bottom: 3px; }
-.c-ask .q { font-size: 11.5px; line-height: 1.6; }
-.c-ask .btns { display: flex; gap: 8px; margin-top: 8px; }
-.c-ask .b {
-  flex: 1; text-align: center; font-family: 'Noto Sans SC', sans-serif; font-size: 11px;
-  border-radius: 8px; padding: 5px 0; border: 1px solid var(--line); color: var(--mist);
-  background: none; cursor: pointer;
-}
-.c-ask .b.go { border-color: var(--gold); color: var(--gold); }
-.c-ask .b.halt { border-color: rgba(192, 82, 63, .6); color: var(--cinnabar); }
-
-/* —— 功法 —— */
-.c-proto .hd { display: flex; justify-content: space-between; align-items: center; }
-.c-proto .nm { font-family: 'Ma Shan Zheng', cursive; font-size: 16px; letter-spacing: 1px; }
-.c-proto .lv { font-family: 'Noto Sans SC', sans-serif; font-size: 9px; color: var(--jade); border: 1px solid rgba(127, 184, 164, .5); border-radius: 4px; padding: 1px 7px; }
-.c-proto .path { font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: var(--mist); margin-top: 3px; }
-.c-proto .path b { color: var(--moon); font-weight: 500; }
-.c-kb { margin-top: 8px; }
-.c-kb .bar { display: flex; height: 7px; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
-.c-kb .seg { display: block; height: 100%; }
-.c-kb .seg.v { background: var(--jade); }
-.c-kb .seg.u { background: rgba(42, 57, 65, .9); }
-.c-kb .lb { display: flex; justify-content: space-between; font-family: 'Noto Sans SC', sans-serif; font-size: 8.5px; color: var(--mist); margin-top: 3px; }
-.c-proto .gr { font-size: 10.5px; color: var(--mist); margin-top: 7px; line-height: 1.65; }
-.c-proto .gr b { color: var(--moon); font-weight: 500; }
-.c-switch { display: flex; align-items: center; gap: 7px; margin-top: 9px; }
-.c-sw { width: 30px; height: 16px; border-radius: 9px; background: rgba(42, 57, 65, .9); position: relative; flex: none; border: none; cursor: pointer; }
-.c-sw.on { background: var(--jade); }
-.c-sw::after {
-  content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #0C1216;
-}
-.c-sw.on::after { left: auto; right: 2px; }
-.c-switch .sw-t { font-family: 'Noto Sans SC', sans-serif; font-size: 9.5px; color: var(--mist); }
-.c-switch .sw-t.on { color: var(--jade); }
-.c-proto.draft { opacity: .82; }
-.c-proto.draft .nm { color: var(--mist); }
-.c-proto.draft .lv { color: var(--mist); border-color: var(--line); }
-.c-start {
-  margin-top: 8px; background: none; border: 1px solid var(--gold); color: var(--gold);
-  border-radius: 8px; padding: 4px 14px; font-size: 11px; cursor: pointer; font-family: 'Noto Sans SC', sans-serif;
-}
-
-/* —— 本尊 —— */
-.c-goal-text { font-size: 12px; line-height: 1.6; }
-.c-goal .gk { font-family: 'Noto Sans SC', sans-serif; font-size: 9px; color: var(--mist); letter-spacing: 2px; display: block; margin-bottom: 3px; }
-.c-goal textarea {
-  width: 100%; background: rgba(12, 18, 22, .6); color: var(--moon);
-  border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px;
-  font-family: 'Noto Serif SC', serif; font-size: 12px; line-height: 1.6; resize: vertical; min-height: 60px;
-}
-.c-five .frow { display: flex; align-items: center; gap: 9px; padding: 3.5px 0; }
-.c-five .fk { font-family: 'Noto Serif SC', serif; font-size: 11.5px; flex: none; width: 58px; }
-.c-five .fbar { flex: 1; height: 4px; border-radius: 2px; background: rgba(42, 57, 65, .9); overflow: hidden; }
-.c-five .fbar i { display: block; height: 100%; }
-.c-five .fv { font-family: 'Noto Sans SC', sans-serif; font-size: 9px; color: var(--mist); flex: none; width: 34px; text-align: right; }
-.c-guide .chips { display: flex; gap: 6px; margin-bottom: 7px; }
-.c-guide .chip {
-  font-family: 'Noto Sans SC', sans-serif; font-size: 9.5px; color: var(--mist);
-  border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; background: none; cursor: pointer;
-}
-.c-guide .chip.on { color: var(--gold); border-color: var(--gold); }
-.c-guide .inp {
-  border: 1px solid var(--line); border-radius: 9px; background: rgba(12, 18, 22, .6);
-  padding: 7px 11px; font-size: 11px; color: var(--mist); display: flex; justify-content: space-between; align-items: center; gap: 8px;
-}
-.c-guide .inp input {
-  flex: 1; background: none; border: none; outline: none; color: var(--moon);
-  font-family: 'Noto Serif SC', serif; font-size: 11.5px;
-}
-.c-guide .send { font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: var(--gold); background: none; border: none; cursor: pointer; }
-
-/* 底部导航（五屏共用） */
-.c-nav { display: flex; border-top: 1px solid var(--line); background: rgba(12, 18, 22, .92); padding: 7px 6px 12px; }
-.c-nav .it {
-  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  font-family: 'Noto Sans SC', sans-serif; font-size: 9.5px; color: var(--mist);
-  background: none; border: none; cursor: pointer; padding: 0;
-}
-.c-nav .ic {
-  width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line);
-  display: flex; align-items: center; justify-content: center;
-  font-family: 'Ma Shan Zheng', cursive; font-size: 17px; color: var(--mist); background: var(--panel);
-}
-.c-nav .it.on .ic { border-color: var(--gold); color: var(--gold); background: rgba(201, 164, 84, .1); }
-.c-nav .it.on { color: var(--gold); }
-
-/* 错误行 */
-.c-err { color: var(--cinnabar); font-family: 'Noto Sans SC', sans-serif; font-size: 11px; padding: 4px 16px; }
+.c-gate .demo { font-size: 10.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.c-gate .err { color: var(--warm); font-size: 11px; margin: 0; }
 
 /* 桌面宽屏：全高居中收窄为手机竖屏宽度（固定定位下 margin auto 居中） */
 @media (min-width: 720px) {
@@ -325,4 +379,10 @@
     border-left: 1px solid var(--line);
     border-right: 1px solid var(--line);
   }
+}
+
+/* 动效克减 */
+@media (prefers-reduced-motion: reduce) {
+  .mist i, .cu-body .node.faint, .cu-body .breath.on,
+  svg.chan line.flow, .cu-ritual .ring { animation: none !important; }
 }

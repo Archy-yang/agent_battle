@@ -1,26 +1,12 @@
 <script setup lang="ts">
-// src/cult/CultApp.vue —— 修炼模式外壳：开局仪式 + 会话头 + 五屏切换 + 底部导航。
-// 修炼模式接管整个视口（手机全屏），通过「战斗」按钮退出。
+// src/cult/CultApp.vue —— 修炼模式外壳：开局仪式 + 单页洞府（顶栏 / 身体场景 /
+// 感知流 / 心念卡 / 传念 / 知识台账 / 底部阶段行）。设计稿：docs/design/yiqi-dongfu-redesign.html。
+// 修炼模式接管整个视口（手机全屏），通过「战斗」按钮退出（App.vue 的 mode 机制零改动）。
 import { computed, ref } from 'vue'
-import { cult, awaken } from './state'
-import CultHome from './CultHome.vue'
-import CultBody from './CultBody.vue'
-import CultInsight from './CultInsight.vue'
-import CultArts from './CultArts.vue'
-import CultSelf from './CultSelf.vue'
+import { cult, act, awaken } from './state'
+import CultFu from './CultFu.vue'
 
 const emit = defineEmits<{ exit: [] }>()
-
-type Screen = 'fu' | 'shi' | 'wu' | 'jue' | 'zun'
-const screen = ref<Screen>('fu')
-
-const SCREENS: { key: Screen; ic: string; label: string }[] = [
-  { key: 'fu', ic: '府', label: '洞府' },
-  { key: 'shi', ic: '视', label: '内视' },
-  { key: 'wu', ic: '悟', label: '参悟' },
-  { key: 'jue', ic: '诀', label: '功法' },
-  { key: 'zun', ic: '尊', label: '本尊' },
-]
 
 // —— 开局仪式 ——
 const goal = ref('')
@@ -29,6 +15,21 @@ const gated = computed(() => cult.gate && !cult.view)
 
 function doAwaken() {
   void awaken(useScript.value ? 'script' : 'llm', goal.value)
+}
+
+const realm = computed(() => cult.view?.realm ?? '')
+
+// 底部阶段行：定性描述当前所在阶段（零数字、零机器词）
+const modeText = computed(() => {
+  const v = cult.view
+  if (!v) return { cur: '初醒', sub: '静室之中，分身尚未睁眼' }
+  if (v.active) return { cur: '周天运转', sub: `依《${v.active}》行功，异常方唤心神` }
+  if (v.points.some((p) => p.flow !== '停滞')) return { cur: '吐纳中', sub: '气息在身内流动，随时可止' }
+  return { cur: '暗中摸索', sub: '分身正在辨认周身可承气之处' }
+})
+
+function doHold() {
+  void act([{ kind: 'sense' }])
 }
 </script>
 
@@ -54,41 +55,24 @@ function doAwaken() {
       <p class="err ui" v-if="cult.error">{{ cult.error }}</p>
     </div>
 
-    <!-- 入定后：会话头 + 五屏 -->
+    <!-- 入定后：单页洞府 -->
     <template v-else>
-      <div class="c-status ui">
-        <button class="back" @click="emit('exit')">‹ 战斗</button>
-        <span>一炁周天</span>
-        <span>{{ cult.view ? `${cult.view.realm} · 第 ${cult.view.tick} 息` : '初醒…' }}</span>
+      <div class="cu-top">
+        <h1>一炁周天</h1>
+        <span class="realm"><b>{{ realm }}</b></span>
+        <button class="exit" @click="emit('exit')">‹ 战斗</button>
       </div>
-      <div class="c-head">
-        <div class="who">
-          <div class="avatar">炁</div>
-          <div>
-            <div class="nm">分身</div>
-            <div class="rl">
-              {{ cult.view ? `${cult.view.realm} · ${cult.view.pilot_kind === 'llm' ? '灵机分身' : '脚本分身'}` : '初醒…' }}
-            </div>
-          </div>
-        </div>
-        <div class="mini">seed {{ cult.view?.seed ?? '—' }}</div>
-      </div>
-      <div class="c-err ui" v-if="cult.error && !cult.gate">{{ cult.error }}</div>
+      <div class="cu-err" v-if="cult.error">{{ cult.error }}</div>
 
-      <div class="c-body">
-        <div v-if="!cult.view" class="c-card ui">正在静室中唤醒分身……</div>
-        <CultHome v-else-if="screen === 'fu'" />
-        <CultBody v-else-if="screen === 'shi'" />
-        <CultInsight v-else-if="screen === 'wu'" />
-        <CultArts v-else-if="screen === 'jue'" />
-        <CultSelf v-else />
+      <div class="cu-scroll">
+        <div v-if="!cult.view" class="cu-loading">正在静室中唤醒分身……</div>
+        <CultFu v-else />
       </div>
 
-      <nav class="c-nav">
-        <button v-for="s in SCREENS" :key="s.key" class="it" :class="{ on: screen === s.key }" @click="screen = s.key">
-          <span class="ic">{{ s.ic }}</span>{{ s.label }}
-        </button>
-      </nav>
+      <div class="cu-footer">
+        <div class="modeText">当前：<b>{{ modeText.cur }}</b><br />{{ modeText.sub }}</div>
+        <button class="hold" :disabled="cult.busy" @click="doHold">凝神</button>
+      </div>
     </template>
   </div>
 </template>

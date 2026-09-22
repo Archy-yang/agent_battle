@@ -31,6 +31,33 @@ export const cult = reactive<CultState>({
   awakening: false,
 })
 
+/** 错误转译：后端错误可能带机器词（LLM/Runtime/pilot），玩家界面只许灵机话术。 */
+export function humanizeError(msg: string): string {
+  return String(msg)
+    .replace(/LLM 未配置/g, '灵机未启，以脚本分身入定')
+    .replace(/LLM|大模型|语言模型/g, '灵机')
+    .replace(/[Rr]untime/g, '内景')
+    .replace(/[Pp]ilot/g, '分身')
+    .replace(/HTTP \d+/g, '灵路不通')
+}
+
+/**
+ * 已知穴位判定（前端启发式，等后端将来给正式的"已探明"字段后替换）：
+ * 约定——某穴 feelings 有实感（非空且非「无明显感觉」占位词）、或该穴名
+ * 曾在感知流文本中出现（已被感知流提及），即视为「已知」，才允许渲染
+ * 穴名与定性详情。未知穴在前端只渲染为模糊波动，且**不透露已探明/未探明的数量**。
+ */
+export function knownPoints(view: { points: { name: string; feelings: string[] }[]; sense_stream: { text: string }[] }): Set<string> {
+  const s = new Set<string>()
+  for (const p of view.points) {
+    if (p.feelings.some((f) => f && f !== '无明显感觉')) s.add(p.name)
+  }
+  for (const l of view.sense_stream) {
+    for (const p of view.points) if (l.text.includes(p.name)) s.add(p.name)
+  }
+  return s
+}
+
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 function startPolling(): void {
@@ -61,7 +88,7 @@ export async function awaken(pilot: 'llm' | 'script', goal: string): Promise<voi
     cult.error = ''
     startPolling()
   } catch (e) {
-    cult.error = String(e instanceof Error ? e.message : e)
+    cult.error = humanizeError(e instanceof Error ? e.message : e)
   } finally {
     cult.awakening = false
   }
@@ -78,9 +105,10 @@ export async function refreshCult(): Promise<void> {
   if (!cult.view || cult.busy) return
   try {
     cult.view = await getCultView(cult.view.id)
-    cult.error = ''
+    // 注意：轮询成功不清 error——动作报错（如起功被拒）须留给玩家读到，
+    // 只有下一次玩家动作成功才清除（见 act/guide/startProtocol）。
   } catch (e) {
-    cult.error = String(e instanceof Error ? e.message : e)
+    cult.error = humanizeError(e instanceof Error ? e.message : e)
   }
 }
 
@@ -92,7 +120,7 @@ export async function newCultSession(pilot: 'script' | 'llm' = 'script'): Promis
     cult.askAnswer = ''
     cult.askDegraded = ''
   } catch (e) {
-    cult.error = String(e instanceof Error ? e.message : e)
+    cult.error = humanizeError(e instanceof Error ? e.message : e)
   } finally {
     cult.busy = false
   }
@@ -106,7 +134,7 @@ export async function act(intents: PlayerIntent[], ticks = 1): Promise<void> {
     cult.view = await tickCult(cult.view.id, ticks, intents)
     cult.error = ''
   } catch (e) {
-    cult.error = String(e instanceof Error ? e.message : e)
+    cult.error = humanizeError(e instanceof Error ? e.message : e)
   } finally {
     cult.busy = false
   }
@@ -120,7 +148,7 @@ export async function intend(intents: PlayerIntent[]): Promise<void> {
     cult.view = await sendCultIntents(cult.view.id, intents)
     cult.error = ''
   } catch (e) {
-    cult.error = String(e instanceof Error ? e.message : e)
+    cult.error = humanizeError(e instanceof Error ? e.message : e)
   } finally {
     cult.busy = false
   }
@@ -138,7 +166,7 @@ export async function guide(kind: string, text: string): Promise<void> {
     cult.view = await sendGuidance(cult.view.id, kind, text)
     cult.error = ''
   } catch (e) {
-    cult.error = String(e instanceof Error ? e.message : e)
+    cult.error = humanizeError(e instanceof Error ? e.message : e)
   } finally {
     cult.busy = false
   }
@@ -157,7 +185,7 @@ export async function ask(question: string): Promise<void> {
       cult.askAnswer = r.answer
     }
   } catch (e) {
-    cult.askDegraded = String(e instanceof Error ? e.message : e)
+    cult.askDegraded = humanizeError(e instanceof Error ? e.message : e)
   } finally {
     cult.busy = false
   }
@@ -170,7 +198,7 @@ export async function startProtocol(name: string): Promise<void> {
     cult.view = await startCultProtocol(cult.view.id, name)
     cult.error = ''
   } catch (e) {
-    cult.error = String(e instanceof Error ? e.message : e)
+    cult.error = humanizeError(e instanceof Error ? e.message : e)
   } finally {
     cult.busy = false
   }
