@@ -125,3 +125,5 @@ ctmatch/cultspike 里程碑流程与 cultmc 场景改造（T-J6/P7-P9）
   取小，且被动流不受控、会均衡化，玩家仍需主动调度；标定 P7 观察
 - R2 途经纳气使总量虚增 → K_entrain 小 + BackPressure 抑制 + P1 复测
 - R3 SelfSustain 窗口口径变化影响既有筑基测试喂样 → T-J6 全链重验
+- R4 未含动量惯性项（流的自持纯靠压差持续性）——若 P7 标定显示松手衰减
+  过陡，再加 Channel FlowPrev 惯性项（Persistent Flow State 的第二阶段）
