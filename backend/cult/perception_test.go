@@ -7,8 +7,8 @@ package cult
 //   - acuity 1 vs 3 同一真值产出不同粒度措辞（§43 低感知叙事）；
 //   - 感知隔离律：Observation 序列化后无真值泄漏（除 Tick / band 序号
 //     外全文无数字）；
-//   - 黄金用例（§47）：Tick1 后青关 PressureBand=5（剧痛档），措辞
-//     "强烈胀感"级；
+//   - 黄金用例（§47）：Tick1 后青关真值压力入剧痛档，低感知措辞
+//     "强烈胀感"级，PressureBand 报同档 felt 档（所见即所得）；
 //   - 确定性：同 World 同 acuity 两次 Observe 结果深度相等。
 
 import (
@@ -126,17 +126,24 @@ func TestAcuityGranularity(t *testing.T) {
 }
 
 // TestLowPerception_Downgrade 复现 stage_3 §43 低感知叙事：
-// 低感知角色（Perception=0.5）在真实过载（压力 ≈ 1.028，band 5）下
+// 低感知角色（Perception=0.5）在真实过载（压力 ≈ 1.028，真值档 5）下
 // 只报"有些不适"级措辞；PerceivedSignalStrength 静默不超过两档。
+// PressureBand 取感知后档（felt）：真值档 5 静默两档 → felt 档 3，
+// 与措辞同档（所见即所得，band 不得旁路泄真值档）。
 func TestLowPerception_Downgrade(t *testing.T) {
-	// lr=1014 → 压力 = 1.014² ≈ 1.028（band 5，黄金用例 §47 同款）。
+	// lr=1014 → 压力 = 1.014² ≈ 1.028（真值档 5，黄金用例 §47 同款）。
 	obs := Observe(senseWorld(1014, 500), 1) // Perception=0.5 + acuity 1（F=0.5）
 	p := obs.Points[0]
-	if p.PressureBand != 5 {
-		t.Errorf("PressureBand = %d, want 5（真值档不变，供 UI 色带）", p.PressureBand)
+	if p.PressureBand != 3 {
+		t.Errorf("PressureBand = %d, want 3（感知后 felt 档 = 真值档 5 静默两档）", p.PressureBand)
 	}
 	if got := p.Feelings[0]; got != "有些不适" {
 		t.Errorf("低感知措辞 = %q, want %q（§43：低感知角色只感受到有些不适）", got, "有些不适")
+	}
+	// 所见即所得：PressureBand 与措辞档一致（pressureWords[band][tier]
+	// 即 Feelings[0]）。
+	if got := pressureWords[p.PressureBand][0]; got != p.Feelings[0] {
+		t.Errorf("PressureBand=%d 与措辞 %q 不同档（want %q）——band 泄真值", p.PressureBand, p.Feelings[0], got)
 	}
 }
 
@@ -151,9 +158,11 @@ func TestGoldenCase_PressureTick1(t *testing.T) {
 	obs := Observe(w, 2)
 	p := obs.Points[0]
 
-	// §47：LoadRatio = 1014 → Pressure ≈ 1.028 > 1.0 → 剧痛档。
-	if p.PressureBand != 5 {
-		t.Errorf("PressureBand = %d, want 5（§47 剧痛档）", p.PressureBand)
+	// §47：LoadRatio = 1014 → Pressure ≈ 1.028 > 1.0 → 真值档 5（剧痛档）。
+	// PressureBand 报感知后档（Perception=0.5 静默两档）→ felt 档 3，
+	// 与措辞"强烈胀感·不适"同档（所见即所得）。
+	if p.PressureBand != 3 {
+		t.Errorf("PressureBand = %d, want 3（§47 真值档 5 经低感知静默两档）", p.PressureBand)
 	}
 	if got := p.Feelings[0]; got != "强烈胀感·不适" {
 		t.Errorf("黄金用例措辞 = %q, want 强烈胀感级", got)

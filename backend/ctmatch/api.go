@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -56,23 +57,69 @@ validated_range:
 // Pilot：脚本循环桩（"script" 分身）
 // ---------------------------------------------------------------------------
 
-// loopPilot 是 script 分身：每次被征询都交出同一组朴素吐纳意图
-// （吸收+引流，粗档位可达的稳定路径）。本尊止息后不再出招。
+// loopPilot 是 script 分身。两种画像（会话 mode 决定）：
+//   - tutorial：每次被征询都交出同一组朴素吐纳意图（吸收+引流，粗档位
+//     可达的稳定路径）——演示/测试用的预置走法；
+//   - normal（探索型）：驱动层策略，不读世界真值、不预设答案——交替
+//     静观 / 在不同可感之处小量纳气 / 偶尔在已知穴位之间试引导，成败
+//     全凭回执反应（允许"此路不通"）。本尊止息后不再出招。
 type loopPilot struct {
-	intents []Intent
+	intents []Intent // tutorial 画像的固定意图组
+	explore bool     // true = normal 会话的探索型策略
 	stopped bool
+
+	points []string // 探索型：观察到的可感穴位名（来自定性观察，非世界真值）
+	step   int      // 探索型：被征询的次数（决定策略轮换）
 }
 
-func (p *loopPilot) Decide(*Observation) []Intent {
+func (p *loopPilot) Decide(obs *Observation) []Intent {
 	if p == nil || p.stopped {
 		return nil
+	}
+	if p.explore {
+		return p.exploreDecide(obs)
 	}
 	out := make([]Intent, len(p.intents))
 	copy(out, p.intents)
 	return out
 }
 
-// scriptIntents 是 script 分身的默认画像：主纳穴少量吸收 + 混合大量引流。
+// exploreDecide 是探索型策略：静观 / 轮换纳气 / 轮换试引导三班倒。
+// 一切输入只来自定性观察（穴位名是观察词，非世界真值）；引导走没走通
+// 由下一息的回执告知，这里不预判。
+func (p *loopPilot) exploreDecide(obs *Observation) []Intent {
+	if obs != nil {
+		for _, pt := range obs.Points {
+			known := false
+			for _, n := range p.points {
+				if n == pt.Name {
+					known = true
+					break
+				}
+			}
+			if !known {
+				p.points = append(p.points, pt.Name)
+			}
+		}
+	}
+	p.step++
+	round := p.step % 3
+	switch {
+	case round == 1 && len(p.points) > 0:
+		// 在不同可感之处小量纳气（轮换）。
+		tgt := p.points[(p.step/3)%len(p.points)]
+		return []Intent{{Kind: IntentAbsorb, Acupoint: tgt, Level: LevelSmall}}
+	case round == 2 && len(p.points) >= 2:
+		// 偶尔在已知穴位之间试引导（轮换相邻对，小量，允许失败回执）。
+		i := (p.step / 3) % len(p.points)
+		j := (i + 1) % len(p.points)
+		return []Intent{{Kind: IntentGuide, From: p.points[i], To: p.points[j], Element: -1, Level: LevelSmall}}
+	default:
+		return []Intent{{Kind: IntentSense}}
+	}
+}
+
+// scriptIntents 是 tutorial 分身的默认画像：主纳穴少量吸收 + 混合大量引流。
 func scriptIntents() []Intent {
 	return []Intent{
 		{Kind: IntentAbsorb, Acupoint: "青关", Level: LevelSmall},
@@ -277,8 +324,13 @@ func NewCultRegistry() *CultRegistry {
 }
 
 // Create 建一次修炼会话。pilotKind："script"（默认）或 "llm"（未配置
-// LLM 时报错）。seed 为 0 时取 1（确定性默认）。
-func (r *CultRegistry) Create(seed uint64, pilotKind string) (*SessionView, error) {
+// LLM 时报错）。mode："normal"（默认）或 "tutorial"：
+//   - tutorial：预载《吐纳初诀》（青关→丹田）+ script 分身固定走法，
+//     供演示/测试；
+//   - normal：功法库为空，script 分身走探索型策略（不预设答案）。
+//
+// seed 为 0 时取 1（确定性默认）。
+func (r *CultRegistry) Create(seed uint64, pilotKind, mode string) (*SessionView, error) {
 	if pilotKind == "" {
 		pilotKind = "script"
 	}
@@ -286,6 +338,14 @@ func (r *CultRegistry) Create(seed uint64, pilotKind string) (*SessionView, erro
 	case "script", "llm":
 	default:
 		return nil, fmt.Errorf("未知分身类型 %q（可选 script | llm）", pilotKind)
+	}
+	if mode == "" {
+		mode = "normal"
+	}
+	switch mode {
+	case "normal", "tutorial":
+	default:
+		return nil, fmt.Errorf("未知会话模式 %q（可选 normal | tutorial）", mode)
 	}
 
 	w := SpikeWorld()
@@ -298,8 +358,11 @@ func (r *CultRegistry) Create(seed uint64, pilotKind string) (*SessionView, erro
 		}
 		lp.MaxCalls = LLMBudgetDefault
 		pilot = lp
-	} else {
+	} else if mode == "tutorial" {
 		script = &loopPilot{intents: scriptIntents()}
+		pilot = script
+	} else {
+		script = &loopPilot{explore: true}
 		pilot = script
 	}
 
@@ -307,9 +370,12 @@ func (r *CultRegistry) Create(seed uint64, pilotKind string) (*SessionView, erro
 	const acuity = 1 // 初见措辞（感知隔离律：观察只出定性词）
 	sess.Observe = func(x *cult.World) *Observation { return cult.Observe(x, acuity) }
 
-	// 预载草创功法（编译失败不阻断建会话——功法屏留空即可）。
-	if p, err := Compile([]byte(starterProtocolYAML), &w.Character.BodyGraph); err == nil {
-		sess.LoadProtocol(p)
+	// 仅 tutorial 预载草创功法（编译失败不阻断建会话——功法屏留空即可）；
+	// normal 功法库为空，门径由分身自己摸索。
+	if mode == "tutorial" {
+		if p, err := Compile([]byte(starterProtocolYAML), &w.Character.BodyGraph); err == nil {
+			sess.LoadProtocol(p)
+		}
 	}
 
 	r.mu.Lock()
@@ -1037,18 +1103,33 @@ func writeCultErr(w http.ResponseWriter, status int, msg string) {
 }
 
 // HandleCreate POST /api/cult/session
+// body: {"seed": 1, "pilot": "script"|"llm", "mode": "normal"|"tutorial"}
+// mode 缺省 normal（功法库为空、探索型 script 分身）；tutorial 为演示
+// 模式（预载《吐纳初诀》+ 固定走法）。
 func (r *CultRegistry) HandleCreate(w http.ResponseWriter, req *http.Request) {
 	var body struct {
 		Seed  uint64 `json:"seed"`
 		Pilot string `json:"pilot"`
+		Mode  string `json:"mode"`
 	}
 	_ = json.NewDecoder(req.Body).Decode(&body) // 空 body 允许
-	v, err := r.Create(body.Seed, body.Pilot)
+	v, err := r.Create(body.Seed, body.Pilot, body.Mode)
 	if err != nil {
 		writeCultErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeCultJSON(w, http.StatusCreated, v)
+}
+
+// debugEnabled 报告 debug 视图是否放行：仅当环境变量 AGENTBATTLE_DEV
+// 为 "1" 或 "true" 时，?debug=1 才携带真值载荷；否则 debug 查询被静默
+// 忽略（不报错——不暴露 debug 机制的存在）。默认关闭。
+func debugEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AGENTBATTLE_DEV"))) {
+	case "1", "true":
+		return true
+	}
+	return false
 }
 
 // HandleView GET /api/cult/session/{id}[?debug=1]
@@ -1059,7 +1140,7 @@ func (r *CultRegistry) HandleView(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	v := h.view()
-	if req.URL.Query().Get("debug") == "1" {
+	if debugEnabled() && req.URL.Query().Get("debug") == "1" {
 		v = h.withDebug(v)
 	}
 	writeCultJSON(w, http.StatusOK, v)

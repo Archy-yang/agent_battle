@@ -137,7 +137,7 @@ type AcupointSense struct {
 	Openness     string   // 状态词表五档：闭/微开/半开/大开/洞开
 	Stability    string   // 状态词表五档：稳如磐石/稳固/微澜/不稳/将溃
 	Damage       string   // 状态词表五档：无损/隐伤/作痛/重创/脉裂
-	PressureBand int      // §43 压力档 0-5（供 UI 色带；措辞按 acuity 生成）
+	PressureBand int      // §43 压力档 0-5——感知后档（felt，所见即所得；与 Feelings[0] 同档）
 }
 
 // EnvSense 是环境的逐五行定性感知（微茫→沛然）。
@@ -205,6 +205,9 @@ func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64, t
 	}
 
 	// §42 PerceivedSignalStrength + §43 分档，最多静默 maxMuteBands 档。
+	// PressureBand 一律取感知后档 felt（所见即所得）：低感知角色看到的
+	// 色带与其措辞同档，不得经 band 旁路泄真值档（真值档 band 只在此处
+	// 参与静默上限计算，不出 Observation）。
 	band := pressureBand(pressure)
 	felt := pressureBand(fpMul(pressure, fpMul(perception, fam)))
 	if band-felt > maxMuteBands {
@@ -213,7 +216,7 @@ func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64, t
 
 	sense := AcupointSense{
 		Name:         a.Name,
-		PressureBand: band,
+		PressureBand: felt,
 		Feelings:     []string{pressureWords[felt][tier]},
 		Flow:         "停滞",
 	}

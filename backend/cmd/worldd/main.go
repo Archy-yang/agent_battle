@@ -58,6 +58,14 @@ func main() {
 	if *config != "" {
 		loadEnvFile(*config)
 	}
+	// F2：debug 视图默认关闭（?debug=1 静默忽略，不暴露机制存在）；
+	// AGENTBATTLE_DEV=1/true 时才输出真值调试载荷。启动时打一行备忘。
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AGENTBATTLE_DEV"))) {
+	case "1", "true":
+		log.Printf("cult debug view enabled（AGENTBATTLE_DEV）")
+	default:
+		log.Printf("cult debug view disabled（?debug=1 将被静默忽略；设 AGENTBATTLE_DEV=1/true 开启）")
+	}
 	prof := profile.Load(*profilePath)
 
 	// WP-B：对局落盘 + 重启后经确定性重演惰性恢复（match/persistence.go）.

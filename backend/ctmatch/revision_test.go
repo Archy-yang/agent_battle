@@ -206,7 +206,7 @@ actions:
 func TestSessionViewRuleVersion(t *testing.T) {
 	reg := NewCultRegistry()
 	mux := newTestMux(reg)
-	id, v0 := createSession(t, mux, "script")
+	id, v0 := createSession(t, mux, "script", "")
 	if v0.RuleVersion != cult.RuleVersion {
 		t.Fatalf("rule_version = %q, want %q", v0.RuleVersion, cult.RuleVersion)
 	}

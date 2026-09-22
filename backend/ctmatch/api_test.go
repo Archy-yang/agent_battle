@@ -49,9 +49,13 @@ func post(t *testing.T, mux *http.ServeMux, path string, body any) (*httptest.Re
 	return rec, out
 }
 
-func createSession(t *testing.T, mux *http.ServeMux, pilot string) (string, *SessionView) {
+func createSession(t *testing.T, mux *http.ServeMux, pilot, mode string) (string, *SessionView) {
 	t.Helper()
-	rec, out := post(t, mux, "/api/cult/session", map[string]any{"seed": 7, "pilot": pilot})
+	body := map[string]any{"seed": 7, "pilot": pilot}
+	if mode != "" {
+		body["mode"] = mode
+	}
+	rec, out := post(t, mux, "/api/cult/session", body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: HTTP %d: %v", rec.Code, out)
 	}
@@ -81,12 +85,14 @@ func tick(t *testing.T, mux *http.ServeMux, id string, n int, intents []map[stri
 	return &v
 }
 
-// TestCultAPIScriptSessionFlow 建会话 → 跑几十 tick → 视图含回执、
-// 定性观察、感知流；非 debug 载荷无真值。
+// TestCultAPIScriptSessionFlow 建会话（tutorial：预载功法 + 固定走法
+// 分身）→ 跑几十 tick → 视图含回执、定性观察、感知流；非 debug 载荷
+// 无真值；?debug=1 在 AGENTBATTLE_DEV 开启时才有真值。
 func TestCultAPIScriptSessionFlow(t *testing.T) {
+	t.Setenv("AGENTBATTLE_DEV", "1")
 	reg := NewCultRegistry()
 	mux := newTestMux(reg)
-	id, v0 := createSession(t, mux, "script")
+	id, v0 := createSession(t, mux, "script", "tutorial")
 	if v0.PilotKind != "script" || v0.Acuity != 1 {
 		t.Fatalf("unexpected session header: %+v", v0)
 	}
@@ -171,7 +177,7 @@ func TestCultAPIScriptSessionFlow(t *testing.T) {
 func TestCultAPIPlayerIntents(t *testing.T) {
 	reg := NewCultRegistry()
 	mux := newTestMux(reg)
-	id, _ := createSession(t, mux, "script")
+	id, _ := createSession(t, mux, "script", "") // 缺省 mode=normal
 
 	// 玩家：于金门纳气（微量）——走与 Pilot 相同的入口，记 FromPlayer。
 	v := tick(t, mux, id, 1, []map[string]any{
@@ -227,7 +233,7 @@ func TestCultAPIPlayerIntents(t *testing.T) {
 func TestCultAPIAskDegraded(t *testing.T) {
 	reg := NewCultRegistry()
 	mux := newTestMux(reg)
-	id, _ := createSession(t, mux, "script")
+	id, _ := createSession(t, mux, "script", "")
 
 	rec, out := post(t, mux, "/api/cult/session/"+id+"/ask", map[string]any{"question": "今日身势如何？"})
 	if rec.Code != http.StatusOK {
@@ -251,7 +257,7 @@ func TestCultAPIAskDegraded(t *testing.T) {
 func TestCultAPIProtocolEscalation(t *testing.T) {
 	reg := NewCultRegistry()
 	mux := newTestMux(reg)
-	id, _ := createSession(t, mux, "script")
+	id, _ := createSession(t, mux, "script", "tutorial") // 起功用例需要预载《吐纳初诀》
 	// 先止息：建立观测基准，同时清掉 script 分身的常驻动作意图
 	//（否则玩家常驻意图会在下个 Tick 以"外意接管"暂停功法）。
 	tick(t, mux, id, 2, []map[string]any{{"kind": "stop"}})
@@ -328,7 +334,7 @@ cycles: 3
 func TestCultAPIGuidance(t *testing.T) {
 	reg := NewCultRegistry()
 	mux := newTestMux(reg)
-	id, _ := createSession(t, mux, "script")
+	id, _ := createSession(t, mux, "script", "")
 	rec, out := post(t, mux, "/api/cult/session/"+id+"/guidance",
 		map[string]any{"kind": "guide", "text": "金门似有滞涩，先查明再动"})
 	if rec.Code != http.StatusOK {
@@ -357,7 +363,7 @@ func TestCultAPIGuidance(t *testing.T) {
 func TestCultAPIHypothesis(t *testing.T) {
 	reg := NewCultRegistry()
 	mux := newTestMux(reg)
-	id, _ := createSession(t, mux, "script")
+	id, _ := createSession(t, mux, "script", "")
 	v := tick(t, mux, id, 1, []map[string]any{
 		{"kind": "hypothesis", "text": "青关或偏亲木性"},
 	})
@@ -377,7 +383,7 @@ func TestCultAPIHypothesis(t *testing.T) {
 func TestCultAPIIsolation(t *testing.T) {
 	reg := NewCultRegistry()
 	mux := newTestMux(reg)
-	id, _ := createSession(t, mux, "script")
+	id, _ := createSession(t, mux, "script", "")
 	tick(t, mux, id, 10, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/cult/session/"+id, nil)
@@ -390,5 +396,108 @@ func TestCultAPIIsolation(t *testing.T) {
 		if strings.Contains(body, banned) {
 			t.Fatalf("view leaks truth key %s", banned)
 		}
+	}
+}
+
+// TestCultAPIDebugGate debug 视图之门（F2）：默认环境（AGENTBATTLE_DEV
+// 未设）请求 ?debug=1 必须静默忽略——无真值字段、也不报错；设 env 后
+// ?debug=1 才携带真值载荷。
+func TestCultAPIDebugGate(t *testing.T) {
+	reg := NewCultRegistry()
+	mux := newTestMux(reg)
+
+	t.Run("default_env_silent", func(t *testing.T) {
+		t.Setenv("AGENTBATTLE_DEV", "")
+		id, _ := createSession(t, mux, "script", "")
+		req := httptest.NewRequest(http.MethodGet, "/api/cult/session/"+id+"?debug=1", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("debug 查询应静默等同普通视图，got HTTP %d", rec.Code)
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+			t.Fatalf("decode view: %v", err)
+		}
+		if _, ok := raw["debug"]; ok {
+			t.Fatal("默认环境下 ?debug=1 泄漏了 debug 载荷")
+		}
+		for _, banned := range []string{`"metrics"`, `"flow_scale"`} {
+			if strings.Contains(rec.Body.String(), banned) {
+				t.Fatalf("默认环境 debug 泄漏真值键 %s", banned)
+			}
+		}
+	})
+
+	t.Run("dev_env_enabled", func(t *testing.T) {
+		t.Setenv("AGENTBATTLE_DEV", "1")
+		id, _ := createSession(t, mux, "script", "")
+		req := httptest.NewRequest(http.MethodGet, "/api/cult/session/"+id+"?debug=1", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		var raw map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+			t.Fatalf("decode debug view: %v", err)
+		}
+		if _, ok := raw["debug"]; !ok {
+			t.Fatal("AGENTBATTLE_DEV=1 时 ?debug=1 应携带 debug 载荷")
+		}
+	})
+}
+
+// TestCultAPISessionMode 会话模式拆分（F3）：
+//   - 缺省/tutorial/normal 三种取值的功法库行为；
+//   - normal 的探索型 script 分身不预设答案：按回执驱动，感知流滚动、
+//     纳气与试引导回执出现；
+//   - 未知 mode 被拒。
+func TestCultAPISessionMode(t *testing.T) {
+	reg := NewCultRegistry()
+	mux := newTestMux(reg)
+
+	// 缺省（不给 mode）= normal：功法库为空。
+	_, v0 := createSession(t, mux, "script", "")
+	if len(v0.Protocols) != 0 {
+		t.Fatalf("normal 会话不应预装功法: %+v", v0.Protocols)
+	}
+
+	// tutorial：预载《吐纳初诀》。
+	_, vt := createSession(t, mux, "script", "tutorial")
+	if len(vt.Protocols) != 1 || vt.Protocols[0].Name != "吐纳初诀" {
+		t.Fatalf("tutorial 会话缺预装功法: %+v", vt.Protocols)
+	}
+
+	// 未知 mode 被拒。
+	rec, out := post(t, mux, "/api/cult/session", map[string]any{"seed": 7, "pilot": "script", "mode": "sandbox"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("未知 mode 应 400: %d %v", rec.Code, out)
+	}
+
+	// normal 探索型分身：推进几十 tick，感知流滚动，回执含纳气落地与
+	// 试引导（允许失败回执）。
+	id, _ := createSession(t, mux, "script", "")
+	v := tick(t, mux, id, 40, nil)
+	if v.Tick != 40 {
+		t.Fatalf("tick not advanced: %d", v.Tick)
+	}
+	if len(v.SenseStream) < 20 {
+		t.Fatalf("normal sense stream too thin: %d lines", len(v.SenseStream))
+	}
+	foundAbsorb, foundGuide := false, false
+	for _, r := range v.Receipts {
+		if strings.ContainsAny(r.Text, "0123456789") {
+			t.Fatalf("receipt leaks numbers: %q", r.Text)
+		}
+		if strings.Contains(r.Text, "纳气") {
+			foundAbsorb = true
+		}
+		if strings.Contains(r.Text, "引气") || strings.Contains(r.Text, "引") {
+			foundGuide = true
+		}
+	}
+	if !foundAbsorb {
+		t.Fatalf("探索型分身未试纳气: %+v", v.Receipts)
+	}
+	if !foundGuide {
+		t.Fatalf("探索型分身未试引导: %+v", v.Receipts)
 	}
 }
