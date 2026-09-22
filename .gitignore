@@ -10,3 +10,7 @@ backend/profile.json
 
 # WP-B 对局落盘（worldd -matches，默认 backend/matches）
 backend/matches/
+
+# 本地构建产物与会话本地配置
+backend/worldd
+.claude/
