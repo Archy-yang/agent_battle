@@ -1,9 +1,11 @@
 <script setup lang="ts">
-// src/cult/CultFu.vue —— 洞府叙事流：感知流（对话式正序）+ 分身请示 +
+// src/cult/CultFu.vue —— 洞府叙事流：感知流（对话式正序）+ 心念犹豫卡 +
 // 心念卡（映射真意图）+ 传念输入 + 逐渐被确认的东西（台账/假说/功法）
 // + 筑基迹象（五点档点阵，band 数字绝不渲染）。
+// 语态：第一人称内观——内部分身的产出一律呈现为玩家自己的感受与犹豫，
+// 后端文案经 state.firstPerson 转写后再渲染。
 import { computed, nextTick, ref, watch } from 'vue'
-import { cult, act, guide, startProtocol, knownPoints } from './state'
+import { cult, act, guide, startProtocol, knownPoints, firstPerson } from './state'
 import type { ProtoView } from './api'
 import CultScene from './CultScene.vue'
 
@@ -24,7 +26,7 @@ const chron = computed<ChronLine[]>(() => {
   for (const l of lines) {
     const prev = out[out.length - 1]
     if (prev && prev.kind === l.kind && prev.text === l.text) continue // 相邻同文不叠影
-    out.push({ tick: l.tick, kind: l.kind, text: l.text, key: `l${l.tick}-${out.length}` })
+    out.push({ tick: l.tick, kind: l.kind, text: firstPerson(l.text), key: `l${l.tick}-${out.length}` })
   }
   const all = [
     ...out,
@@ -93,7 +95,7 @@ const choices = computed<Choice[]>(() => {
     out.push({ key: 'tick', label: '按功法运转', sub: `依《${v.active}》之序，再行一段`, cls: 'primary', run: () => void act([], 1) })
   } else if (activeProto?.paused) {
     // 已挂起：续行（resume 意图），而非空转一息
-    out.push({ key: 'resume', label: `续行《${activeProto.name}》`, sub: '此功已挂起，候本尊示下', cls: 'primary', run: () => void act([{ kind: 'resume' }]) })
+    out.push({ key: 'resume', label: `续行《${activeProto.name}》`, sub: '此功已挂起，只待你定夺', cls: 'primary', run: () => void act([{ kind: 'resume' }]) })
   } else if (v.tick > 0) {
     // 后端约束：尚无观察（tick 0）时起功必被拒，先静观一息再依诀行周天
     const p = v.protocols.find((x) => !x.active)
@@ -110,11 +112,12 @@ const choices = computed<Choice[]>(() => {
   return out.slice(0, 3)
 })
 
-// —— 分身请示卡（置顶）：定性文案 + 处理按钮映射 resume/stop 意图 ——
+// —— 心念犹豫卡（置顶）：内部分身的请示呈现为玩家自己的踌躇；
+// 按钮映射 resume/stop 意图（映射逻辑不变） ——
 function reqTitle(kind: string): string {
-  if (kind === 'out_of_boundary') return '越界之请'
-  if (kind === 'unknown_anomaly') return '异象'
-  return '护卫叫停'
+  if (kind === 'out_of_boundary') return '气息似要越出熟悉的路径，你有些拿不准'
+  if (kind === 'unknown_anomaly') return '身有异象，你一时不知深浅'
+  return '气息过盛，行功受阻，你起了停手的念头'
 }
 function approve() { void act([{ kind: 'resume' }]) }
 function halt() { void act([{ kind: 'stop' }]) }
@@ -135,7 +138,7 @@ function sendThought() {
   if (!t) return
   thought.value = ''
   echoes.value.push({ tick: cult.view?.tick ?? 0, text: `你传下一念：「${t}」` })
-  toast('念头已至。它影响分身摸索的取向，不直接改动身内流转。')
+  toast('念头已至。它会牵动你摸索的取向，不直接改动身内流转。')
   void guide('guide', t)
 }
 
@@ -149,7 +152,7 @@ const knowledgeEmpty = computed(() => {
 })
 
 function protoState(p: ProtoView): string {
-  if (p.active && p.paused) return '已挂起 · 候本尊示下'
+  if (p.active && p.paused) return '已挂起 · 只待你定夺'
   if (p.active) return p.loop ? '周天自转 · 不假心念' : '运转中'
   return p.status === 'validated' ? '已验证 · 未运转' : '草创 · 未运转'
 }
@@ -183,13 +186,13 @@ watch(realm, (r) => {
         <div v-for="l in chron" :key="l.key" class="ln" :class="lineCls(l.kind)">{{ l.text }}</div>
       </div>
 
-      <!-- 分身请示（置顶） -->
+      <!-- 犹豫卡（置顶）：呈现为玩家自己的踌躇 -->
       <div class="cu-request" v-for="r in cult.view.requests" :key="r.id">
-        <div class="rt">分身请示 · {{ reqTitle(r.kind) }}</div>
-        <div class="rx">{{ r.text }}</div>
+        <div class="rt">你犹豫了——{{ reqTitle(r.kind) }}</div>
+        <div class="rx">{{ firstPerson(r.text) }}</div>
         <div class="btns">
-          <button class="go" :disabled="cult.busy" @click="approve">准 · 续行</button>
-          <button class="halt" :disabled="cult.busy" @click="halt">止</button>
+          <button class="go" :disabled="cult.busy" @click="approve">继续前行</button>
+          <button class="halt" :disabled="cult.busy" @click="halt">就此止息</button>
         </div>
       </div>
 
@@ -207,15 +210,15 @@ watch(realm, (r) => {
       </div>
 
       <div class="sec">逐渐被确认的东西</div>
-      <div class="cu-know-empty" v-if="knowledgeEmpty">静室尚无一物可记。分身摸索出足够稳定的观察后，此处自会生枝添叶。</div>
+      <div class="cu-know-empty" v-if="knowledgeEmpty">静室尚无一物可记。待你摸索出足够稳定的观察，此处自会生枝添叶。</div>
       <div class="cu-knowledge" v-else>
-        <div class="kn" v-for="(l, i) in cult.view.ledger.slice(0, 12)" :key="'k' + i">{{ l }}</div>
+        <div class="kn" v-for="(l, i) in cult.view.ledger.slice(0, 12)" :key="'k' + i">{{ firstPerson(l) }}</div>
         <div class="kn hyp" v-for="(h, i) in cult.view.hypotheses" :key="'h' + i">
-          <b>{{ h.text }}</b>　{{ h.status }}——{{ h.evidence }}
+          <b>{{ firstPerson(h.text) }}</b>　{{ h.status }}——{{ firstPerson(h.evidence) }}
         </div>
         <div class="cu-art" v-for="p in cult.view.protocols" :key="p.name">
           <b>《{{ p.name }}》</b>
-          <p>{{ p.path }}</p>
+          <p>{{ firstPerson(p.path) }}</p>
           <p class="meta">{{ protoState(p) }}<template v-if="p.guards.length"> · 护卫：{{ p.guards.join('、') }}</template></p>
         </div>
       </div>

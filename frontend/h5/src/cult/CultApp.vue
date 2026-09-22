@@ -10,7 +10,7 @@ const emit = defineEmits<{ exit: [] }>()
 
 // —— 开局仪式 ——
 const goal = ref('')
-const useScript = ref(false) // 演示入口：勾选则以脚本分身入定（不耗调用）
+const useScript = ref(false) // 演示入口：勾选则以内景演示入定（不耗调用）
 const gated = computed(() => cult.gate && !cult.view)
 
 function doAwaken() {
@@ -22,10 +22,10 @@ const realm = computed(() => cult.view?.realm ?? '')
 // 底部阶段行：定性描述当前所在阶段（零数字、零机器词）
 const modeText = computed(() => {
   const v = cult.view
-  if (!v) return { cur: '初醒', sub: '静室之中，分身尚未睁眼' }
+  if (!v) return { cur: '初醒', sub: '静室之中，你对此身尚感陌生' }
   if (v.active) return { cur: '周天运转', sub: `依《${v.active}》行功，异常方唤心神` }
   if (v.points.some((p) => p.flow !== '停滞')) return { cur: '吐纳中', sub: '气息在身内流动，随时可止' }
-  return { cur: '暗中摸索', sub: '分身正在辨认周身可承气之处' }
+  return { cur: '暗中摸索', sub: '你在暗中辨认周身可承气之处' }
 })
 
 function doHold() {
@@ -35,22 +35,22 @@ function doHold() {
 
 <template>
   <div class="cult-root">
-    <!-- 开局仪式：本尊入世（pilot 选择不是玩家语义，收敛为一颗按钮 + 演示入口） -->
+    <!-- 开局仪式：第一人称入定（pilot 选择不是玩家语义，收敛为一颗按钮 + 演示入口） -->
     <div class="c-gate" v-if="gated">
       <div class="seal" aria-hidden="true">炁</div>
       <h2 class="kai">一炁周天</h2>
-      <p class="sub ui">本尊沉睡，分身初醒。它不知修炼法门，只凭身体感受摸索。</p>
-      <p class="sub ui">你定方向，断风险；它探索、试错、悟出功法。</p>
+      <p class="sub ui">你沉入静室。这具身体于你陌生——经脉未明，窍穴难辨，唯有靠感受一点点摸清。</p>
+      <p class="sub ui">写下此刻的心愿与分寸；余下的，交给时间与身体。</p>
       <textarea
         v-model="goal"
         rows="3"
         placeholder="写下方向（可留白）：如「先立一门稳妥吐纳，再探火性」"
       ></textarea>
       <button class="awaken" :disabled="cult.awakening" @click="doAwaken">
-        {{ cult.awakening ? '入定中……' : '唤醒分身' }}
+        {{ cult.awakening ? '入定中……' : '入定' }}
       </button>
       <label class="demo ui">
-        <input type="checkbox" v-model="useScript" /> 脚本分身演示（不耗灵机）
+        <input type="checkbox" v-model="useScript" /> 演示之身（不耗灵机）
       </label>
       <p class="err ui" v-if="cult.error">{{ cult.error }}</p>
     </div>
@@ -65,7 +65,7 @@ function doHold() {
       <div class="cu-err" v-if="cult.error">{{ cult.error }}</div>
 
       <div class="cu-scroll">
-        <div v-if="!cult.view" class="cu-loading">正在静室中唤醒分身……</div>
+        <div v-if="!cult.view" class="cu-loading">正在静室中入定……</div>
         <CultFu v-else />
       </div>
 

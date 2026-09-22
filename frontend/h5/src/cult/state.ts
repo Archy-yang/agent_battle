@@ -14,8 +14,8 @@ interface CultState {
   askAnswer: string
   askDegraded: string
   busy: boolean
-  // gate = 开局仪式（唤醒分身）尚未完成。开局是产品语义的一部分
-  // （设计稿：本尊入世），pilot 选择不属于玩家语义——默认请 llm，
+  // gate = 开局仪式（入定）尚未完成。开局是产品语义的一部分
+  // （第一人称内观），pilot 选择不属于玩家语义——默认请 llm，
   // 后端未配置时自动落 script 并告知。
   gate: boolean
   awakening: boolean
@@ -31,14 +31,28 @@ export const cult = reactive<CultState>({
   awakening: false,
 })
 
+/**
+ * 第一人称语态过滤：后端旧文案可能仍带「分身／本尊」的他者框架词，
+ * 渲染进玩家界面前一律转成第一人称内观（player 即修炼者本人）。
+ * 仅用于展示层，view 字段原文照存。
+ */
+export function firstPerson(msg: string): string {
+  return String(msg)
+    .replace(/【本尊】/g, '')
+    .replace(/（分身入定，未留言。）/g, '（我已入定，未留言。）')
+    .replace(/本尊/g, '你')
+    .replace(/分身/g, '我')
+    .replace(/它仍在凭感知修行/g, '身内流转仍在自行演化')
+}
+
 /** 错误转译：后端错误可能带机器词（LLM/Runtime/pilot），玩家界面只许灵机话术。 */
 export function humanizeError(msg: string): string {
-  return String(msg)
-    .replace(/LLM 未配置/g, '灵机未启，以脚本分身入定')
+  return firstPerson(String(msg)
+    .replace(/LLM 未配置/g, '灵机未启，以内景演示入定')
     .replace(/LLM|大模型|语言模型/g, '灵机')
     .replace(/[Rr]untime/g, '内景')
-    .replace(/[Pp]ilot/g, '分身')
-    .replace(/HTTP \d+/g, '灵路不通')
+    .replace(/[Pp]ilot/g, '心神')
+    .replace(/HTTP \d+/g, '灵路不通'))
 }
 
 /**
@@ -66,7 +80,7 @@ function startPolling(): void {
   }
 }
 
-/** 开局仪式「唤醒分身」：建会话并开始轮询。llm 未配置时自动落脚本。 */
+/** 开局仪式「入定」：建会话并开始轮询。llm 未配置时自动落脚本。 */
 export async function awaken(pilot: 'llm' | 'script', goal: string): Promise<void> {
   if (cult.awakening) return
   cult.awakening = true
@@ -79,7 +93,7 @@ export async function awaken(pilot: 'llm' | 'script', goal: string): Promise<voi
     } catch (e) {
       if (pilot === 'llm' && String(e instanceof Error ? e.message : e).includes('LLM 未配置')) {
         cult.view = await createCultSession('script')
-        cult.error = '灵机未启，以脚本分身入定（不耗调用）'
+        cult.error = '灵机未启，以内景演示入定（不耗调用）'
       } else {
         throw e
       }
@@ -180,7 +194,7 @@ export async function ask(question: string): Promise<void> {
   try {
     const r = await askCult(cult.view.id, question)
     if (r.degraded) {
-      cult.askDegraded = r.reason ?? '分身无法应答'
+      cult.askDegraded = r.reason ? humanizeError(r.reason) : '心念一时无法应答'
     } else {
       cult.askAnswer = r.answer
     }

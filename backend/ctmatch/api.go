@@ -560,7 +560,7 @@ func requestCardFor(e Event) *RequestCard {
 	case EventOutOfBoundary:
 		return &RequestCard{Kind: "out_of_boundary", Text: "「" + e.Protocol + "」欲引之气越出已验证边界。准其试探（有伤脉之险），抑或止之？"}
 	case EventUnknownAnomaly:
-		return &RequestCard{Kind: "unknown_anomaly", Text: "「" + e.Protocol + "」行功中生出分身无法解释的异象（似有新伤）。是否续行？"}
+		return &RequestCard{Kind: "unknown_anomaly", Text: "「" + e.Protocol + "」行功中生出你无法解释的异象（似有新伤）。是否续行？"}
 	}
 	return nil
 }
@@ -646,7 +646,7 @@ func (h *cultHandle) applyPlayerIntents(list []playerIntent) error {
 		case pj.Kind == "resume":
 			h.sess.ResumeProtocol()
 			h.pending = nil
-			h.stream = append(h.stream, StreamLine{Tick: t, Kind: "voice", Text: "【本尊】准。分身续行前功。"})
+			h.stream = append(h.stream, StreamLine{Tick: t, Kind: "voice", Text: "你定了定神，续行前功。"})
 			h.playerLog = append(h.playerLog, PlayerLine{Tick: t, Summary: "准许分身续行"})
 		case it.Kind == IntentStop:
 			h.currentIntents = nil
@@ -779,7 +779,7 @@ func (h *cultHandle) view() *SessionView {
 		}
 	}
 	if v.SelfReport == "" {
-		v.SelfReport = "（分身入定，未留言。）"
+		v.SelfReport = "（我已入定，未留言。）"
 	}
 
 	// 证据账本与假说表（定性视图）。
@@ -1262,7 +1262,7 @@ func (r *CultRegistry) HandleAsk(w http.ResponseWriter, req *http.Request) {
 		r.mu.Unlock()
 		writeCultJSON(w, http.StatusOK, map[string]any{
 			"answer": "", "degraded": true,
-			"reason": "分身无法应答：未接灵机（LLM 未配置）。它仍在凭感知修行。",
+			"reason": "心念一时无法应答：未接灵机（LLM 未配置）。",
 		})
 		return
 	}

@@ -139,7 +139,7 @@ function tap(n: NodeItem) {
           <template v-else>所感：无甚可辨。</template>
           气机{{ current.flow }}，开度{{ current.openness }}，{{ current.stability }}，{{ current.damage }}。
           <template v-if="current.nature.length">气带{{ current.nature.join('、') }}性。</template>
-          ——所见皆感知，数值藏在世界里。
+          ——所见皆是感受，其余都藏在这具身体里。
         </span>
       </div>
     </div>
