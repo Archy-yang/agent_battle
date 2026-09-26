@@ -252,6 +252,39 @@ const (
 	// 每 Tick 被动流量 ≤ 源穴位该元素存量 × KQiShare。流转过快会令压差
 	// 逐 Tick 反转（弛豫振荡），经 §15 FlowShock 打穿稳定性。
 	KQiShare = 100 // 0.10（标定探针中）
+
+	// ---------------------------------------------------------------------------
+	// 阶段二「驱动的代价」（docs/specs/2026-09-26-engine-drive-foundation-v1.md
+	// 阶段二范围 + 裁决①；公式来源：评审稿
+	// docs/cultivation_autonomous_loop_design_v0.2.md §4.4/§9.4/§10/§15/§24.6）
+	// ---------------------------------------------------------------------------
+
+	// KDriveWork 是驱动做功基数 k_work（评审稿 §10.1 [v0.1 参数]）：
+	// DriveWork = k_work × ActualDrive² × Δt / DriveEfficiency（定点实现见
+	// driveWorkOf）。做功从驱动穴位真实储气按元素扣除，去向=热（守恒账
+	// DriveWork 项）。二次律保证温和驱动便宜、过驱昂贵——「火候」的代价面。
+	KDriveWork = 2 // 0.002 [v0.1 参数]
+
+	// SafeDriveRatio 是安全驱动比（评审稿 §10.2 [v0.1 参数]）：
+	// DriveRatio = ActualDrive / EffectiveDriveCapacity 超过它才进入过驱。
+	SafeDriveRatio = 800 // 0.8 [v0.1 参数]
+
+	// KDriveOver 是过驱应变权重 k_over（评审稿 §10.2 [v0.1 参数]）：
+	// DriveStrain += k_over × OverDrive²，OverDrive = max(0, Ratio−Safe)。
+	// 过驱同时经做功二次律显著生热（§10.2 因果链）。
+	KDriveOver = 1500 // 1.5 [v0.1 参数]
+
+	// KDriveRamp 是驱动突变应变权重 k_ramp（评审稿 §10.2 [v0.1 参数]）：
+	// DriveStrain += k_ramp × ΔDriveRatio²（只计加力方向——骤然松手由
+	// §15 FlowShock 管辖，不双重惩罚）。逐穴位取最受力一路（max），
+	// 见 tick.go 驱动应变归并注释。
+	KDriveRamp = 200 // 0.2 [v0.1 参数]
+
+	// CoreDriveSignificance 是核点判据的显著主导比（定稿阶段二范围 1
+	// [v0.1 参数]）：驱动容量须高于其余每一穴位的该倍数才成核点——
+	// 「驱动容量显著高于其余节点者」。取代 0.3.0 的「Capacity 最大」
+	// 判据（宪法 §8：结构判据参数化，无专名；外部代码审查第 6 条）。
+	CoreDriveSignificance = 2000 // 2.0 [v0.1 参数]
 )
 
 // RuleVersion 是底层规则版本标识（宪法 §18 Rule Versioning）。
@@ -263,8 +296,16 @@ const (
 // 0.3.0 → 0.4.0（2026-09-22 Part J 被动环流）：新增压差驱动的被动输运项
 // （J2）与途经纳气项（J3，守恒扩 Entrained），传输不再全由 Ops.Requests
 // 驱动——Rule Semantic Change。
+// 0.4.0 → 0.5.0（2026-09-26 阶段二「驱动的代价」，定稿
+// specs/2026-09-26-engine-drive-foundation-v1.md）：①驱动容量独立成维
+// （Acupoint.DriveCapacity，评审稿 §4.4 第四维），核点判据由「Capacity
+// 最大」改为「DriveCapacity 显著主导」；②统一驱动求解（评审稿 §9.4）：
+// 主动驱动做功扣真实能源（守恒账 ReverseWork 归属迁移为 DriveWork，
+// 顺流另付 §10.1 二次律做功），无可用能量则实际驱动衰减；③驱动代价
+// 分层（评审稿 §10.2）：过驱/突变生应变、二次做功生废热——Rule
+// Semantic Change。
 // 同 World 状态 + 同 Ops + 同 RuleVersion + 同 Seed ⇒ 逐位一致重演。
-const RuleVersion = "0.4.0-passive-circulation"
+const RuleVersion = "0.5.0-drive-cost"
 
 // ---------------------------------------------------------------------------
 // 定点算术

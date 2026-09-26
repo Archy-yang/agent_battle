@@ -54,21 +54,24 @@ func revWorld() *World {
 		Temperature: 1000,
 	}
 	w := NewWorld(char, env)
-	// 丹田画像（B1）：Capacity 全图最高（A1 v0.2 核点判据的唯一结构依据）。
+	// 丹田画像（B1）：Capacity 全图最高；0.5.0 起核点判据迁移到驱动容量
+	//（定稿裁决①）——DriveCapacity 显著主导（12000 > 3×2 倍判据）。
 	w.Character.BodyGraph.Acupoints[0].Capacity = 200000
+	w.Character.BodyGraph.Acupoints[0].DriveCapacity = 12000
 	return w
 }
 
 // checkConservation 断言一个 Tick 报告的守恒恒等式（修订包 A3：精确整数，
-// 无凭空增益；Part J J3 恒等式扩 Entrained 项）。
+// 无凭空增益；Part J J3 恒等式扩 Entrained 项；0.5.0 扩驱动做功 DriveWork
+// 项——顺流 §10.1 + 逆势 A2，去向=热）。
 func checkConservation(t *testing.T, rep *TickReport) {
 	t.Helper()
 	c := rep.Conservation
 	net := c.QiAfter - c.QiBefore
-	accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.ReverseWork + c.Entrained
+	accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.DriveWork + c.Entrained
 	if net != accounted {
-		t.Errorf("tick %d 守恒破坏: ΔQi=%d, 归账=%d (intake=%d diffuse=%d transfer=%d sheng=%d reverse=%d entrained=%d)",
-			rep.Tick, net, accounted, c.Intake, c.Diffuse, c.TransferLoss, c.ShengLoss, c.ReverseWork, c.Entrained)
+		t.Errorf("tick %d 守恒破坏: ΔQi=%d, 归账=%d (intake=%d diffuse=%d transfer=%d sheng=%d drive=%d entrained=%d)",
+			rep.Tick, net, accounted, c.Intake, c.Diffuse, c.TransferLoss, c.ShengLoss, c.DriveWork, c.Entrained)
 	}
 }
 

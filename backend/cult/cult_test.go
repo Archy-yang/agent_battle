@@ -39,6 +39,10 @@ func goldenAcupoint(name string) Acupoint {
 		Openness:      800000,                                         // 0.80（微标度）
 		BaseStability: 950,
 		Stability:     950, // 0.95
+		// 驱动画像（0.5.0 [v0.1 参数]）：10000 ≥ 本世界各通道 large 档流量，
+		// 驱动容量不限幅——黄金用例只受 §8.1 管线容量约束（单穴世界无经脉，
+		// 本字段不参与任何运算）。
+		DriveCapacity: 10000,
 		Damage:        0,
 		Adaptation:    [ElementCount]int64{1000000, 1000000, 1000000, 1000000, 1000000},
 		Activity:      [ElementCount]int64{1000, 1000, 1000, 1000, 1000},
@@ -178,11 +182,14 @@ func TestTwoAcupoints_Transfer(t *testing.T) {
 			Affinity:   [ElementCount]int64{1000, 1000, 1000, 1000, 1000},
 			Capacity:   50000,
 			Throughput: 3000,
-			Retention:  1000, // 不逸散，隔离变量
-			Openness:   1000000,
-			Stability:  1000,
-			Activity:   [ElementCount]int64{1000, 1000, 1000, 1000, 1000},
-			Qi:         [ElementCount]int64{qi, 0, 0, 0, 0},
+			// 驱动画像（0.5.0）：10000 ≫ 请求流量——本用例隔离 §8 传输
+			// 公式，驱动容量不得成为限幅项（限幅语义另测）。
+			DriveCapacity: 10000,
+			Retention:     1000, // 不逸散，隔离变量
+			Openness:      1000000,
+			Stability:     1000,
+			Activity:      [ElementCount]int64{1000, 1000, 1000, 1000, 1000},
+			Qi:            [ElementCount]int64{qi, 0, 0, 0, 0},
 		}
 	}
 	char := Character{
@@ -218,28 +225,32 @@ func TestTwoAcupoints_Transfer(t *testing.T) {
 	// 沿天然向、只填 §8.1 管线余量），本场景请求 1000 恰等于管线容量
 	//（min(2000,3000,3000)×0.5=1000），管道余量为零——丹田→青关虽存在
 	// 压差（ΔP=Pressure(LR²)=10），被动项亦无余量可用，故实际流全由主动
-	// 请求构成，库存与 Part J 之前基准逐位一致、守恒逐项归账不变：
-	// 源 5000−1000(流出)−160(木→火转化) = 3840；目标 500−20 = 480；
-	// 木合计 = 4320（主动传输损耗 500 离开木池：250 归环境、250 归热；
-	// 转化为火非损失）。
-	if got := rep.Points[0].Qi[Wood]; got != 3840 {
-		t.Errorf("源穴位木: got %d, want 3840", got)
+	// 请求构成。0.5.0 重算归因（定稿阶段二「驱动的代价」）：主动驱动另付
+	// 统一驱动求解做功 DriveWork = k_work×Actual²/效率 = 0.002×1²=0.002
+	//（千分位 2，去向=热、从驱动穴位扣除）——做功从真实能源扣，无凭空
+	// 驱动（评审稿 §10.1/§26.4）：源 5000−1000(流出)−2(做功)−160(木→火
+	// 转化) = 3838；目标 500−20 = 480；木合计 = 4318（主动传输损耗 500
+	// 离开木池：250 归环境、250 归热；做功 2 与转化为火非损失项同账）。
+	if got := rep.Points[0].Qi[Wood]; got != 3838 {
+		t.Errorf("源穴位木: got %d, want 3838", got)
 	}
 	if got := rep.Points[1].Qi[Wood]; got != 480 {
 		t.Errorf("目标穴位木: got %d, want 480", got)
 	}
 	total := rep.Points[0].Qi[Wood] + rep.Points[1].Qi[Wood]
-	if total != 4320 {
-		t.Errorf("木合计: got %d, want 4320", total)
+	if total != 4318 {
+		t.Errorf("木合计: got %d, want 4318", total)
 	}
 
 	// Part J 叠加对照（全新世界，与上半场状态隔离）：请求减半（500）后
 	// 管道余量 500，压差梯度项照常驱动被动流、与主动流同走 §9 损耗管线：
 	// 被动流 = chanCap×KPassive×ΔP×cond = 2000×0.3×0.01×0.5 = 3（千分位），
 	// 送达 2、损耗 1（远小于余量——梯度受压差平方律限制，此处仅为叠加与
-	// 归账验证）。守恒：源 5000−500(主动流出)−3(被动)−180(木→火) = 4317；
-	// 目标 250+2−10 = 242；ΔQi = −441 = −251(传输损耗) −190(转化损耗)，
-	// 环境气为零 → 无纳气项，全部可归因。
+	// 归账验证）。守恒（0.5.0 重算归因：主动驱动另付做功 0.002×0.5²≈0.001，
+	// 千分位 1）：源 5000−500(主动流出)−3(被动)−1(做功)−180(木→火) = 4316；
+	// 目标 250+2−10 = 242；ΔQi = −442 = −251(传输损耗) −190(转化损耗)
+	// −1(驱动做功)，环境气为零 → 无纳气项，全部可归因。被动流不付做功
+	//（势差自然释放，评审稿 §15）——做功只随主动请求发生。
 	char3 := Character{
 		Affinity:   [ElementCount]int64{1000, 1000, 1000, 1000, 1000},
 		Control:    1000,
@@ -261,14 +272,14 @@ func TestTwoAcupoints_Transfer(t *testing.T) {
 	if passive != 3 {
 		t.Errorf("余量输运: 被动流 got %d, want 3", passive)
 	}
-	if got := rep3.Points[0].Qi[Wood]; got != 4317 {
-		t.Errorf("余量输运源穴木: got %d, want 4317", got)
+	if got := rep3.Points[0].Qi[Wood]; got != 4316 {
+		t.Errorf("余量输运源穴木: got %d, want 4316", got)
 	}
 	if got := rep3.Points[1].Qi[Wood]; got != 242 {
 		t.Errorf("余量输运目标穴木: got %d, want 242", got)
 	}
 	c3 := rep3.Conservation
-	if net, acc := c3.QiAfter-c3.QiBefore, c3.Intake-c3.Diffuse-c3.TransferLoss-c3.ShengLoss-c3.ReverseWork+c3.Entrained; net != acc {
+	if net, acc := c3.QiAfter-c3.QiBefore, c3.Intake-c3.Diffuse-c3.TransferLoss-c3.ShengLoss-c3.DriveWork+c3.Entrained; net != acc {
 		t.Errorf("余量输运守恒破坏: ΔQi=%d 归账=%d", net, acc)
 	}
 	if rep3.Conservation.Entrained != 0 {

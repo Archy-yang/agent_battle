@@ -41,8 +41,9 @@ type FlowRequest struct {
 	// Amount[e] 是对元素 e 的请求流量；0 表示不请求。
 	Amount [ElementCount]int64
 	// Reverse 标记逆流传输（修订包 A2）：沿天然向反向行走。
-	// 唯有核点（Capacity 最大的穴位，A1 v0.2 核点判据——丹田画像，B1）
-	// 可发起；其余一律被引擎拒绝。
+	// 唯有核点可发起——核点判据自 0.5.0 起为「驱动容量显著高于其余
+	// 节点者」（CorePointOf，定稿阶段二范围 1 / 裁决①；丹田的特殊性
+	// 落在参数画像，宪法 §8）；其余一律被引擎拒绝。
 	Reverse bool
 }
 
@@ -114,11 +115,17 @@ type TransferReport struct {
 	// Reverse 标记本条为逆流传输（A2）：Actual 沿天然向反向行走
 	// （从 To 端流向 From 端），From/To 仍为经脉天然端点。
 	Reverse bool
-	// Rejected 标记逆流请求被引擎拒绝（A2：发起者不是核点），
-	// 此时无任何流量发生。
+	// Rejected 标记逆流请求被引擎拒绝（发起者不是核点，0.5.0 核点判据
+	// = 驱动容量显著主导），此时无任何流量发生。
 	Rejected bool
-	// WorkCost[e] 是逆流做功代价（从发起汇点按元素扣除；A2）。
+	// WorkCost[e] 是逆势驱动的做功代价（A2 公式结构不变，归属迁移为
+	// 统一驱动求解的逆势代价输出——定稿裁决①；从发起核点按元素扣除，
+	// 去向=热）。
 	WorkCost [ElementCount]int64
+	// DriveWork[e] 是顺流驱动的做功代价（0.5.0 新增，评审稿 §10.1：
+	// k_work × ActualDrive² / DriveEfficiency；从驱动穴位按元素扣除，
+	// 去向=热）。守恒账 DriveWork = Σ WorkCost + Σ DriveWork。
+	DriveWork [ElementCount]int64
 
 	// Passive[e] 是本条经脉本 Tick 的被动输运实际流量（Part J J2：压差
 	// 驱动，沿天然向）。被动流走独立报告条目（无主动请求的经脉也会产生
@@ -145,6 +152,8 @@ type AcupointReport struct {
 	PostIntakeLoad  int64 // 吸收后立即测得的负载（§47）
 	PostIntakeRatio int64 // 吸收后负载比（§47，也是下一 Tick 反压的输入）
 	ThermalLoad     int64 // 热负荷累积（修订包 A2/B4；散热衰减后含本 Tick 新热）
+	DriveStrain     int64 // 驱动应变分量（0.5.0，评审稿 §10.2；已计入 Strain）
+	DriveWork       int64 // 本穴位支付的驱动做功合计（0.5.0，去向=热）
 	Qi              [ElementCount]int64
 	Activity        [ElementCount]int64
 	Intake          [ElementCount]int64 // §7 环境吸收（主动纳入；途经纳气另列 Entrained）
@@ -155,11 +164,14 @@ type AcupointReport struct {
 // 逐项可归因，无凭空增益）。恒等式（精确整数，逐项与运算用同一舍入值）：
 //
 //	QiAfter - QiBefore == Intake - Diffuse - TransferLoss - ShengLoss
-//	                    - ReverseWork + Entrained
+//	                    - DriveWork + Entrained
 //
 // 去向标注：Diffuse 与 TransferLoss 的一半 → 环境；TransferLoss 另一半、
-// ShengLoss、ReverseWork → 热（穴位 heatAccum / ThermalLoad）。
-// Entrained 是 Part J J3 途经纳气（来源=环境，随实际流量逐穴计量）。
+// ShengLoss、DriveWork → 热（穴位 heatAccum / reverseHeatAccum /
+// ThermalLoad）。Entrained 是 Part J J3 途经纳气（来源=环境，随实际流量
+// 逐穴计量）。0.5.0 语义迁移（定稿裁决①）：原 ReverseWork 项并入
+// DriveWork——逆流做功（A2）与顺流做功（§10.1）同为统一驱动求解的
+// 做功代价输出，不再单列。
 type Conservation struct {
 	QiBefore     int64 // Tick 开始时 Σ 穴位储气
 	QiAfter      int64 // Tick 结束时 Σ 穴位储气
@@ -167,7 +179,7 @@ type Conservation struct {
 	Diffuse      int64 // Σ §13 逸散（去向=环境）
 	TransferLoss int64 // Σ §9 传输损耗
 	ShengLoss    int64 // Σ §10 转化损耗（去向=热）
-	ReverseWork  int64 // Σ 逆流做功代价（A2，去向=热）
+	DriveWork    int64 // Σ 驱动做功代价（0.5.0：顺流 §10.1 + 逆势 A2，去向=热）
 	Entrained    int64 // Σ 途经纳气（Part J J3，来源=环境）
 }
 
@@ -177,6 +189,7 @@ type TickReport struct {
 	Transfers    []TransferReport
 	Points       []AcupointReport
 	Conservation Conservation
+	Work         WorkLedger // 做功台账（0.5.0，评审稿 §15/§24.6；只读不回写）
 }
 
 // ---------------------------------------------------------------------------
@@ -262,13 +275,15 @@ func Advance(w *World) *TickReport {
 		a.lastLoadRatioMilli = r // 下一 Tick 反压的输入
 	}
 
-	// §8-9 灵气传输与损耗（含修订包 A2 逆流做功、Part J 被动输运与途经纳气）。
+	// §8-9 灵气传输与损耗（含修订包 A2 逆流做功、Part J 被动输运与途经纳气、
+	// 0.5.0 统一驱动求解）。
 	var entrainedArr [][ElementCount]int64
-	rep.Transfers, entrainedArr = runTransfers(w, refines, postRatio)
+	var ds *driveSettle
+	rep.Transfers, entrainedArr, ds = runTransfers(w, refines, postRatio)
 	for _, tr := range rep.Transfers {
 		for e := 0; e < ElementCount; e++ {
 			cons.TransferLoss += tr.Loss[e]
-			cons.ReverseWork += tr.WorkCost[e]
+			cons.DriveWork += tr.WorkCost[e] + tr.DriveWork[e]
 		}
 	}
 	// Part J J3：途经纳气归账（来源=环境，单独成项）。报告逐穴单列
@@ -354,6 +369,12 @@ func Advance(w *World) *TickReport {
 			fpMul(WAffinity, fpMul(affStrain, affStrain)) +
 			fpMul(WShock, fpMul(shockEff, shockEff)) +
 			r.TransformHeat
+		// 驱动应变（0.5.0，评审稿 §10.2）：过驱 + 加力突变分量，由统一
+		// 驱动求解在传输结算时逐穴位归并（最受力一路）。温和稳定驱动
+		// （安全驱动比内、无突变）该分量为零——耗能不等于受伤（§26.5）。
+		r.DriveStrain = ds.strain[i]
+		r.Strain += r.DriveStrain
+		r.DriveWork = ds.work[i]
 
 		// §18 Stability（D4-2：稳定性恢复 × (1 + Refine_avg×KStab)）。
 		earthRatio := int64(0)
@@ -420,6 +441,7 @@ func Advance(w *World) *TickReport {
 		a.heatAccum = 0
 		a.reverseHeatAccum = 0
 		a.elemFlowAccum = [ElementCount]int64{}
+		a.prevDriveRatio = ds.ratio[i] // 驱动比滚动（k_ramp 突变项输入）
 
 		r.Qi = a.Qi
 		r.Activity = a.Activity
@@ -449,6 +471,25 @@ func Advance(w *World) *TickReport {
 		cons.QiAfter += w.Character.BodyGraph.Acupoints[i].load()
 	}
 
+	// 做功台账（0.5.0，定稿阶段二范围 4；评审稿 §15/§24.6）。做功三分归因
+	// 按传输条目逐元素判读：被动条目（Passive>0）归 PassiveWork，其余实际
+	// 流量归 ManualWork（主动/被动条目不混——被动条目只由被动输运循环产生，
+	// 主动条目不设 Passive 字段）。自主驱动本阶段恒零（阶段三经统一驱动
+	// 求解接入后入账）。
+	led := &rep.Work
+	for _, tr := range rep.Transfers {
+		for e := 0; e < ElementCount; e++ {
+			if tr.Passive[e] > 0 {
+				led.PassiveWork += tr.Actual[e]
+			} else {
+				led.ManualWork += tr.Actual[e]
+			}
+		}
+	}
+	led.DriveWork = cons.DriveWork
+	led.ExternalInput = cons.Intake + cons.Entrained
+	led.Loss = cons.TransferLoss + cons.Diffuse + cons.ShengLoss
+
 	w.Last = rep
 	return rep
 }
@@ -466,33 +507,73 @@ func loadRatio(a *Acupoint, load int64) int64 {
 	return fpDiv(load, cap)
 }
 
-// CorePointOf 返回身体图的核点下标（修订包 A1 v0.2）：Capacity 最大的穴位。
+// CorePointOf 返回身体图的核点下标；无主导者时返回 -1。
 //
-// 结构判据而非类型枚举（宪法 §8）：丹田画像的特殊性——唯可发起逆流外推
-// （A2）——全部落在其"Capacity 最高"的参数事实上，无 type 字段。
-// 旧判据"纯汇点（无出向经脉）"在主环拓扑（A1 v0.2）下失效：丹田是环上的
-// 泵，有出向边 丹→土。并列时取下标最小者，保证确定性。
+// 0.5.0 判据（定稿阶段二范围 1 / 裁决①，取代 0.3.0 的「Capacity 最大」）：
+// **驱动容量显著高于其余节点者**——DriveCapacity 须高于其余每一穴位的
+// CoreDriveSignificance 倍，否则无核点（-1）。这是参数化结构判据而非
+// 类型枚举（宪法 §8）：丹田画像的特殊性——唯可发起逆流外推（A2）——
+// 全部落在「驱动容量显著主导」的参数事实上，无 type 字段、无专名判断；
+// 「Capacity 最大 = 唯一主动核心」的存储/驱动混用规则就此废除（外部代码
+// 审查第 6 条）。判据读画像原值（非损伤折算）：核点是结构身份，不随
+// 当日伤势漂移；驱动能力本身的削弱由 effectiveDriveCapacity 承担。
+// 旧判据「纯汇点（无出向经脉）」在主环拓扑（A1 v0.2）下失效：丹田是
+// 环上的泵，有出向边 丹→土。至多一穴满足对全部他穴的严格倍数支配
+// （两穴互为 2 倍不可能），遍历序不影响结果；无满足者返回 -1（含全体
+// DriveCapacity 为 0 的未画像世界——谁都推不动逆势输运）。
 // ctmatch 的协议编译/意图路径与本引擎核同用本函数，避免两份判据漂移。
 func CorePointOf(g *BodyGraph) int {
-	core := 0
-	for i := 1; i < len(g.Acupoints); i++ {
-		if g.Acupoints[i].Capacity > g.Acupoints[core].Capacity {
-			core = i
+	for i := range g.Acupoints {
+		dominant := true
+		for j := range g.Acupoints {
+			if i != j && g.Acupoints[i].DriveCapacity <= fpMul(g.Acupoints[j].DriveCapacity, CoreDriveSignificance) {
+				dominant = false
+				break
+			}
+		}
+		if dominant {
+			return i
 		}
 	}
-	return core
+	return -1
 }
 
-// runTransfers 实现 §8-9（含修订包 A2 逆流做功、Part J 被动输运与途经纳气）。
+// driveSettle 汇集一次传输结算的驱动侧派生量（0.5.0 统一驱动求解的
+// 输出，Advance 内部管线传递用；评审稿 §24.5 DriveResult 的逐穴位归并）。
+type driveSettle struct {
+	// strain[i] 是穴位 i 本 Tick 的驱动应变（评审稿 §10.2：过驱项 + 加力
+	// 突变项）。多路驱动取最受力一路（max）：应变集中于最吃力的那一路，
+	// 与「均摊多路温和驱动不打稳定」的代价分层一致。
+	strain []int64
+	// ratio[i][e] 是穴位 i 元素 e 本 Tick 的驱动比（ActualDrive /
+	// EffectiveDriveCapacity，千分位）——下一 Tick k_ramp 突变项的输入
+	// （Advance 收尾滚动进 Acupoint.prevDriveRatio）。
+	ratio [][ElementCount]int64
+	// work[i] 是穴位 i 本 Tick 支付的驱动做功合计（顺流 + 逆势，去向=热）。
+	work []int64
+}
+
+// runTransfers 实现 §8-9（含修订包 A2 逆流做功、Part J 被动输运与途经纳气、
+// 0.5.0 统一驱动求解）。
+//
+// 统一驱动求解（0.5.0，定稿阶段二范围 2 / 裁决①；评审稿 §9.4 ResolveDrive）：
+// 每笔主动请求逐元素走同一管线——请求驱动（控制误差 ε 后的请求量）→
+// 校验驱动容量与可用能量 → 计算做功 → 产出废热与应变 → 实际驱动：
+//
+//	ActualDrive = min(请求量, §8.1 管线容量, 源穴存量,
+//	                 源穴有效驱动容量,                      // 驱动容量限幅（§26.3）
+//	                 可用能量 − 做功(actual))               // 能量收敛（§26.4）
+//	做功：顺流 = k_work × ActualDrive² / DriveEfficiency（§10.1，从驱动穴位
+//	      扣除、热化于驱动穴位）；逆势 = A2 公式（结构不变、归属迁移，
+//	      从发起核点扣除、×KHeat 热化于逆流目的地）
+//	无可用能量则实际驱动衰减为零（driveEnergyFit）——无凭空做功。
 //
 // 逆流语义（A2/B1）：请求带 Reverse 标记时，Actual 沿经脉天然向反向行走
-// （从 To 端流向 From 端）。唯有核点（Capacity 最大的穴位，A1 v0.2 核点
-// 判据——B1 丹田画像，不设 type 字段——宪法 §8）可发起逆流；其余逆流请求
-// 被拒绝（Rejected）——逆经脉而行，唯丹田能推得动，穴与穴之间不得逆流。
-// 逆流在常规传输损耗之外另付做功代价：
-//
-//	WorkCost = Actual × BaseWork × (1 + LoadRatio_dst × KBack) × (1 - Conductance)
-//	ReverseHeat = WorkCost × KHeat → 逆流目的地 ThermalLoad
+// （从 To 端流向 From 端）。唯有核点可发起逆流；其余逆流请求被拒绝
+// （Rejected）——逆经脉而行，唯驱动容量显著主导者推得动（0.5.0 核点
+// 判据，宪法 §8 无专名）。
+// 驱动应变（§10.2）逐穴位按最受力一路归并（driveSettle.strain），在 §17
+// 并入 Strain 打稳定；温和稳定驱动（安全比内、无突变）应变为零。
 //
 // Part J J2 被动输运：全部主动请求结算完毕后，对每条经脉按天然气向追加
 // 压差驱动的被动项（压差快照 = 本 Tick 吸收后的负载比，对全部经脉同源，
@@ -505,15 +586,17 @@ func CorePointOf(g *BodyGraph) int {
 //	                          管线余量))                   // 主动已占容量不计
 //	ΔP = Pressure(a) - Pressure(b)（Pressure = LoadRatio²，吸收后口径）
 //
-// 被动项与主动请求叠加（J2），但只填同一 §8.1 管线的余量——总实际流
-//（主动+被动）不超过管道容量，主动推力不被被动旁路放大（R1）。压差为负
-// 则梯度项为零，惯性项沿天然向衰减延续（被动永不逆天然向）。惯性接力的
-// 输入是"其他经脉流入源穴"的实际流量（上一 Tick 打底 + 本 Tick 送达 live
-// 接力）；自环通道的自身回流不是来流，不计入（否则成做功无源的影子回声）。
-// 纯压差项在闭环上会均衡化归零（环上压差快照同和为零，无泵不成环流），
-// 惯性项即 R4 预案的 Persistent Flow State 第二阶段。被动流与主动流共用
-// 同一 §9 损耗管线并同样触发途经纳气，使守恒、损耗、炼化筛选都作用于
-// 叠加后的实际流；报告中以独立条目（Passive 字段）记账，与主动流可归因区分。
+// 被动项是势差自然释放：不占驱动容量、不付做功、不打驱动应变（评审稿
+// §15 PassiveWork 语义），与主动请求叠加（J2），但只填同一 §8.1 管线的
+// 余量——总实际流（主动+被动）不超过管道容量，主动推力不被被动旁路
+// 放大（R1）。压差为负则梯度项为零，惯性项沿天然向衰减延续（被动永不
+// 逆天然向）。惯性接力的输入是"其他经脉流入源穴"的实际流量（上一 Tick
+// 打底 + 本 Tick 送达 live 接力）；自环通道的自身回流不是来流，不计入
+// （否则成做功无源的影子回声）。纯压差项在闭环上会均衡化归零（环上压差
+// 快照同和为零，无泵不成环流），惯性项即 R4 预案的 Persistent Flow State
+// 第二阶段。被动流与主动流共用同一 §9 损耗管线并同样触发途经纳气，使
+// 守恒、损耗、炼化筛选都作用于叠加后的实际流；报告中以独立条目（Passive
+// 字段）记账，与主动流可归因区分。
 //
 // Part J J3 途经纳气：每笔实际流量（主动/逆流/被动）在其接收端穴位卷入
 // 环境气（来源=环境，守恒账 Entrained 项）：
@@ -521,14 +604,19 @@ func CorePointOf(g *BodyGraph) int {
 //	entrained = F × Openness × EnvironmentQi × AcupointAffinity
 //	            × KEntrain × (1 - LoadRatio)
 //
-// 返回传输报告与逐穴途经纳气量。
-func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferReport, [][ElementCount]int64) {
+// 返回传输报告、逐穴途经纳气量与驱动侧派生量（driveSettle）。
+func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferReport, [][ElementCount]int64, *driveSettle) {
 	g := &w.Character.BodyGraph
 	reports := make([]TransferReport, 0, len(w.Ops.Requests)+len(g.Channels))
 	entrained := make([][ElementCount]int64, len(g.Acupoints))
-	chanFlow := make([][ElementCount]int64, len(g.Channels))  // 本 Tick 逐经脉逐元素实际流量（→ FlowPrev）
+	chanFlow := make([][ElementCount]int64, len(g.Channels))   // 本 Tick 逐经脉逐元素实际流量（→ FlowPrev）
 	activeFlow := make([][ElementCount]int64, len(g.Channels)) // 本 Tick 逐经脉逐元素主动流量（被动让行判据）
 	controlErrMax := fpMul(ControlErrorBase, One-w.Character.Control)
+	ds := &driveSettle{
+		strain: make([]int64, len(g.Acupoints)),
+		ratio:  make([][ElementCount]int64, len(g.Acupoints)),
+		work:   make([]int64, len(g.Acupoints)),
+	}
 
 	// 途经纳气（Part J J3）：一笔流量 F 在接收端穴位 i（元素 e）卷入的环境气。
 	entrainInto := func(i int, a *Acupoint, e int, flow int64) {
@@ -547,8 +635,8 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 		entrained[i][e] += v
 	}
 
-	// 核点判据（修订包 A1 v0.2）：逆流发起资格 = 发起者（逆流请求的 To 端）
-	// 是核点（CorePointOf，见上）。
+	// 核点判据（0.5.0：驱动容量显著主导者，见 CorePointOf）：逆流发起资格
+	// = 发起者（逆流请求的 To 端）是核点。
 	core := CorePointOf(g)
 
 	for _, req := range w.Ops.Requests {
@@ -598,6 +686,13 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 			workUnit = fpMul(BaseWork, One+fpMul(lrDst, KBack))
 		}
 
+		// 驱动容量与驱动效率（0.5.0，评审稿 §9.4 校验项）：实际驱动不得
+		// 超过驱动端穴位的有效驱动容量——存储容量（Capacity）不再替代
+		// 驱动维度（§26.3；外部代码审查第 6 条）。逆流的驱动端是发起核点
+		// （src 已按流向取对）。
+		effDriveCap := src.effectiveDriveCapacity()
+		effi := src.driveEfficiency()
+
 		for e := 0; e < ElementCount; e++ {
 			tr.Requested[e] = req.Amount[e]
 			if req.Amount[e] <= 0 {
@@ -611,11 +706,13 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 			// §8.1 ChannelCapacity。
 			cap := fpMul(chanCap, cond)
 			tr.Capacity[e] = cap
+			eff := fpClamp(cond, 0, One)
 
 			// §8.2 控制误差 ε = deterministic_noise(seed, tick, channel, e)。
 			eps := noiseSigned(w.NoiseSeed, w.Tick, req.Channel, e) * controlErrEff / 1000
 			requested := fpMul(req.Amount[e], One+eps)
 
+			// 统一驱动求解（0.5.0，评审稿 §9.4/§10）：限幅 → 做功 → 能量收敛。
 			actual := requested
 			if src.Qi[e] < actual {
 				actual = src.Qi[e]
@@ -623,35 +720,58 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 			if cap < actual {
 				actual = cap
 			}
+			if effDriveCap < actual {
+				actual = effDriveCap // 驱动容量限幅（§26.3）
+			}
+			// 做功公式：顺流 = §10.1 二次律；逆势 = A2（结构不变，裁决①）。
+			// 逆势不做功效率折算：A2 公式结构原样保留。
+			workOf := func(a int64) int64 {
+				if req.Reverse {
+					return fpMul(a, fpMul(workUnit, One-eff))
+				}
+				return driveWorkOf(a, effi)
+			}
+			actual = driveEnergyFit(actual, src.Qi[e], workOf) // 无可用能量则衰减为零（§26.4）
 			if actual <= 0 {
 				continue
 			}
+			work := workOf(actual)
 
 			// §9 传输损耗。
-			eff := fpClamp(cond, 0, One)
 			delivered := fpMul(actual, eff)
 			loss := actual - delivered
 
+			// 做功从真实能源扣除（评审稿 §10.1：DriveWork 必须从可用能源扣）
+			// ——fit 已保证 actual + work ≤ src.Qi[e]，扣后不透支。
 			src.Qi[e] -= actual
+			src.Qi[e] -= work
 			dst.Qi[e] += delivered
-			dst.heatAccum += fpMul(loss, One-DiffuseShare) // 50% → 热
+			dst.heatAccum += fpMul(loss, One-DiffuseShare) // 传输损耗 50% → 热
 
 			// Part J J3：接收端途经纳气（主动流同样卷入环境气）。
 			entrainInto(dstIdx, dst, e, actual)
 
-			// A2 逆流做功：代价从发起汇点按元素扣除（扣除量不超过存量），
-			// 对应热加到逆流目的地的 ThermalLoad 累计。
+			// 废热去向（定稿阶段二范围 2：做功去向=热）：
+			//   顺流——热化于驱动穴位（heatAccum → ThermalLoad / §17 TransformHeat）；
+			//   逆势——A2 结构不变：×KHeat 热化于逆流目的地（reverseHeatAccum）。
 			if req.Reverse {
-				cost := fpMul(actual, fpMul(workUnit, One-eff))
-				if cost > src.Qi[e] {
-					cost = src.Qi[e]
-				}
-				if cost > 0 {
-					src.Qi[e] -= cost
-					dst.reverseHeatAccum += fpMul(cost, KHeat)
-				}
-				tr.WorkCost[e] = cost
+				dst.reverseHeatAccum += fpMul(work, KHeat)
+				tr.WorkCost[e] = work
+			} else {
+				src.heatAccum += work
+				tr.DriveWork[e] = work
 			}
+
+			// 驱动应变与驱动比（评审稿 §10.2）：过驱 + 加力突变项逐穴位按
+			// 最受力一路归并；驱动比滚动进 ds.ratio（收尾落 prevDriveRatio）。
+			if effDriveCap > 0 {
+				ratio := fpDiv(actual, effDriveCap)
+				ds.ratio[srcIdx][e] = ratio
+				if s := driveStrainOf(ratio, src.prevDriveRatio[e]); s > ds.strain[srcIdx] {
+					ds.strain[srcIdx] = s
+				}
+			}
+			ds.work[srcIdx] += work
 
 			src.elemFlowAccum[e] += actual
 			dst.elemFlowAccum[e] += delivered
@@ -797,7 +917,7 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 	for c := range g.Channels {
 		g.Channels[c].FlowPrev = chanFlow[c]
 	}
-	return reports, entrained
+	return reports, entrained, ds
 }
 
 // runSheng 实现 §10（快照语义：所有转化量按本阶段开始时的 Qi 计算）。

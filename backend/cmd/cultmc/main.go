@@ -226,7 +226,8 @@ func (a *accounting) advance(w *cult.World, ops cult.Ops) *cult.TickReport {
 	c := rep.Conservation
 	net := c.QiAfter - c.QiBefore
 	// Part J J3：恒等式扩 Entrained 项（途经纳气，来源=环境）。
-	accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.ReverseWork + c.Entrained
+	// 0.5.0 守恒扩项/归属迁移：驱动做功 DriveWork（顺流 §10.1 + 逆势 A2）。
+	accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.DriveWork + c.Entrained
 	if res := net - accounted; res != 0 {
 		a.violations++
 		if res < 0 {
@@ -1184,7 +1185,7 @@ func renderReport(in mcInput) string {
 	fmt.Fprintf(&b, "- 覆盖总 tick 数：%d（全部场景 × 全部 seed）\n", in.acc.ticks)
 	fmt.Fprintf(&b, "- 恒等式违例数：%d\n", in.acc.violations)
 	fmt.Fprintf(&b, "- 最大单 tick 归账残差：%d（千分位量）\n", in.acc.maxResidual)
-	fmt.Fprintf(&b, "\n结论：ΔQi = Intake − Diffuse − TransferLoss − ShengLoss − ReverseWork + Entrained %s成立，无凭空增益（Part J 守恒扩项）。\n\n",
+	fmt.Fprintf(&b, "\n结论：ΔQi = Intake − Diffuse − TransferLoss − ShengLoss − DriveWork + Entrained %s成立，无凭空增益（Part J 守恒扩项 + 0.5.0 驱动做功项）。\n\n",
 		map[bool]string{true: "逐 tick 精确", false: "被破坏"}[p4Pass])
 
 	// ------------------------------------------------------------------ P5

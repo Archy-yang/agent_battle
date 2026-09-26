@@ -7,8 +7,9 @@ package ctmatch
 // 设计目标：存在一条"新手粗档位即可达成"的稳定吐纳路径，但不给任何提示。
 //   - 青关：主纳穴。开度大开、通量宽（8000），混合引流 large（每行 1280）
 //     足以对冲 trace/small/medium 各档吸收的反压平衡——单穴"吸+引"即可闭环。
-//   - 下丹田：巨容储库（200000，全图 Capacity 最大 → A1 v0.2 核点判据下
-//     唯一可发起逆流外推者，cult.CorePointOf）与主环的泵。
+//   - 下丹田：巨容储库（200000）与主环的泵；驱动容量全图唯一显著主导
+//     （24000，0.5.0 核点判据 cult.CorePointOf——定稿裁决①，逆流外推唯它
+//     推得动）。
 //   - 主环拓扑（修订包 A1 v0.2，取代旧归流树）：
 //
 //	下丹田 → 土府 → 中庭 → 阳枢 → 神庭 → 青关 → 归下丹田
@@ -26,6 +27,13 @@ package ctmatch
 import "agentbattle/backend/cult"
 
 // SpikeWorld 构造 SPIKE 修炼世界（8 穴位 / 9 经脉 / 五行近均衡环境）。
+//
+// 驱动容量画像（0.5.0，定稿阶段二范围 1 / 评审稿 §4.4 表格 [v0.1 参数]）：
+// 下丹田 24000（全图唯一显著主导——高于其余每一穴 2 倍以上，0.5.0 核点
+// 判据 CorePointOf 的唯一结构依据，逆流外推唯它推得动）；普通穴 8000
+// （≥ 0.8× 各自经脉通量上限 8000×0.8=6400——large 档引流不被驱动容量
+// 限幅，既有玩法手感不变）；驱动效率丹田 950 / 普通穴 850（评审稿 §10.1
+// 做功除数，[v0.1 参数]）。
 func SpikeWorld() *cult.World {
 	pt := func(name string, aff [cult.ElementCount]int64, cap, tp, ret int64, open, stab int64) cult.Acupoint {
 		return cult.Acupoint{
@@ -36,6 +44,9 @@ func SpikeWorld() *cult.World {
 			// v0.1 公式未使用，仅携带）。
 			BaseStability: stab,
 			Activity:      [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
+			// 驱动画像（0.5.0）：普通穴默认档，见函数头注释。
+			DriveCapacity:   8000,
+			DriveEfficiency: 850,
 		}
 	}
 	all := func(v int64) [cult.ElementCount]int64 {
@@ -91,6 +102,11 @@ func SpikeWorld() *cult.World {
 		Temperature: 1000,
 	}
 	w := cult.NewWorld(char, env)
+	// 丹田驱动画像覆盖（0.5.0 [v0.1 参数]）：驱动容量 24000 = 普通穴 8000
+	// 的 3 倍（> CoreDriveSignificance 2 倍判据——全图唯一核点）；泵的出口
+	// 通量画像（1.2× 丹田吞吐 20000）。
+	w.Character.BodyGraph.Acupoints[0].DriveCapacity = 24000
+	w.Character.BodyGraph.Acupoints[0].DriveEfficiency = 950
 	// 丹田炼化归一化锚定 [v0.1 参数]（SA6 P3 调参，SA4 根因③）：
 	// MatchMax 原推导锚 = max_e AffinityEff（假设其余四行归零的完全收敛），
 	// 但相生循环使木恒有 ~4%/Tick 转化为火，单行构成物理不可达——区间偏宽，

@@ -34,10 +34,13 @@ func testPoint(name string, capacity, throughput int64) cult.Acupoint {
 		Affinity:   [cult.ElementCount]int64{1200, 800, 900, 750, 1000},
 		Capacity:   capacity,
 		Throughput: throughput,
-		Retention:  400,
-		Openness:   800000,
-		Stability:  950,
-		Activity:   [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
+		// 驱动画像（0.5.0）：10000 ≫ 本世界协议流量档（medium ≤ 1500），
+		// 驱动容量不限幅——guard/回执测试隔离 §8 传输与 guard 语义。
+		DriveCapacity: 10000,
+		Retention:     400,
+		Openness:      800000,
+		Stability:     950,
+		Activity:      [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
 	}
 }
 

@@ -19,20 +19,25 @@ import (
 func PartJCalibrationWorld() *cult.World {
 	pt := func(name string, cap, tp int64, qi [cult.ElementCount]int64) cult.Acupoint {
 		return cult.Acupoint{
-			Name:       name,
-			Affinity:   [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
-			Capacity:   cap,
-			Throughput: tp,
-			Retention:  900,
-			Openness:   cult.MicroOne,
-			Stability:  950,
+			Name:          name,
+			Affinity:      [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
+			Capacity:      cap,
+			Throughput:    tp,
+			Retention:     900,
+			Openness:      cult.MicroOne,
+			Stability:     950,
 			BaseStability: 950,
-			Activity:   [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
-			Adaptation: [cult.ElementCount]int64{1000000, 1000000, 1000000, 1000000, 1000000},
-			Qi:         qi,
+			Activity:      [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
+			Adaptation:    [cult.ElementCount]int64{1000000, 1000000, 1000000, 1000000, 1000000},
+			Qi:            qi,
+			// 驱动画像（0.5.0 [v0.1 参数]）：普通穴 10000（≥ 各经脉 large 档
+			// 0.8×10000=8000，引流手感不变）；下丹田在下方覆盖为 24000——
+			// 全图唯一显著主导（0.5.0 核点判据，逆流外推唯它推得动）。
+			DriveCapacity:   10000,
+			DriveEfficiency: 900,
 		}
 	}
-	mid := [cult.ElementCount]int64{4800, 4800, 4800, 4800, 4800}     // 总量 24000/容量 30000 → LR≈0.8
+	mid := [cult.ElementCount]int64{4800, 4800, 4800, 4800, 4800}       // 总量 24000/容量 30000 → LR≈0.8
 	full := [cult.ElementCount]int64{24000, 24000, 24000, 24000, 24000} // 总量 120000/容量 150000 → LR 0.8
 	char := cult.Character{
 		Affinity:   [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
@@ -62,5 +67,9 @@ func PartJCalibrationWorld() *cult.World {
 		Activity:    [cult.ElementCount]int64{1000, 1000, 1000, 1000, 1000},
 		Temperature: 1000,
 	}
-	return cult.NewWorld(char, env)
+	w := cult.NewWorld(char, env)
+	// 丹田驱动画像覆盖（0.5.0 [v0.1 参数]）：下丹田（下标 0）24000——普通穴
+	// 10000 的 2.4 倍（> CoreDriveSignificance 判据，全图唯一核点）。
+	w.Character.BodyGraph.Acupoints[0].DriveCapacity = 24000
+	return w
 }

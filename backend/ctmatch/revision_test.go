@@ -57,8 +57,9 @@ func TestReverseIntentFromDantian(t *testing.T) {
 	if rev.Actual[cult.Wood] <= 0 {
 		t.Errorf("逆流传输无实际流量: %+v", rev)
 	}
-	// A2：逆流做功代价入守恒账（去向=热）。
-	if res.Report.Conservation.ReverseWork <= 0 {
+	// A2：逆势驱动的做功代价入守恒账（去向=热）。0.5.0 归属迁移（定稿
+	// 裁决①）：原 ReverseWork 项并入统一驱动求解的 DriveWork 项。
+	if res.Report.Conservation.DriveWork <= 0 {
 		t.Errorf("逆流做功代价未入守恒账: %+v", res.Report.Conservation)
 	}
 	// 回执正常（铁律 6）且零数字。

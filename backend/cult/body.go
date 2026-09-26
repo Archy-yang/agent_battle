@@ -42,6 +42,19 @@ type Acupoint struct {
 	// Retention ∈ [0,1000] 保留度（§13）。
 	Retention int64
 
+	// DriveCapacity 驱动容量（量/Tick，千分位）——评审稿 §4.4 第四维：
+	// 该节点能够主动对流动施加多少驱动力。与 StorageCapacity（本字段
+	// Capacity）/Throughput/Conductance 并列、不得混用（定稿阶段二范围 1；
+	// 外部代码审查第 6 条「存储 ≠ 驱动」）。0 = 无主动驱动能力（死物画像，
+	// 如灵石接近 0）——不设隐式默认。0.3.0 的「Capacity 最大 = 唯一主动
+	// 核心」隐式规则就此废除：核点判据改由本维度显著主导（CorePointOf，
+	// 定稿裁决①——丹田的特殊性全部落在参数画像，无专名，宪法 §8）。
+	DriveCapacity int64
+	// DriveEfficiency 驱动效率 ∈ (0,1000]（评审稿 §10.1：DriveWork 除以
+	// 效率；§24.1 NodeDynamics 字段）。0 = 未画像，按 1.0 处理——留给
+	// 阶段三标定的画像钩子（如丹田泵效率更高）。
+	DriveEfficiency int64
+
 	// Openness 开度，微标度（1.0 = 1e6，§23 成长）。
 	Openness int64
 	// BaseStability 先天稳定性资质（§4 字段；v0.1 公式未使用，仅携带，
@@ -97,6 +110,11 @@ type Acupoint struct {
 	// reverseHeatAccum 是本 Tick 逆流做功热累计（修订包 A2 → ThermalLoad），
 	// Advance 内部使用。
 	reverseHeatAccum int64
+
+	// prevDriveRatio[e] 是上一 Tick 逐元素驱动比（ActualDrive /
+	// EffectiveDriveCapacity，千分位）——评审稿 §10.2 k_ramp 突变项的输入。
+	// 私有中间态：随 World 状态演进，同 seed 重放逐位一致。
+	prevDriveRatio [ElementCount]int64
 }
 
 // Channel 是经脉（stage_3 §5）。
@@ -153,6 +171,22 @@ func (a *Acupoint) effectiveCapacity() int64 {
 // effectiveThroughput 返回 Throughput×(1-Damage)（千分位，§20）。
 func (a *Acupoint) effectiveThroughput() int64 {
 	return fpMul(a.Throughput, One-a.Damage)
+}
+
+// effectiveDriveCapacity 返回 DriveCapacity×(1-Damage)（千分位，定稿阶段二
+// 范围 1 / 评审稿 §24.1 EffectiveDriveCapacity）：损伤同样削弱主动驱动能力
+// （§20「损伤真正改变身体运行能力」在驱动维的延伸）。
+func (a *Acupoint) effectiveDriveCapacity() int64 {
+	return fpMul(a.DriveCapacity, One-a.Damage)
+}
+
+// driveEfficiency 返回驱动效率 ∈ (0,1000]：未画像（0）按 1.0 处理，
+// 非法值 clamp 到 (0,1000]。
+func (a *Acupoint) driveEfficiency() int64 {
+	if a.DriveEfficiency <= 0 {
+		return One
+	}
+	return fpClamp(a.DriveEfficiency, 1, One)
 }
 
 // opennessMilli 返回微标度 Openness 的千分位近似。

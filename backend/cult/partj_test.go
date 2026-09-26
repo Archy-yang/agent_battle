@@ -31,6 +31,8 @@ func partjRingWorld() *World {
 		Control:    1000,
 		Perception: 500,
 		BodyGraph: BodyGraph{
+			// 驱动画像（0.5.0）：A 显著主导（12000 > 3000×2）——A 发起的
+			// 核点逆流（C→A 反向）在 0.5.0 判据下依旧合法。
 			Acupoints: []Acupoint{pt("A", 6000), pt("B", 6000), pt("C", 6000)},
 			Channels: []Channel{
 				{Name: "A→B", From: 0, To: 1, BaseConductance: 980, Throughput: 10000},
@@ -44,7 +46,13 @@ func partjRingWorld() *World {
 		Activity:    [ElementCount]int64{1000, 1000, 1000, 1000, 1000},
 		Temperature: 1000,
 	}
-	return NewWorld(char, env)
+	w := NewWorld(char, env)
+	// 驱动画像（0.5.0）：普通穴 3000，A 覆盖为 12000（全图唯一显著主导）。
+	for i := range w.Character.BodyGraph.Acupoints {
+		w.Character.BodyGraph.Acupoints[i].DriveCapacity = 3000
+	}
+	w.Character.BodyGraph.Acupoints[0].DriveCapacity = 12000
+	return w
 }
 
 // TestPartJConservationEntrained（T-J4）：被动输运 + 途经纳气 + 主动引流
@@ -67,10 +75,10 @@ func TestPartJConservationEntrained(t *testing.T) {
 		rep := Advance(w)
 		c := rep.Conservation
 		net := c.QiAfter - c.QiBefore
-		accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.ReverseWork + c.Entrained
+		accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.DriveWork + c.Entrained
 		if net != accounted {
 			t.Fatalf("tick %d 守恒破坏: ΔQi=%d, 归账=%d (intake=%d diffuse=%d transfer=%d sheng=%d reverse=%d entrained=%d)",
-				i, net, accounted, c.Intake, c.Diffuse, c.TransferLoss, c.ShengLoss, c.ReverseWork, c.Entrained)
+				i, net, accounted, c.Intake, c.Diffuse, c.TransferLoss, c.ShengLoss, c.DriveWork, c.Entrained)
 		}
 	}
 }
@@ -190,7 +198,7 @@ func TestPartJInertiaRelayDecay(t *testing.T) {
 			t.Fatal("惯性接力失效：松手首 Tick 环流即归零")
 		}
 		c := rep.Conservation
-		if net, acc := c.QiAfter-c.QiBefore, c.Intake-c.Diffuse-c.TransferLoss-c.ShengLoss-c.ReverseWork+c.Entrained; net != acc {
+		if net, acc := c.QiAfter-c.QiBefore, c.Intake-c.Diffuse-c.TransferLoss-c.ShengLoss-c.DriveWork+c.Entrained; net != acc {
 			t.Fatalf("tick %d 守恒破坏: ΔQi=%d 归账=%d", i, net, acc)
 		}
 	}
