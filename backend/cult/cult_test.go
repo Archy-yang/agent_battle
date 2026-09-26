@@ -212,8 +212,16 @@ func TestTwoAcupoints_Transfer(t *testing.T) {
 	assertNear(t, "DeliveredQi", tr.Delivered[Wood], 500)
 	assertNear(t, "TransferLoss", tr.Loss[Wood], 500)
 
-	// 库存（同 Tick 相生快照也作用）：源 5000−1000(流出)−160(木→火转化) = 3840；
-	// 目标 500−20 = 480；木合计 = 5000−500(传输热损)−160−20(转为火，非损失) = 4320。
+	// 库存（同 Tick 相生快照也作用）。Part J（被动输运/途经纳气）重算归因：
+	// 新物理引入两笔潜在增量——①途经纳气（来源=环境，随实际流逐穴计量），
+	// 本场景 Environment.Qi 全零，纳气恒 0；②被动输运（来源=体内流转，
+	// 沿天然向、只填 §8.1 管线余量），本场景请求 1000 恰等于管线容量
+	//（min(2000,3000,3000)×0.5=1000），管道余量为零——丹田→青关虽存在
+	// 压差（ΔP=Pressure(LR²)=10），被动项亦无余量可用，故实际流全由主动
+	// 请求构成，库存与 Part J 之前基准逐位一致、守恒逐项归账不变：
+	// 源 5000−1000(流出)−160(木→火转化) = 3840；目标 500−20 = 480；
+	// 木合计 = 4320（主动传输损耗 500 离开木池：250 归环境、250 归热；
+	// 转化为火非损失）。
 	if got := rep.Points[0].Qi[Wood]; got != 3840 {
 		t.Errorf("源穴位木: got %d, want 3840", got)
 	}
@@ -223,6 +231,48 @@ func TestTwoAcupoints_Transfer(t *testing.T) {
 	total := rep.Points[0].Qi[Wood] + rep.Points[1].Qi[Wood]
 	if total != 4320 {
 		t.Errorf("木合计: got %d, want 4320", total)
+	}
+
+	// Part J 叠加对照（全新世界，与上半场状态隔离）：请求减半（500）后
+	// 管道余量 500，压差梯度项照常驱动被动流、与主动流同走 §9 损耗管线：
+	// 被动流 = chanCap×KPassive×ΔP×cond = 2000×0.3×0.01×0.5 = 3（千分位），
+	// 送达 2、损耗 1（远小于余量——梯度受压差平方律限制，此处仅为叠加与
+	// 归账验证）。守恒：源 5000−500(主动流出)−3(被动)−180(木→火) = 4317；
+	// 目标 250+2−10 = 242；ΔQi = −441 = −251(传输损耗) −190(转化损耗)，
+	// 环境气为零 → 无纳气项，全部可归因。
+	char3 := Character{
+		Affinity:   [ElementCount]int64{1000, 1000, 1000, 1000, 1000},
+		Control:    1000,
+		Perception: 500,
+		BodyGraph: BodyGraph{
+			Acupoints: []Acupoint{newPoint("丹田", 5000), newPoint("青关", 0)},
+			Channels: []Channel{
+				{Name: "丹田→青关", From: 0, To: 1, BaseConductance: 500, Throughput: 2000},
+			},
+		},
+	}
+	w3 := NewWorld(char3, Environment{Temperature: 1000})
+	w3.Ops = Ops{Requests: []FlowRequest{{Channel: 0, Amount: [ElementCount]int64{500, 0, 0, 0, 0}}}}
+	rep3 := Advance(w3)
+	var passive int64
+	for _, tr := range rep3.Transfers {
+		passive += tr.Passive[Wood]
+	}
+	if passive != 3 {
+		t.Errorf("余量输运: 被动流 got %d, want 3", passive)
+	}
+	if got := rep3.Points[0].Qi[Wood]; got != 4317 {
+		t.Errorf("余量输运源穴木: got %d, want 4317", got)
+	}
+	if got := rep3.Points[1].Qi[Wood]; got != 242 {
+		t.Errorf("余量输运目标穴木: got %d, want 242", got)
+	}
+	c3 := rep3.Conservation
+	if net, acc := c3.QiAfter-c3.QiBefore, c3.Intake-c3.Diffuse-c3.TransferLoss-c3.ShengLoss-c3.ReverseWork+c3.Entrained; net != acc {
+		t.Errorf("余量输运守恒破坏: ΔQi=%d 归账=%d", net, acc)
+	}
+	if rep3.Conservation.Entrained != 0 {
+		t.Errorf("无环境灵气时途经纳气应为 0: %d", rep3.Conservation.Entrained)
 	}
 
 	// 满传导对照：Delivered = Actual、Loss = 0。

@@ -119,6 +119,11 @@ type Channel struct {
 	// ChannelAdaptation 经脉适应，微标度（1.0 = 1e6，§24 成长）。
 	ChannelAdaptation int64
 
+	// FlowPrev[e] 是该经脉上一 Tick 的实际流量（Part J R4 Persistent Flow
+	// State：被动输运的惯性项输入）。持久中间态——随 World 状态演进，同
+	// seed 重放逐位一致。被动惯性沿天然气向（被动永不逆天然向）。
+	FlowPrev [ElementCount]int64
+
 	// flowAccum 是本 Tick 该经脉总流量，Advance 内部使用。
 	flowAccum int64
 }

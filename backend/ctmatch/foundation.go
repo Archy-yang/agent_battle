@@ -9,11 +9,13 @@ package ctmatch
 // 观察——Agent 只见到叙事事件（"触碰筑基门槛"→"筑基"）。
 //
 // v0.1 诚实口径（stage_3 §52：参数是实验值，公式关系不可变）：
-//   - SelfSustain（§34）依赖"放开主动推动"的观察窗：会话层每 Tick 上报
-//     本 Tick 是否有主动推动（吸收/引流 Ops）。整个窗口都在推动 → 无从
-//     自持（零）；从未推动而气流仍在 → 完全自持。v0.1 引擎里流量只能由
-//     Ops 驱动，真实自持要等 Loop 注册（Runtime 自推）后才可观测——
-//     这正是 stage_3 §39 的次序，不提前造假。
+//   - SelfSustain（§34，Part J J5 测量协议）：推动窗口 W1 = 推动相
+//     （ControlActive，即存在玩家意图请求或 Protocol Runtime 在执行）的
+//     均流；松手窗口 W2 = 其后连续 FoundationReleaseWindow tick 全无请求
+//     的均流（纯被动环流，Part J J2）。SelfSustain = W2均流 / W1均流。
+//     ControlActive 由会话层按 Part J J4 口径给出（被动流不计入控制）。
+//     直接构造 FoundationSample 喂样本的口径仅测试兼容用（deprecated）：
+//     生产判定路径的样本一律来自 buildFoundationSample（真实 tick 流）。
 //   - Internalization（§36）：v0.1 无阵法/丹药/法器等外物，外部贡献恒
 //     为零，故恒为满值；器物篇引入外部供给时按 §36 展开。
 //   - RuleBalance（§33）：能量失衡 = |Δ体内灵气总量| / 总量（滚动均值），
@@ -51,17 +53,21 @@ const (
 
 // FoundationSample 是一个 Tick 供给筑基判定的样本。字段为引擎真值的
 // 会话层汇总，仅供内部计算与调试视图——绝不进 Agent 观察。
+//
+// 生产路径：样本一律由 buildFoundationSample 从真实 tick 报告生成。
+// 直接构造本结构人工喂样本仅供测试兼容（deprecated）——筑基判定链路
+// （T-J6）不得依赖人工喂样。
 type FoundationSample struct {
 	Tick          int64
 	TopoClosure   int64                    // 0/1000：本 Tick 功法引导路径是否成环（stage_3 §32）
-	Intake        int64                    // 本 Tick 自环境纳入的灵气总量
+	Intake        int64                    // 本 Tick 自环境纳入的灵气总量（含 Part J 途经纳气）
 	Delivered     int64                    // 本 Tick 经脉送达的灵气总量
-	ActualFlow    int64                    // 本 Tick 经脉实际流量的总量
+	ActualFlow    int64                    // 本 Tick 经脉实际流量的总量（主动 + 被动）
 	TotalQi       int64                    // 体内灵气总量
 	MeanPressure  int64                    // 诸穴压力均值（千分位）
 	MinStability  int64                    // 诸穴稳定性最小值（千分位）
 	NatureRatio   [cult.ElementCount]int64 // 五行占比（×1000，合计≈1000）
-	ControlActive bool                     // 本 Tick 是否有主动推动（吸收/引流 Ops）
+	ControlActive bool                     // 本 Tick 是否有主动控制（玩家意图请求或 Runtime 在执行；Part J J4，被动流不计入）
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +96,10 @@ const (
 	foundationWindow = 50  // §35 观察窗 N=50 Tick
 	WEnergy          = 600 // §33 W_energy 0.6
 	WNature          = 400 // §33 W_nature 0.4
+
+	// NormVarFloor 是 §35 归一化方差的序列幅值下限（Part J 标定 [v0.1 参数]）：
+	// 均值低于此值的序列（如五行占比偏差的整数舍入抖动）不参与失稳计量。
+	NormVarFloor = 5
 )
 
 // ---------------------------------------------------------------------------
@@ -114,6 +124,16 @@ type LoopMetrics struct {
 type FoundationMonitor struct {
 	samples []FoundationSample // 滚动窗口（最多 foundationWindow 个）
 
+	// Part J J5 测量状态机（随样本流滚动，确定性）：
+	w1Sum, w1N int64 // 当前推动相（ControlActive）的流量累计
+	w1Avg      int64 // 最近完成的推动相均流（W1 基线；0 = 尚无）
+	everPushed bool  // 本会话是否出现过推动相（人工喂样兼容口径的判据）
+
+	releaseRun int64 // 当前连续松手（无请求）tick 数
+	relRunSum  int64 // 当前松手相流量累计（不断窗，legacy 判据用）
+	relWinSum  int64 // W2 窗口流量累计（前 FoundationReleaseWindow 个松手 tick）
+	relWinN    int64 // W2 窗口已收样本数（封顶后冻结——长松手期比值恒定，供 streak 累积）
+
 	candStreak   int // §37 条件连续满足的 Tick 数
 	stableStreak int // §38 条件连续满足的 Tick 数
 	Touched      bool
@@ -131,6 +151,25 @@ func (m *FoundationMonitor) Observe(s FoundationSample) (touched, established bo
 	m.samples = append(m.samples, s)
 	if len(m.samples) > foundationWindow {
 		m.samples = m.samples[len(m.samples)-foundationWindow:]
+	}
+
+	// Part J J5：推动相 / 松手相状态机。
+	if s.ControlActive {
+		m.everPushed = true
+		m.w1Sum += s.ActualFlow
+		m.w1N++
+		m.releaseRun, m.relRunSum, m.relWinSum, m.relWinN = 0, 0, 0, 0
+	} else {
+		if m.w1N > 0 { // 推动相刚结束：结算 W1 基线（跨观察窗持久，供长松手期使用）
+			m.w1Avg = divRound(m.w1Sum, m.w1N)
+			m.w1Sum, m.w1N = 0, 0
+		}
+		m.releaseRun++
+		m.relRunSum += s.ActualFlow
+		if m.relWinN < cult.FoundationReleaseWindow {
+			m.relWinSum += s.ActualFlow
+			m.relWinN++
+		}
 	}
 
 	mets := m.compute(s)
@@ -223,33 +262,23 @@ func (m *FoundationMonitor) compute(cur FoundationSample) LoopMetrics {
 		mt.RuleBalance = 0
 	}
 
-	// SelfSustain（§34）= 松手后均流 / 推动时均流。
-	var pushSum, pushN, relSum, relN int64
-	for _, s := range w {
-		if s.ControlActive {
-			pushSum += s.ActualFlow
-			pushN++
-		} else {
-			relSum += s.ActualFlow
-			relN++
-		}
-	}
+	// SelfSustain（§34，Part J J5 测量协议）：
+	// W1 = 最近完成的推动相均流（会话级基线，跨观察窗持久）；
+	// W2 = 松手后前 FoundationReleaseWindow 个全无请求 tick 的均流。
+	// SelfSustain = W2均流 / W1均流。推动中（无松手观测）恒 0。
+	// everPushed=false 的 legacy 分支兼容人工喂样口径（deprecated，仅测试）：
+	// 全程从未推动而气流仍在 → 完全自持。生产路径（真实 tick 流）只要
+	// 出现过推动相就走 W2/W1 口径，松手流必须真正追上推动流才计满。
 	switch {
-	case relN == 0:
-		// 尚未放开过推动：无从自持（§34 需要松手观测）。
-	case pushN == 0:
-		// 全程没有主动推动而气流仍在——完全自持。
-		if relSum > 0 {
+	case !m.everPushed:
+		if m.releaseRun > 0 && m.relRunSum > 0 {
 			mt.SelfSustain = One
 		}
-	default:
-		pushAvg := divRound(pushSum, pushN)
-		relAvg := divRound(relSum, relN)
-		if pushAvg > 0 {
-			mt.SelfSustain = relAvg * One / pushAvg
-			if mt.SelfSustain > One {
-				mt.SelfSustain = One
-			}
+	case m.releaseRun > 0 && m.relWinN > 0 && m.w1Avg > 0:
+		w2Avg := divRound(m.relWinSum, m.relWinN)
+		mt.SelfSustain = w2Avg * One / m.w1Avg
+		if mt.SelfSustain > One {
+			mt.SelfSustain = One
 		}
 	}
 
@@ -305,6 +334,9 @@ func (m *FoundationMonitor) dynInstability() int64 {
 }
 
 // normVar 返回序列的归一化方差 var/mean²（×1000 比率，封顶 1000）。
+// 序列整体幅值低于 NormVarFloor 时视为无波动（返 0）：Part J 的稳定环流
+// 下五行占比偏差只剩整数舍入抖动（±1 千分位），var/mean² 对近零均值序列
+// 病态发散，不应记为失稳。
 func normVar(xs []int64) int64 {
 	n := int64(len(xs))
 	if n < 2 {
@@ -315,12 +347,7 @@ func normVar(xs []int64) int64 {
 		sum += x
 	}
 	mean := divRound(sum, n)
-	if mean <= 0 {
-		for _, x := range xs {
-			if x != 0 {
-				return One // 均值为零却有起伏：波动记满
-			}
-		}
+	if mean < NormVarFloor {
 		return 0
 	}
 	var v int64
@@ -423,7 +450,7 @@ func (s *CultSession) buildFoundationSample(rep *cult.TickReport, controlActive 
 	for i := range rep.Points {
 		p := &rep.Points[i]
 		for e := 0; e < cult.ElementCount; e++ {
-			sample.Intake += p.Intake[e]
+			sample.Intake += p.Intake[e] + p.Entrained[e] // 环境纳入 = §7 吸收 + Part J 途经纳气
 			sample.TotalQi += p.Qi[e]
 		}
 		pressSum += p.Pressure
@@ -434,6 +461,8 @@ func (s *CultSession) buildFoundationSample(rep *cult.TickReport, controlActive 
 	for ti := range rep.Transfers {
 		tr := &rep.Transfers[ti]
 		for e := 0; e < cult.ElementCount; e++ {
+			// Actual 含主动与被动实际流量（被动条目 Actual==Passive，
+			// Part J：松手期的纯被动环流由此进入 SelfSustain 测量）。
 			sample.ActualFlow += tr.Actual[e]
 			sample.Delivered += tr.Delivered[e]
 		}
@@ -459,6 +488,8 @@ func (s *CultSession) buildFoundationSample(rep *cult.TickReport, controlActive 
 
 // observeFoundation 在每 Tick 结算后做筑基判定（§37/§38），并把跨门槛
 // 转成叙事事件；筑基后将在跑的功法升格为 AutonomousLoop（§39）。
+// controlActive 按 Part J J4 口径由会话层给出：本 tick 存在玩家意图请求
+// 或 Protocol Runtime 在执行；被动流不计入。
 func (s *CultSession) observeFoundation(res *TickResult, controlActive bool) {
 	if s.Foundation == nil || res.Report == nil {
 		return

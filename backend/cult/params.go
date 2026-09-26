@@ -205,6 +205,53 @@ const (
 
 	// KShock 是炼化对流量冲击的敏感化乘子（D4-4）：FlowShock_effective × (1 - Refine×KShock)。
 	KShock = 500 // 0.5 [v0.1 参数]
+
+	// ---------------------------------------------------------------------------
+	// Part J：被动环流（docs/specs/2026-09-22-partj-passive-circulation.md J2/J3/J8）
+	// ---------------------------------------------------------------------------
+
+	// KPassive 是被动输运强度（Part J J2/J8 [v0.1 参数]）：每单位压差
+	// （Pressure = LoadRatio²，千分位）可驱动的通道容量比例（千分位）。
+	//
+	//	passiveFlow = clamp(chanCap × KPassive × ΔP × Conductance, 0, chanCap)
+	//
+	// 沿天然向；ΔP ≤ 0 时为 0（被动永不逆天然向）。chanCap 是经脉与两端
+	// 穴位有效通量的最小值（与主动传输的 §8.1 容量同源）。[v0.1 参数]
+	// J8 初值 0.3， cultmc P7/P9 标定后回填终值。
+	KPassive = 300 // 0.3（标定探针中）
+
+	// KEntrain 是途经纳气系数（Part J J3/J8 [v0.1 参数]）：气行经穴位时
+	// 卷入环境气，来源=环境，计入守恒 Entrained 项。
+	//
+	//	entrained = F × Openness × EnvironmentQi × AcupointAffinity
+	//	            × KEntrain × (1 - LoadRatio)
+	//
+	// 受 BackPressure（满则难纳）抑制；量级远小于主动纳气（环境灵气密度
+	// ~2.4 作为乘子进入定点链，KEntrain=0.05 时实际卷入约为流量的 5%
+	// 量级，随环境密度缩放）。
+	KEntrain = 40 // 0.04 [v0.1 参数]（标定探针中）
+
+	// FoundationReleaseWindow 是 SelfSustain 松手观察窗 W2 的长度（Part J
+	// J5/J8 [v0.1 参数]）：松手后连续 N tick 全无请求，其均流为 W2。
+	// ctmatch.FoundationMonitor 消费（J5 测量协议）。
+	FoundationReleaseWindow = 30 // 30 tick [v0.1 参数]
+
+	// KInertia 是被动输运的流量惯性系数（Part J R4 第二阶段 [v0.1 参数]）。
+	// J2 纯压差项在闭环上会均衡化归零（压差快照同和为零，无泵不成环流），
+	// R4 预案：被动项叠加惯性项——
+	//
+	//	passiveFlow = clamp(KPassive×ΔP×Conductance×chanCap
+	//	                    + KInertia×FlowPrev, 0, pipeCap)
+	//
+	// FlowPrev 是经脉上一 Tick 的实际流量（Persistent Flow State）。
+	// 结构因果（J6）：反复安全行环 → Openness/Conductance/适应上升 →
+	// 梯度项与流量水平上升、衰减变慢 → SelfSustain 上升。
+	KInertia = 990 // 0.99 [v0.1 参数][Part J R4]
+
+	// KQiShare 是被动流转的源穴储气份额封顶（Part J 标定 [v0.1 参数]）：
+	// 每 Tick 被动流量 ≤ 源穴位该元素存量 × KQiShare。流转过快会令压差
+	// 逐 Tick 反转（弛豫振荡），经 §15 FlowShock 打穿稳定性。
+	KQiShare = 100 // 0.10（标定探针中）
 )
 
 // RuleVersion 是底层规则版本标识（宪法 §18 Rule Versioning）。
@@ -213,8 +260,11 @@ const (
 // 0.2.0 → 0.3.0（修订包 A1 v0.2 主环拓扑）：逆流发起判据由"纯汇点（无出向
 // 经脉）"改为核点判据（CorePointOf，Capacity 最大穴位），Rule Semantic
 // Change 而非 Parameter Tuning。
+// 0.3.0 → 0.4.0（2026-09-22 Part J 被动环流）：新增压差驱动的被动输运项
+// （J2）与途经纳气项（J3，守恒扩 Entrained），传输不再全由 Ops.Requests
+// 驱动——Rule Semantic Change。
 // 同 World 状态 + 同 Ops + 同 RuleVersion + 同 Seed ⇒ 逐位一致重演。
-const RuleVersion = "0.3.0-mainloop"
+const RuleVersion = "0.4.0-passive-circulation"
 
 // ---------------------------------------------------------------------------
 // 定点算术

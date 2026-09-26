@@ -60,15 +60,15 @@ func revWorld() *World {
 }
 
 // checkConservation 断言一个 Tick 报告的守恒恒等式（修订包 A3：精确整数，
-// 无凭空增益）。
+// 无凭空增益；Part J J3 恒等式扩 Entrained 项）。
 func checkConservation(t *testing.T, rep *TickReport) {
 	t.Helper()
 	c := rep.Conservation
 	net := c.QiAfter - c.QiBefore
-	accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.ReverseWork
+	accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.ReverseWork + c.Entrained
 	if net != accounted {
-		t.Errorf("tick %d 守恒破坏: ΔQi=%d, 归账=%d (intake=%d diffuse=%d transfer=%d sheng=%d reverse=%d)",
-			rep.Tick, net, accounted, c.Intake, c.Diffuse, c.TransferLoss, c.ShengLoss, c.ReverseWork)
+		t.Errorf("tick %d 守恒破坏: ΔQi=%d, 归账=%d (intake=%d diffuse=%d transfer=%d sheng=%d reverse=%d entrained=%d)",
+			rep.Tick, net, accounted, c.Intake, c.Diffuse, c.TransferLoss, c.ShengLoss, c.ReverseWork, c.Entrained)
 	}
 }
 
@@ -133,14 +133,16 @@ func TestReverse_DantianOnly(t *testing.T) {
 		t.Errorf("被拒绝的逆流不应改变神庭存量: got %d", got)
 	}
 
-	// 存量核对（含 §10 相生转化的同 Tick 快照结算；Refinement=0 → 乘子=1）：
+	// 存量核对（含 §10 相生转化的同 Tick 快照结算；Refinement=0 → 乘子=1；
+	// Part J J3：逆流入库 1900 在接收端青关卷入环境纳气 240
+	// = 2000×3.0(环境木密度)×0.04，转化快照按 2140 计）：
 	//   丹田：5000 − 逆流 2000 − 做功 20 = 2980 → 木→火转化 119（2980×0.04）；
-	//   青关：入库 1900 → 转化 76（1900×0.04）。
+	//   青关：入库 1900 + 途经纳气 240 = 2140 → 转化 86（2140×0.04）。
 	if got := w.Character.BodyGraph.Acupoints[0].Qi[Wood]; got != 2980-119 {
 		t.Errorf("丹田存量: got %d, want %d", got, 2980-119)
 	}
-	if got := w.Character.BodyGraph.Acupoints[1].Qi[Wood]; got != 1900-76 {
-		t.Errorf("青关存量: got %d, want %d", got, 1900-76)
+	if got := w.Character.BodyGraph.Acupoints[1].Qi[Wood]; got != 2140-86 {
+		t.Errorf("青关存量: got %d, want %d", got, 2140-86)
 	}
 
 	// 逆流参与的 Tick 同样守恒。

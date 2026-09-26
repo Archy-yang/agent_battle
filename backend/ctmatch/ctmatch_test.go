@@ -631,9 +631,11 @@ cycles: 1
 
 func TestUnknownAnomaly(t *testing.T) {
 	s := newTestSession(t, 31)
-	// 预载青关满载并超压：负载比 2.0 → 应变大幅上升 → 稳定性跌破 0.4 →
+	// 预载青关满载并超压：负载比 3.0 → 应变大幅上升 → 稳定性跌破 0.4 →
 	// 出现新损伤，而协议没有任何 guard 覆盖 → 未知异常升级。
-	s.World.Character.BodyGraph.Acupoints[1].Qi[cult.Wood] = 20000
+	// （Part J：超压穴位会经经脉被动泄压 ~2700/Tick——LoadRatio² 压差驱动，
+	// 预载量相应从 20000 上调，保持"超压致损"场景成立。）
+	s.World.Character.BodyGraph.Acupoints[1].Qi[cult.Wood] = 30000
 	yaml := `
 protocol: anomaly_v1
 actions:

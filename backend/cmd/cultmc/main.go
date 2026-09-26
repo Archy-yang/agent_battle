@@ -225,7 +225,8 @@ func (a *accounting) advance(w *cult.World, ops cult.Ops) *cult.TickReport {
 	a.ticks++
 	c := rep.Conservation
 	net := c.QiAfter - c.QiBefore
-	accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.ReverseWork
+	// Part J J3：恒等式扩 Entrained 项（途经纳气，来源=环境）。
+	accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.ReverseWork + c.Entrained
 	if res := net - accounted; res != 0 {
 		a.violations++
 		if res < 0 {
@@ -603,6 +604,208 @@ func runP6Track(seed uint64, trackA bool, acc *accounting) p6Res {
 }
 
 // ---------------------------------------------------------------------------
+// Part J 标定命题（docs/specs/2026-09-22-partj-passive-circulation.md J8）
+// ---------------------------------------------------------------------------
+
+// releaseFlow 汇总一份报告的实际流量（主动 + 被动；被动条目 Actual==Passive）。
+func releaseFlow(rep *cult.TickReport) int64 {
+	var s int64
+	for ti := range rep.Transfers {
+		for e := 0; e < cult.ElementCount; e++ {
+			s += rep.Transfers[ti].Actual[e]
+		}
+	}
+	return s
+}
+
+// ---------------------------------------------------------------------------
+// P7 衰减-结构单调（J6/J5）：同一身体累积行环训练越多（经脉适应/开度
+// 越成长），松手后被动环流的衰减越慢——松手窗（前 30 tick）均流随训练
+// 量非降。
+// ---------------------------------------------------------------------------
+
+var p7Training = [3]int{150, 450, 900} // 累计行环 tick 数（同世界累积）
+
+type p7Res struct {
+	relMean [3]int64 // 各训练档后的松手窗均流
+}
+
+func runP7(seed uint64, acc *accounting) p7Res {
+	var res p7Res
+	r := newRig(seed)
+	r.prefill(acc, 150, 500)
+	done := 0
+	for k, n := range p7Training {
+		for ; done < n; done++ {
+			acc.advance(r.w, r.roundAProp(300)[0])
+		}
+		var sum int64
+		for t := 0; t < 30; t++ {
+			rep := acc.advance(r.w, cult.Ops{})
+			sum += releaseFlow(rep)
+		}
+		res.relMean[k] = sum / 30
+	}
+	return res
+}
+
+// ---------------------------------------------------------------------------
+// P8 环必要性对照（J2）：同参数下主环 vs 砍一边成树的松手窗均流比
+// （环显著更高——没有环就没有自持）。
+// ---------------------------------------------------------------------------
+
+type p8Res struct {
+	ringMean int64
+	treeMean int64
+}
+
+// p8RingChannels 返回 world 中属于主环（SpikeWorld 拓扑六段端点对）的
+// 经脉下标；cut 后缺失段自然不在其中。
+func p8RingChannels(g *cult.BodyGraph) []int {
+	ring := [][2]int{{0, 3}, {3, 7}, {7, 2}, {2, 6}, {6, 1}, {1, 0}}
+	var out []int
+	for c := range g.Channels {
+		ch := &g.Channels[c]
+		for _, e := range ring {
+			if ch.From == e[0] && ch.To == e[1] {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// p8ReleaseMean 建世界（可砍段）、预填充、缓推行环 pushTicks，再松手
+// 量测前 30 tick 均流。
+func p8ReleaseMean(seed uint64, cut bool, acc *accounting) int64 {
+	r := newRig(seed)
+	g := &r.w.Character.BodyGraph
+	if cut {
+		for i, ch := range g.Channels {
+			if ch.From == 7 && ch.To == 2 { // 中庭→阳枢
+				g.Channels = append(g.Channels[:i], g.Channels[i+1:]...)
+				break
+			}
+		}
+	}
+	// 预填充（青关→丹田捷径引流至丹田 LR≥0.5）：cut 后下标偏移，按端点重找。
+	var shortcut int
+	for c := range g.Channels {
+		if g.Channels[c].From == 1 && g.Channels[c].To == 0 {
+			shortcut = c
+			break
+		}
+	}
+	for t := 0; t < 150; t++ {
+		it := make([]int64, r.n)
+		it[1] = 500
+		rep := acc.advance(r.w, cult.Ops{Intensity: it, Requests: []cult.FlowRequest{
+			{Channel: shortcut, Amount: [5]int64{800, 800, 800, 800, 800}},
+		}})
+		if rep.Points[r.dan].LoadRatio >= 500 {
+			break
+		}
+	}
+	// 缓推（300/元素，首 Tick FlowShock 不打穿稳定性）。
+	for i := 0; i < 200; i++ {
+		var reqs []cult.FlowRequest
+		for _, c := range p8RingChannels(g) {
+			var a [cult.ElementCount]int64
+			for e := range a {
+				a[e] = 300
+			}
+			reqs = append(reqs, cult.FlowRequest{Channel: c, Amount: a})
+		}
+		acc.advance(r.w, cult.Ops{Requests: reqs})
+	}
+	var sum int64
+	for t := 0; t < 30; t++ {
+		rep := acc.advance(r.w, cult.Ops{})
+		sum += releaseFlow(rep)
+	}
+	return sum / 30
+}
+
+func runP8(seed uint64, acc *accounting) p8Res {
+	return p8Res{
+		ringMean: p8ReleaseMean(seed, false, acc),
+		treeMean: p8ReleaseMean(seed, true, acc),
+	}
+}
+
+// ---------------------------------------------------------------------------
+// P9 筑基可达性（P0 死锁修复总验收）：完整游戏流程（引气→行环→松手）
+// 中 SelfSustain 跨 0.85 的 seed 占比 ≥ 0.5。
+// 世界 = Part J 标定世界（结构已演化到位；SpikeWorld 新手身体的传导
+// 天花板使筑基需长期行环修结构，见报告注记）。
+// ---------------------------------------------------------------------------
+
+type p9Res struct {
+	maxSelfSustain int64
+	crossed        bool
+	touched        bool
+	established    bool
+}
+
+func p9ProtocolYAML(amount, cycles int64) string {
+	ring := [][2]string{
+		{"下丹田", "土府"},
+		{"土府", "中庭"},
+		{"中庭", "阳枢"},
+		{"阳枢", "神庭"},
+		{"神庭", "青关"},
+		{"青关", "下丹田"},
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "protocol: zhutian_p9_v1\nactions:\n")
+	fmt.Fprintf(&b, "  - absorb: {target: 青关, level: trace, duration: 1, parallel: 1}\n")
+	for _, e := range ring {
+		fmt.Fprintf(&b, "  - guide: {from: %s, to: %s, element: \"\", amount: %d, duration: 1, parallel: 1}\n",
+			e[0], e[1], amount)
+	}
+	fmt.Fprintf(&b, "cadence: 1\ncycles: %d\nvalidated_range:\n", cycles)
+	for _, e := range ring {
+		fmt.Fprintf(&b, "  - channel: [%s, %s]\n    element: \"\"\n    min: 0\n    max: %d\n", e[0], e[1], amount)
+	}
+	return b.String()
+}
+
+func runP9(seed uint64) p9Res {
+	var res p9Res
+	w := ctmatch.PartJCalibrationWorld()
+	s := ctmatch.NewSession(w, seed, nil)
+	p, err := ctmatch.Compile([]byte(p9ProtocolYAML(300, 600)), &w.Character.BodyGraph)
+	if err != nil {
+		panic(err) // 标定台静态装配错误
+	}
+	s.LoadProtocol(p)
+	ctmatch.Tick(s, nil) // 观测基准
+	if err := s.StartProtocol(p.Name); err != nil {
+		panic(err)
+	}
+	// 反复行环（Runtime 驱动，一 Tick 一周天）。
+	for i := 0; i < 900 && s.ActiveProtocol() != ""; i++ {
+		ctmatch.Tick(s, nil)
+	}
+	// 松手：此后不再提交任何意图，纯被动环流。
+	for i := 0; i < 200; i++ {
+		ctmatch.Tick(s, nil)
+		if s.Foundation.Touched {
+			res.touched = true
+		}
+		if s.Foundation.Established {
+			res.established = true
+		}
+		if m := s.Foundation.Metrics().SelfSustain; m > res.maxSelfSustain {
+			res.maxSelfSustain = m
+		}
+	}
+	res.crossed = res.maxSelfSustain >= 850
+	return res
+}
+
+// ---------------------------------------------------------------------------
 // 统计 helpers（全整数；无浮点）
 // ---------------------------------------------------------------------------
 
@@ -753,6 +956,9 @@ type mcInput struct {
 	p5      [][]p5Res // [seed][doseIdx]
 	p6a     []p6Res
 	p6b     []p6Res
+	p7      []p7Res
+	p8      []p8Res
+	p9      []p9Res
 	acc     *accounting
 	elapsed time.Duration
 }
@@ -978,7 +1184,7 @@ func renderReport(in mcInput) string {
 	fmt.Fprintf(&b, "- 覆盖总 tick 数：%d（全部场景 × 全部 seed）\n", in.acc.ticks)
 	fmt.Fprintf(&b, "- 恒等式违例数：%d\n", in.acc.violations)
 	fmt.Fprintf(&b, "- 最大单 tick 归账残差：%d（千分位量）\n", in.acc.maxResidual)
-	fmt.Fprintf(&b, "\n结论：ΔQi = Intake − Diffuse − TransferLoss − ShengLoss − ReverseWork %s成立，无凭空增益。\n\n",
+	fmt.Fprintf(&b, "\n结论：ΔQi = Intake − Diffuse − TransferLoss − ShengLoss − ReverseWork + Entrained %s成立，无凭空增益（Part J 守恒扩项）。\n\n",
 		map[bool]string{true: "逐 tick 精确", false: "被破坏"}[p4Pass])
 
 	// ------------------------------------------------------------------ P5
@@ -1063,6 +1269,98 @@ func renderReport(in mcInput) string {
 	fmt.Fprintf(&b, "\n结论：多次经中庭中转的中庭承压%s可感第一档以上；稳定性甲 %s vs 乙 %s。\n\n",
 		map[bool]string{true: "显著高于", false: "未达"}[p6Pass], fp(medianOf(stabA)), fp(medianOf(stabB)))
 
+	// ------------------------------------------------------------------ P7
+	var p7Med [3]int64
+	p7Mono := 0
+	for k := 0; k < 3; k++ {
+		var vals []int64
+		for _, r := range in.p7 {
+			vals = append(vals, r.relMean[k])
+		}
+		p7Med[k] = medianOf(vals)
+	}
+	for s := range in.p7 {
+		r := &in.p7[s]
+		if r.relMean[0] <= r.relMean[1] && r.relMean[1] <= r.relMean[2] {
+			p7Mono++
+		}
+	}
+	p7MonoFrac := int64(0)
+	if n > 0 {
+		p7MonoFrac = int64(p7Mono) * 1000 / int64(n)
+	}
+	p7Pass := p7Med[0] <= p7Med[1] && p7Med[1] <= p7Med[2] && p7Med[2] > p7Med[0] && p7MonoFrac >= 500
+
+	fmt.Fprintf(&b, "## P7 衰减-结构单调（J6/J5）—— %s\n\n", passStr(p7Pass))
+	fmt.Fprintf(&b, "同一身体累积行环 %d/%d/%d tick 后各自松手（窗 %d tick），松手窗被动均流（跨 seed 中位）：\n\n",
+		p7Training[0], p7Training[1], p7Training[2], cult.FoundationReleaseWindow)
+	fmt.Fprintf(&b, "| 累计行环 | %d | %d | %d |\n|---|---|---|---|\n", p7Training[0], p7Training[1], p7Training[2])
+	fmt.Fprintf(&b, "| 松手窗均流 | %s | %s | %s |\n\n", fp(p7Med[0]), fp(p7Med[1]), fp(p7Med[2]))
+	fmt.Fprintf(&b, "- 判据：中位非降且末档严格升，且逐 seed 非降比例 ≥ 50%%（实际 %s）\n", fp(p7MonoFrac))
+	fmt.Fprintf(&b, "\n结论：结构（经脉适应/开度）随训练成长后，松手环流衰减%s。\n\n",
+		map[bool]string{true: "变慢（SelfSustain 观测窗读数上升）", false: "未见变慢"}[p7Pass])
+
+	// ------------------------------------------------------------------ P8
+	var ratios, ringMs []int64
+	for _, r := range in.p8 {
+		ringMs = append(ringMs, r.ringMean)
+		den := r.treeMean
+		if den < 1 {
+			den = 1
+		}
+		ratios = append(ratios, r.ringMean*1000/den)
+	}
+	ringMed, treeMed := medianOf(ringMs), int64(0)
+	{
+		var tm []int64
+		for _, r := range in.p8 {
+			tm = append(tm, r.treeMean)
+		}
+		treeMed = medianOf(tm)
+	}
+	ratioMed := medianOf(ratios)
+	p8Pass := ringMed > 0 && ratioMed >= 3000
+
+	fmt.Fprintf(&b, "## P8 环必要性对照（J2）—— %s\n\n", passStr(p8Pass))
+	fmt.Fprintf(&b, "同参数同 seed：主环 vs 砍一边成树（缺 中庭→阳枢 段），各缓推 200 tick 后松手 30 tick：\n\n")
+	fmt.Fprintf(&b, "| 指标 | 主环 | 断环（树） |\n|---|---|---|\n")
+	fmt.Fprintf(&b, "| 松手窗均流中位 | %s | %s |\n", fp(ringMed), fp(treeMed))
+	fmt.Fprintf(&b, "| 环/树均流比中位 | %s | — |\n\n", fp(ratioMed))
+	fmt.Fprintf(&b, "- 判据：主环均流 > 0 且环/树比中位 ≥ 3.000\n")
+	fmt.Fprintf(&b, "\n结论：主环拓扑下松手环流%s；树形状 vs 环的差别%s。\n\n",
+		map[bool]string{true: "持续存在", false: "未见"}[ringMed > 0],
+		map[bool]string{true: "显著", false: "不显著"}[p8Pass])
+
+	// ------------------------------------------------------------------ P9
+	crossed := 0
+	var maxss []int64
+	for _, r := range in.p9 {
+		if r.crossed {
+			crossed++
+		}
+		maxss = append(maxss, r.maxSelfSustain)
+	}
+	crossFrac := int64(0)
+	if n > 0 {
+		crossFrac = int64(crossed) * 1000 / int64(n)
+	}
+	estCount := 0
+	for _, r := range in.p9 {
+		if r.established {
+			estCount++
+		}
+	}
+	p9Pass := crossFrac >= 500
+
+	fmt.Fprintf(&b, "## P9 筑基可达性（P0 修复总验收）—— %s\n\n", passStr(p9Pass))
+	fmt.Fprintf(&b, "完整流程（引气 → 反复行环 600 周天 → 全松手 200 tick），SelfSustain 峰值跨 0.85 的 seed：**%d/%d（%s）**，其中走完全程自然筑基（五量全门槛）：%d\n\n",
+		crossed, n, fp(crossFrac), estCount)
+	fmt.Fprintf(&b, "- SelfSustain 峰值中位：%s\n", fp(medianOf(maxss)))
+	fmt.Fprintf(&b, "- 注：世界 = Part J 标定世界（结构已演化到位）。SpikeWorld 新手身体的传导/ Closure 天花板使筑基需按 J6 长期行环修结构（新手身上同流程 SelfSustain 峰值 ~0.33，见报告附注），非引擎死锁复发。\n")
+	fmt.Fprintf(&b, "\n结论：真实松手流程的 SelfSustain%s跨 0.85——筑基判定链在引擎层%s。\n\n",
+		map[bool]string{true: "可", false: "不能"}[p9Pass],
+		map[bool]string{true: "已打通", false: "仍不可达"}[p9Pass])
+
 	// ------------------------------------------------------------------ 汇总
 	fmt.Fprintf(&b, "## 判定汇总\n\n")
 	fmt.Fprintf(&b, "| 命题 | 判定 |\n|---|---|\n")
@@ -1071,10 +1369,13 @@ func renderReport(in mcInput) string {
 	fmt.Fprintf(&b, "| P3 双重收敛限速 | %s |\n", passStr(p3Pass))
 	fmt.Fprintf(&b, "| P4 守恒归账 | %s |\n", passStr(p4Pass))
 	fmt.Fprintf(&b, "| P5 逆流火候 | %s |\n", passStr(p5Pass))
-	fmt.Fprintf(&b, "| P6 中庭瓶颈 | %s |\n\n", passStr(p6Pass))
+	fmt.Fprintf(&b, "| P6 中庭瓶颈 | %s |\n", passStr(p6Pass))
+	fmt.Fprintf(&b, "| P7 衰减-结构单调 | %s |\n", passStr(p7Pass))
+	fmt.Fprintf(&b, "| P8 环必要性对照 | %s |\n", passStr(p8Pass))
+	fmt.Fprintf(&b, "| P9 筑基可达性 | %s |\n\n", passStr(p9Pass))
 
 	fmt.Fprintf(&b, "## 建议调参方向（仅供人工参考，本台未改任何参数）\n\n")
-	sug := suggestions(in, p1Pass, p2Pass, p3Pass, p4Pass, p5Pass, p6Pass,
+	sug := suggestions(in, p1Pass, p2Pass, p3Pass, p4Pass, p5Pass, p6Pass, p7Pass, p8Pass, p9Pass,
 		stallFrac, recovMed, ratioMilli, reachFrac, reachMed, medPeakQG, medDamage, medStrain, distMed)
 	if len(sug) == 0 {
 		fmt.Fprintf(&b, "六命题全部成立，暂无调参建议。\n")
@@ -1105,7 +1406,7 @@ func collectP6(p6 []p6Res, f func(p6Res) int64) []int64 {
 }
 
 // suggestions 按 FAIL 项给出方向性调参建议（只动 K_*/画像参数，不动公式结构）。
-func suggestions(in mcInput, p1, p2, p3, p4, p5, p6 bool,
+func suggestions(in mcInput, p1, p2, p3, p4, p5, p6, p7, p8, p9 bool,
 	stallFrac, recovMed, ratioMilli, reachFrac, reachMed int64,
 	medPeakQG, medDamage, medStrain []int64, distMedVal int64) []string {
 
@@ -1146,6 +1447,15 @@ func suggestions(in mcInput, p1, p2, p3, p4, p5, p6 bool,
 	if !p6 {
 		s = append(s, fmt.Sprintf("P6 中庭压感不足（胀感峰值中位 %s < 第一档 200）：B1 画像面——下调中庭 Capacity（9000）或上调其中转流量占比；引擎面可上调 KBack 提高逆流在青关段的积压、间接增大经中庭的过流。", fp(distMedVal)))
 	}
+	if !p7 {
+		s = append(s, "P7 松手衰减不随结构单调：检查 KInertia（990）与经脉适应/开度成长是否进入闭环—— Conductance 高→单跳损耗低→流量维持更久；若被 KQiShare（100）封顶抹平，可上调 KQiShare 或加大训练档差。")
+	}
+	if !p8 {
+		s = append(s, "P8 环/树对照不显著：断环世界松手流未归零或主环流太弱——检查惯性输送带在死端的截止行为（FlowPrev 入流为零应自然断流）与 KQiShare 封顶水平。")
+	}
+	if !p9 {
+		s = append(s, "P9 SelfSustain 跨不过 0.85：松手流相对推动流不足——上调 KEntrain（40，途经纳气是环流的能量源）或下调 KInertia（990）以外的衰减项；或降低行环推量（推得越猛 W1 分母越大）。")
+	}
 	return s
 }
 
@@ -1173,6 +1483,9 @@ func main() {
 		p5:     make([][]p5Res, *nSeeds),
 		p6a:    make([]p6Res, *nSeeds),
 		p6b:    make([]p6Res, *nSeeds),
+		p7:     make([]p7Res, *nSeeds),
+		p8:     make([]p8Res, *nSeeds),
+		p9:     make([]p9Res, *nSeeds),
 		acc:    acc,
 	}
 
@@ -1190,6 +1503,9 @@ func main() {
 		}
 		in.p6a[i] = runP6Track(seed, true, acc)
 		in.p6b[i] = runP6Track(seed, false, acc)
+		in.p7[i] = runP7(seed, acc)
+		in.p8[i] = runP8(seed, acc)
+		in.p9[i] = runP9(seed)
 	}
 	in.elapsed = time.Since(start)
 

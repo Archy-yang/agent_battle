@@ -119,6 +119,14 @@ type TransferReport struct {
 	Rejected bool
 	// WorkCost[e] 是逆流做功代价（从发起汇点按元素扣除；A2）。
 	WorkCost [ElementCount]int64
+
+	// Passive[e] 是本条经脉本 Tick 的被动输运实际流量（Part J J2：压差
+	// 驱动，沿天然向）。被动流走独立报告条目（无主动请求的经脉也会产生
+	// 条目），与主动流共用 §9 损耗管线（守恒/损耗/炼化筛选取叠加后的
+	// 实际流）。被动条目上 Actual[e] == Passive[e]（统一"实际流"消费口径：
+	// 守恒、筑基采样、回执汇总都直接读 Actual）；Passive 字段单独归因，
+	// 供 SelfSustain 测量区分"推动之流"与"自走之流"。
+	Passive [ElementCount]int64
 }
 
 // AcupointReport 是一个穴位本 Tick 结束时的诊断快照。
@@ -139,16 +147,19 @@ type AcupointReport struct {
 	ThermalLoad     int64 // 热负荷累积（修订包 A2/B4；散热衰减后含本 Tick 新热）
 	Qi              [ElementCount]int64
 	Activity        [ElementCount]int64
-	Intake          [ElementCount]int64
+	Intake          [ElementCount]int64 // §7 环境吸收（主动纳入；途经纳气另列 Entrained）
+	Entrained       [ElementCount]int64 // Part J J3 途经纳气（环境纳入，随实际流量逐穴计量）
 }
 
 // Conservation 是一次 Advance 的守恒归账（修订包 A3：任何总量变化必须
 // 逐项可归因，无凭空增益）。恒等式（精确整数，逐项与运算用同一舍入值）：
 //
-//	QiAfter - QiBefore == Intake - Diffuse - TransferLoss - ShengLoss - ReverseWork
+//	QiAfter - QiBefore == Intake - Diffuse - TransferLoss - ShengLoss
+//	                    - ReverseWork + Entrained
 //
 // 去向标注：Diffuse 与 TransferLoss 的一半 → 环境；TransferLoss 另一半、
 // ShengLoss、ReverseWork → 热（穴位 heatAccum / ThermalLoad）。
+// Entrained 是 Part J J3 途经纳气（来源=环境，随实际流量逐穴计量）。
 type Conservation struct {
 	QiBefore     int64 // Tick 开始时 Σ 穴位储气
 	QiAfter      int64 // Tick 结束时 Σ 穴位储气
@@ -157,6 +168,7 @@ type Conservation struct {
 	TransferLoss int64 // Σ §9 传输损耗
 	ShengLoss    int64 // Σ §10 转化损耗（去向=热）
 	ReverseWork  int64 // Σ 逆流做功代价（A2，去向=热）
+	Entrained    int64 // Σ 途经纳气（Part J J3，来源=环境）
 }
 
 // TickReport 是一次 Advance 的完整报告。
@@ -250,12 +262,20 @@ func Advance(w *World) *TickReport {
 		a.lastLoadRatioMilli = r // 下一 Tick 反压的输入
 	}
 
-	// §8-9 灵气传输与损耗（含修订包 A2 逆流做功）。
-	rep.Transfers = runTransfers(w, refines)
+	// §8-9 灵气传输与损耗（含修订包 A2 逆流做功、Part J 被动输运与途经纳气）。
+	var entrainedArr [][ElementCount]int64
+	rep.Transfers, entrainedArr = runTransfers(w, refines, postRatio)
 	for _, tr := range rep.Transfers {
 		for e := 0; e < ElementCount; e++ {
 			cons.TransferLoss += tr.Loss[e]
 			cons.ReverseWork += tr.WorkCost[e]
+		}
+	}
+	// Part J J3：途经纳气归账（来源=环境，单独成项）。报告逐穴单列
+	// Entrained（不并入 §7 Intake），守恒归因走 cons.Entrained。
+	for i := 0; i < n; i++ {
+		for e := 0; e < ElementCount; e++ {
+			cons.Entrained += entrainedArr[i][e]
 		}
 	}
 
@@ -298,6 +318,7 @@ func Advance(w *World) *TickReport {
 		r.PostIntakeRatio = postRatio[i]
 		for e := 0; e < ElementCount; e++ {
 			r.Intake[e] = intake[i][e]
+			r.Entrained[e] = entrainedArr[i][e]
 		}
 
 		// §14 压力。
@@ -462,7 +483,7 @@ func CorePointOf(g *BodyGraph) int {
 	return core
 }
 
-// runTransfers 实现 §8-9（含修订包 A2 逆流做功）。
+// runTransfers 实现 §8-9（含修订包 A2 逆流做功、Part J 被动输运与途经纳气）。
 //
 // 逆流语义（A2/B1）：请求带 Reverse 标记时，Actual 沿经脉天然向反向行走
 // （从 To 端流向 From 端）。唯有核点（Capacity 最大的穴位，A1 v0.2 核点
@@ -472,10 +493,59 @@ func CorePointOf(g *BodyGraph) int {
 //
 //	WorkCost = Actual × BaseWork × (1 + LoadRatio_dst × KBack) × (1 - Conductance)
 //	ReverseHeat = WorkCost × KHeat → 逆流目的地 ThermalLoad
-func runTransfers(w *World, refines []int64) []TransferReport {
+//
+// Part J J2 被动输运：全部主动请求结算完毕后，对每条经脉按天然气向追加
+// 压差驱动的被动项（压差快照 = 本 Tick 吸收后的负载比，对全部经脉同源，
+// 与经脉遍历顺序无关）：
+//
+//	passiveFlow = clamp(chanCap×KPassive×ΔP×Conductance   // 压差梯度项
+//	                    + KInertia×inflow(源穴),          // R4 惯性接力项
+//	                   0, min(chanCap×Conductance,        // §8.1 管线容量
+//	                          源穴储气×KQiShare,           // 压而不泻封顶
+//	                          管线余量))                   // 主动已占容量不计
+//	ΔP = Pressure(a) - Pressure(b)（Pressure = LoadRatio²，吸收后口径）
+//
+// 被动项与主动请求叠加（J2），但只填同一 §8.1 管线的余量——总实际流
+//（主动+被动）不超过管道容量，主动推力不被被动旁路放大（R1）。压差为负
+// 则梯度项为零，惯性项沿天然向衰减延续（被动永不逆天然向）。惯性接力的
+// 输入是"其他经脉流入源穴"的实际流量（上一 Tick 打底 + 本 Tick 送达 live
+// 接力）；自环通道的自身回流不是来流，不计入（否则成做功无源的影子回声）。
+// 纯压差项在闭环上会均衡化归零（环上压差快照同和为零，无泵不成环流），
+// 惯性项即 R4 预案的 Persistent Flow State 第二阶段。被动流与主动流共用
+// 同一 §9 损耗管线并同样触发途经纳气，使守恒、损耗、炼化筛选都作用于
+// 叠加后的实际流；报告中以独立条目（Passive 字段）记账，与主动流可归因区分。
+//
+// Part J J3 途经纳气：每笔实际流量（主动/逆流/被动）在其接收端穴位卷入
+// 环境气（来源=环境，守恒账 Entrained 项）：
+//
+//	entrained = F × Openness × EnvironmentQi × AcupointAffinity
+//	            × KEntrain × (1 - LoadRatio)
+//
+// 返回传输报告与逐穴途经纳气量。
+func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferReport, [][ElementCount]int64) {
 	g := &w.Character.BodyGraph
-	reports := make([]TransferReport, 0, len(w.Ops.Requests))
+	reports := make([]TransferReport, 0, len(w.Ops.Requests)+len(g.Channels))
+	entrained := make([][ElementCount]int64, len(g.Acupoints))
+	chanFlow := make([][ElementCount]int64, len(g.Channels))  // 本 Tick 逐经脉逐元素实际流量（→ FlowPrev）
+	activeFlow := make([][ElementCount]int64, len(g.Channels)) // 本 Tick 逐经脉逐元素主动流量（被动让行判据）
 	controlErrMax := fpMul(ControlErrorBase, One-w.Character.Control)
+
+	// 途经纳气（Part J J3）：一笔流量 F 在接收端穴位 i（元素 e）卷入的环境气。
+	entrainInto := func(i int, a *Acupoint, e int, flow int64) {
+		if flow <= 0 || w.Env.Qi[e] <= 0 {
+			return
+		}
+		v := fpMul(flow, a.effectiveOpenness())
+		v = fpMul(v, w.Env.Qi[e])
+		v = fpMul(v, a.effectiveAffinity(e))
+		v = fpMul(v, KEntrain)
+		v = fpMul(v, One-postRatio[i])
+		if v <= 0 {
+			return
+		}
+		a.Qi[e] += v
+		entrained[i][e] += v
+	}
 
 	// 核点判据（修订包 A1 v0.2）：逆流发起资格 = 发起者（逆流请求的 To 端）
 	// 是核点（CorePointOf，见上）。
@@ -493,6 +563,7 @@ func runTransfers(w *World, refines []int64) []TransferReport {
 
 		// 端点选取：顺流 From→To；逆流 To→From（A2）。
 		src, dst := &g.Acupoints[ch.From], &g.Acupoints[ch.To]
+		srcIdx, dstIdx := ch.From, ch.To
 		if req.Reverse {
 			if ch.To != core {
 				// 发起者不是核点——逆经脉而行，唯丹田能推得动。
@@ -501,6 +572,7 @@ func runTransfers(w *World, refines []int64) []TransferReport {
 				continue
 			}
 			src, dst = &g.Acupoints[ch.To], &g.Acupoints[ch.From]
+			srcIdx, dstIdx = ch.To, ch.From
 		}
 
 		chanAdapt := ch.ChannelAdaptation / 1000
@@ -516,10 +588,6 @@ func runTransfers(w *World, refines []int64) []TransferReport {
 
 		// D4-5：控制误差幅值 × (1 - Refine_src×KControl)。src 已按流向取对
 		// （顺流源 = From 端，逆流源 = To 端）。
-		srcIdx := ch.From
-		if req.Reverse {
-			srcIdx = ch.To
-		}
 		controlErrEff := fpMul(controlErrMax, One-fpMul(refines[srcIdx], KControl))
 
 		// A2：逆流目的地的即时负载比（推入越满，做功越贵）。
@@ -568,6 +636,9 @@ func runTransfers(w *World, refines []int64) []TransferReport {
 			dst.Qi[e] += delivered
 			dst.heatAccum += fpMul(loss, One-DiffuseShare) // 50% → 热
 
+			// Part J J3：接收端途经纳气（主动流同样卷入环境气）。
+			entrainInto(dstIdx, dst, e, actual)
+
 			// A2 逆流做功：代价从发起汇点按元素扣除（扣除量不超过存量），
 			// 对应热加到逆流目的地的 ThermalLoad 累计。
 			if req.Reverse {
@@ -587,6 +658,8 @@ func runTransfers(w *World, refines []int64) []TransferReport {
 			src.flowAccum += actual
 			dst.flowAccum += delivered
 			ch.flowAccum += actual
+			chanFlow[req.Channel][e] += actual
+			activeFlow[req.Channel][e] += actual
 
 			tr.Actual[e] = actual
 			tr.Delivered[e] = delivered
@@ -594,7 +667,137 @@ func runTransfers(w *World, refines []int64) []TransferReport {
 		}
 		reports = append(reports, tr)
 	}
-	return reports
+
+	// Part J J2：被动输运——压差驱动的背景环流（与主动请求叠加，见上注释）。
+	// 压差快照取本 Tick 吸收后的负载比（postRatio），与遍历顺序无关。
+	// 惯性项（R4）按"输送带"语义：经脉的惯性输入 = 流入其源穴位的实际
+	// 流量（节点入流：上一 Tick 流量打底 + 本 Tick 已到达的送达量live累加
+	// ——经脉按下标序结算，主环拓扑下恰好沿行进方向逐段接力，环流连续
+	// 不间断）。流转受源穴储气份额封顶（见 KQiShare），不会同 Tick 级联
+	// 放大。
+	nodeIn := make([][ElementCount]int64, len(g.Acupoints))
+	for c := range g.Channels {
+		ch := &g.Channels[c]
+		if ch.To < 0 || ch.To >= len(g.Acupoints) {
+			continue
+		}
+		for e := 0; e < ElementCount; e++ {
+			nodeIn[ch.To][e] += ch.FlowPrev[e]
+		}
+	}
+	for c := range g.Channels {
+		ch := &g.Channels[c]
+		if ch.From < 0 || ch.From >= len(g.Acupoints) || ch.To < 0 || ch.To >= len(g.Acupoints) {
+			continue
+		}
+		pa, pb := postRatio[ch.From], postRatio[ch.To]
+		dP := fpMul(pa, pa) - fpMul(pb, pb)
+		// 压差只决定梯度项是否驱动（下述元素级判断）；惯性项不受压差门槛，
+		// 否则均衡压差下整段经脉被跳过、环流断裂（弛豫振荡的根源）。
+		src, dst := &g.Acupoints[ch.From], &g.Acupoints[ch.To]
+
+		chanAdapt := ch.ChannelAdaptation / 1000
+		baseCond := fpMul(ch.BaseConductance, chanAdapt)
+		condFactor := fpMul(fpMul(src.effectiveOpenness(), dst.effectiveOpenness()), One-ch.Damage)
+		chanCap := ch.Throughput
+		if s := src.effectiveThroughput(); s < chanCap {
+			chanCap = s
+		}
+		if d := dst.effectiveThroughput(); d < chanCap {
+			chanCap = d
+		}
+
+		var tr TransferReport
+		tr.Channel, tr.From, tr.To = c, ch.From, ch.To
+		for e := 0; e < ElementCount; e++ {
+			aff := fpSqrt(fpMul(src.effectiveAffinity(e), dst.effectiveAffinity(e)))
+			cond := fpMul(fpMul(baseCond, aff), condFactor)
+			tr.Conductance[e] = cond
+			eff := fpClamp(cond, 0, One)
+			pipeCap := fpMul(chanCap, cond) // 与主动流 §8.1 同一管线容量上限
+
+			// 主动占道、被动让行（R1）：被动项只填 §8.1 管线在本元素上的
+			// 余量（pipeCap − 主动实际流），与主动流共用同一容量上限——
+			// 被动环流是压差均衡化的背景物理（J2"主动 Request 照旧叠加"），
+			// 但总实际流不得超过管道容量，否则主动推力被被动旁路放大
+			//（白嫖环流）。上游满压、下游有需求时余量输运正是被动项的
+			//本职：压差在请求存在的 Tick 同样被均衡化，局部过压不积聚。
+			// 压差梯度项（J2）：仅压差为正时驱动（压差为负不逆天然向）。
+			var gf int64
+			if dP > 0 {
+				gf = fpMul(fpMul(fpMul(chanCap, KPassive), dP), cond)
+			}
+			// 惯性项（R4 第二阶段）：流入源穴位的实际流量沿行进方向衰减
+			// 延续（输送带语义，沿天然向；live 入流含本 Tick 上游送达）。
+			// 注意惯性项不受压差门槛——均衡压差下环流靠它延续。
+			// 自环不接力：惯性输入只计"其他经脉流入源穴"的来流；自环的
+			// 自身回流是它自己流量的延续而非新来流，计入即成做功无源的
+			// 影子回声（自环又无压差可言，纯添一份损耗流）。
+			inertIn := nodeIn[ch.From][e]
+			if ch.To == ch.From {
+				inertIn -= ch.FlowPrev[e]
+			}
+			inert := fpMul(KInertia, inertIn)
+			// 源穴储气份额封顶：被动流转每 Tick 不得超过源穴存量的
+			// KQiShare——压而不泻，防止流转过冲振荡（流量远大于储气时
+			// 压差逐 Tick 反转，形成弛豫振荡打穿 §15/§18）。
+			qiShare := fpMul(src.Qi[e], KQiShare)
+			capPf := pipeCap
+			if qiShare < capPf {
+				capPf = qiShare
+			}
+			// 管道余量（R1）：本元素本 Tick 已被主动流占用的容量，被动项
+			// 不得复用——总实际流（主动+被动）≤ §8.1 管线容量。
+			if spare := pipeCap - activeFlow[c][e]; spare < capPf {
+				capPf = spare
+				if capPf < 0 {
+					capPf = 0
+				}
+			}
+			pf := fpClamp(gf+inert, 0, capPf)
+			if pf > src.Qi[e] {
+				pf = src.Qi[e]
+			}
+			if pf <= 0 {
+				continue
+			}
+
+			// §9 损耗管线（与主动流同管线）。
+			delivered := fpMul(pf, eff)
+			loss := pf - delivered
+
+			src.Qi[e] -= pf
+			dst.Qi[e] += delivered
+			dst.heatAccum += fpMul(loss, One-DiffuseShare)
+			nodeIn[ch.To][e] += delivered // live 入流：本 Tick 送达可即段接力
+
+			// Part J J3：接收端途经纳气（被动流同样卷入环境气）。
+			entrainInto(ch.To, dst, e, pf)
+
+			src.elemFlowAccum[e] += pf
+			dst.elemFlowAccum[e] += delivered
+			src.flowAccum += pf
+			dst.flowAccum += delivered
+			ch.flowAccum += pf
+			chanFlow[c][e] += pf
+
+			tr.Passive[e] = pf
+			tr.Actual[e] = pf // Actual=被动实际流量（统一"实际流"口径）；Passive 单独归因
+			tr.Delivered[e] = delivered
+			tr.Loss[e] = loss
+		}
+		if tr.Passive[Wood] > 0 || tr.Passive[Fire] > 0 || tr.Passive[Earth] > 0 ||
+			tr.Passive[Metal] > 0 || tr.Passive[Water] > 0 {
+			reports = append(reports, tr)
+		}
+	}
+
+	// R4：持久流量状态落存（下一 Tick 惯性项的输入；随 World 状态演进，
+	// 同 seed 重放逐位一致）。
+	for c := range g.Channels {
+		g.Channels[c].FlowPrev = chanFlow[c]
+	}
+	return reports, entrained
 }
 
 // runSheng 实现 §10（快照语义：所有转化量按本阶段开始时的 Qi 计算）。

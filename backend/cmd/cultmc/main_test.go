@@ -105,9 +105,11 @@ func TestRigRoundAReverseOnlyFromDantian(t *testing.T) {
 	dan.Qi[cult.Wood] = 5000
 
 	reps := runRound(r, acc, []cult.Ops{r.absorbOps(0, flow(r.ring[5], 500, true))})
-	if len(reps[0].Transfers) != 1 {
-		t.Fatalf("应有 1 条传输报告: %d", len(reps[0].Transfers))
+	if len(reps[0].Transfers) < 1 {
+		t.Fatalf("至少应有 1 条传输报告: %d", len(reps[0].Transfers))
 	}
+	// Part J：主动条目之后可能附加被动条目（压差驱动的背景流），
+	// 首条必是本逆流请求。
 	tr := reps[0].Transfers[0]
 	if !tr.Reverse || tr.Rejected {
 		t.Fatal("丹田发起的逆流不应被拒绝")
