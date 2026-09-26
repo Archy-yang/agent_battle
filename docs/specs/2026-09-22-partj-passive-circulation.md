@@ -1,6 +1,9 @@
 # Part J：Sequence 物理地变成 Loop —— 被动环流设计 v0.1
 
-> 状态：待评审。背景：外部代码审查（2026-09-22）确认筑基死锁——传输全由
+> 状态：已被吸收。被动输运/途经纳气/松手测量三项并入定稿
+> specs/2026-09-26-engine-drive-foundation-v1.md 阶段一，实现以定稿为准。
+>
+> 背景：外部代码审查（2026-09-22）确认筑基死锁——传输全由
 > Ops.Requests 驱动、ControlActive=Requests>0、AutonomousLoop 筑基后才注册，
 > 故松手必无流、SelfSustain 恒 0、真实流程无法自然筑基。本文给出引擎级修复设计。
 >
