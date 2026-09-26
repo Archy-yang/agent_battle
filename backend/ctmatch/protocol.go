@@ -580,6 +580,14 @@ func (st *protocolState) runtimeOps(s *CultSession) (cult.Ops, *Event) {
 			ops.Intensity[step.PointIdx] = it
 
 		case StepGuide:
+			// §21.3（主会话裁决 2026-09-26）：筑基后（AutonomousLoop 模式）
+			// 协议不再是逐 Tick 驱动身体的脚本——已内化的段移交身体，由
+			// 反馈耦合的自主命令续推；协议保留的角色是监控/守卫/异常升级。
+			// 未移交的段照常发请求——若协议仍对已内化转移发主动请求，
+			// 那段流就是手动流、计入控制，自持测量不受污染。
+			if st.loopMode && feedHandoverTaken(s, step) {
+				break
+			}
 			flow := step.Amount
 			if step.Level != LevelUnset {
 				flow = FlowForLevel(step.Level, g, step.From, step.To, step.Channel)
@@ -616,6 +624,51 @@ func (st *protocolState) runtimeOps(s *CultSession) (cult.Ops, *Event) {
 		}
 	}
 	return ops, nil
+}
+
+// feedHandoverStrength 是筑基后（AutonomousLoop 模式）Runtime 向身体移交
+// 已内化段的耦合强度门槛（评审稿 §21.3；主会话裁决 2026-09-26）。
+// 取 0.8 的理由 [v0.1 参数，调参起点]：耦合按强度比例复现教学出流
+// （命令 = 强度 × 来流 × 习得响应），强度 0.8 时移交后环流量保有约八成
+// 教学水平、来流信号仍落在教学容差带（FeedTolerance=0.5）内——更低的
+// 门槛会让移交后的流贴着容差带缘运行，稍有波动即「认不出」而断流。
+// 待评审稿 §27 Monte Carlo 标定。
+const feedHandoverStrength = 800
+
+// feedHandoverTaken 判定一份引导步骤的出边段是否已被身体接管（§21.3
+// 移交门，仅 loopMode 下调用）：step.From 穴位上存在出边为 step.Channel
+// 的有效耦合，且步骤请求的每个元素的耦合强度都达到移交门槛。混合元素
+// 步骤要求全元素达标——部分内化的段仍由意识驱动补足（§21.2）。
+func feedHandoverTaken(s *CultSession, step Step) bool {
+	g := &s.World.Character.BodyGraph
+	if step.From < 0 || step.From >= len(g.Acupoints) ||
+		step.Channel < 0 || step.Channel >= len(g.Channels) {
+		return false
+	}
+	if g.Channels[step.Channel].From != step.From {
+		return false // 出边已不从未穴流出（图谱被改造）：移交门不认
+	}
+	var best [cult.ElementCount]int64
+	for k := range g.Acupoints[step.From].Couplings {
+		cp := &g.Acupoints[step.From].Couplings[k]
+		if cp.OutChannel != step.Channel {
+			continue
+		}
+		for e := 0; e < cult.ElementCount; e++ {
+			if cp.Strength[e] > best[e] {
+				best[e] = cp.Strength[e]
+			}
+		}
+	}
+	if step.Element >= 0 {
+		return best[step.Element] >= feedHandoverStrength
+	}
+	for e := 0; e < cult.ElementCount; e++ {
+		if best[e] < feedHandoverStrength {
+			return false
+		}
+	}
+	return true
 }
 
 // checkBoundary 校验请求流量是否落在已验证区间内。

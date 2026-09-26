@@ -541,13 +541,16 @@ func TestTopoClosure(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // foundationGoodSample 构造满足 stage_3 §38（从而也满足 §37）的样本：
-// 拓扑闭合、归返充足、五行与能量平稳、无人推动而气流自存、稳定性充足。
+// 拓扑闭合、回流追平初发流（§17.2 FlowClosure=1）、五行与能量平稳、
+// 无人推动而气流自存、稳定性充足。
 func foundationGoodSample(tick int64) FoundationSample {
 	return FoundationSample{
 		Tick:          tick,
 		TopoClosure:   One,
 		Delivered:     1000,
 		ActualFlow:    1000,
+		CycleOut:      1000,
+		CycleBack:     1000,
 		TotalQi:       20000,
 		MeanPressure:  300,
 		MinStability:  900,

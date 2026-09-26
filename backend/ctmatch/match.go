@@ -344,10 +344,13 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 	// SPIKE 结论二：三态事实凭据）。
 
 	// 7. Loop 五量与筑基判定（stage_3 §31-39；数值只进调试视图）。
-	// ControlActive 按 Part J J4 口径：本 tick 存在玩家意图请求，或
-	// Protocol Runtime 在执行（Runtime 跑协议仍是控制，不做假自持）；
-	// Part J 被动环流不计入控制。
-	s.observeFoundation(res, runtimePath || opsHasControl(s.World.Ops))
+	// ControlActive 按主会话裁决（2026-09-26）：本 Tick 台账存在手动驱动
+	// 做功（ManualWork > 0——玩家意图与协议的主动操作都表现为手动驱动）
+	// 或存在主动请求（吸收强度/经脉请求，含被引擎拒绝者——发了请求即控制）。
+	// 自主驱动与被动流不经 Ops、永不计入控制；Protocol Runtime 是否在执行
+	// 不再单独计入——它是否构成控制由它实际发出的手动驱动与请求判读。
+	s.observeFoundation(res, opsHasControl(s.World.Ops) ||
+		(res.Report != nil && res.Report.Work.ManualWork > 0))
 
 	if res.Report != nil {
 		s.prevReport = res.Report
@@ -697,9 +700,10 @@ func hasActionIntent(intents []Intent) bool {
 	return false
 }
 
-// opsHasControl 报告一份 Ops 是否含主动推动（吸收强度或经脉请求）——
-// 筑基判定的 SelfSustain 观察窗据此区分"推动"与"松手"（stage_3 §34、
-// Part J J4/J5）。Part J 被动环流不经过 Ops，天然不计入控制。
+// opsHasControl 报告一份 Ops 是否含主动请求（吸收强度或经脉请求）——
+// 控制活跃口径的「存在主动请求」半边（主会话裁决 2026-09-26；另一半是
+// 台账 ManualWork > 0）。被引擎拒绝的请求也算控制（发了请求即控制）。
+// 自主驱动与被动环流不经过 Ops，天然不计入控制。
 func opsHasControl(ops cult.Ops) bool {
 	for _, v := range ops.Intensity {
 		if v > 0 {

@@ -215,7 +215,8 @@ func TestPartJRuntimeIsControlActive(t *testing.T) {
 	}
 
 	// Runtime 行环期间：每 Tick 都有流量（主动+被动叠加），但 SelfSustain
-	// 必须恒 0——Runtime 在执行即 ControlActive，不存在"松手观测窗"。
+	// 必须恒 0——Runtime 每 Tick 发主动请求（台账 ManualWork > 0），按
+	// 控制活跃口径（主会话裁决 2026-09-26）即为控制，不存在"松手观测窗"。
 	var maxFlow int64
 	for i := 0; i < cycles; i++ {
 		res := Tick(s, nil)
