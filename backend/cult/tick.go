@@ -95,6 +95,25 @@ func NewWorld(char Character, env Environment) *World {
 			char.BodyGraph.Channels[c].ChannelAdaptation = MicroOne
 		}
 	}
+	// 局部反馈耦合预建（0.7.0，评审稿 §7.3/§24.3；feedback.go）：每穴按
+	// 「进边 × 出边」组合预建耦合（进边下标外层、出边下标内层升序——
+	// 确定性顺序），自转移（进边 == 出边）不成耦合。耦合初值全零：未受
+	// 教学的身体不会自响应（§26.7）。
+	for i := range char.BodyGraph.Acupoints {
+		var cps []FeedbackCoupling
+		for ic := range char.BodyGraph.Channels {
+			if char.BodyGraph.Channels[ic].To != i {
+				continue
+			}
+			for oc := range char.BodyGraph.Channels {
+				if char.BodyGraph.Channels[oc].From != i || oc == ic {
+					continue
+				}
+				cps = append(cps, newFeedbackCoupling(ic, oc))
+			}
+		}
+		char.BodyGraph.Acupoints[i].Couplings = cps
+	}
 	return &World{Character: char, Env: env, NoiseSeed: 1, RuleVersion: RuleVersion}
 }
 
@@ -136,6 +155,14 @@ type TransferReport struct {
 	// 守恒、筑基采样、回执汇总都直接读 Actual）；Passive 字段单独归因，
 	// 供 SelfSustain 测量区分"推动之流"与"自走之流"。
 	Passive [ElementCount]int64
+
+	// Autonomous[e] 是本条经脉本 Tick 自主驱动的实际流量（0.7.0，评审稿
+	// §9.3/§13：FeedbackCoupling → AutonomousCommand → 统一驱动求解）。
+	// 自主流走独立报告条目（该出边该元素本 Tick 无主动请求才产生——
+	// 受控流不伪装自主，T-J3 语义），与主动/被动流共用 §9 损耗管线；
+	// Actual[e] == Autonomous[e]（统一"实际流"口径），Autonomous 字段
+	// 单独归因（台账 AutonomousWork、内化度的来源）。
+	Autonomous [ElementCount]int64
 }
 
 // AcupointReport 是一个穴位本 Tick 结束时的诊断快照。
@@ -348,10 +375,11 @@ func Advance(w *World) *TickReport {
 	}
 
 	// §8-9 灵气传输与损耗（含修订包 A2 逆流做功、Part J 被动输运与途经纳气、
-	// 0.5.0 统一驱动求解）。
+	// 0.5.0 统一驱动求解、0.7.0 自主命令与教学样本）。
 	var entrainedArr [][ElementCount]int64
 	var ds *driveSettle
-	rep.Transfers, entrainedArr, ds = runTransfers(w, refines, postRatio)
+	var ts *teachSamples
+	rep.Transfers, entrainedArr, ds, ts = runTransfers(w, refines, postRatio)
 	for _, tr := range rep.Transfers {
 		for e := 0; e < ElementCount; e++ {
 			cons.TransferLoss += tr.Loss[e]
@@ -510,6 +538,11 @@ func Advance(w *World) *TickReport {
 		r.Activity = a.Activity
 	}
 
+	// 局部反馈耦合学习（0.7.0，评审稿 §12/§23 步骤 15）：以本 Tick 真实
+	// 输入/输出样本更新耦合——教师门 × 输入信号 × 安全门 × 误差（§12.8）。
+	// 放在状态结算后：安全门读取本 Tick 的稳定性/相容/损伤/应变。
+	updateFeedbackCouplings(w, rep, ts)
+
 	// §24 经脉 Adaptation。
 	for c := range w.Character.BodyGraph.Channels {
 		ch := &w.Character.BodyGraph.Channels[c]
@@ -536,16 +569,20 @@ func Advance(w *World) *TickReport {
 	}
 
 	// 做功台账（0.5.0，定稿阶段二范围 4；评审稿 §15/§24.6）。做功三分归因
-	// 按传输条目逐元素判读：被动条目（Passive>0）归 PassiveWork，其余实际
-	// 流量归 ManualWork（主动/被动条目不混——被动条目只由被动输运循环产生，
-	// 主动条目不设 Passive 字段）。自主驱动本阶段恒零（阶段三经统一驱动
-	// 求解接入后入账）。
+	// 按传输条目逐元素判读：被动条目（Passive>0）归 PassiveWork，自主条目
+	// （Autonomous>0，0.7.0 起经统一驱动求解接入）归 AutonomousWork，其余
+	// 实际流量归 ManualWork（三类条目不混——被动条目只由被动输运循环产生，
+	// 自主条目只由耦合命令循环产生，主动条目两者皆无）。内化度
+	// （DeriveInternalization）随自主做功入账自然生效。
 	led := &rep.Work
 	for _, tr := range rep.Transfers {
 		for e := 0; e < ElementCount; e++ {
-			if tr.Passive[e] > 0 {
+			switch {
+			case tr.Passive[e] > 0:
 				led.PassiveWork += tr.Actual[e]
-			} else {
+			case tr.Autonomous[e] > 0:
+				led.AutonomousWork += tr.Actual[e]
+			default:
 				led.ManualWork += tr.Actual[e]
 			}
 		}
@@ -669,13 +706,32 @@ type driveSettle struct {
 //	            × KEntrain × (1 - LoadRatio)
 //
 // 返回传输报告、逐穴途经纳气量与驱动侧派生量（driveSettle）。
-func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferReport, [][ElementCount]int64, *driveSettle) {
+func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferReport, [][ElementCount]int64, *driveSettle, *teachSamples) {
 	g := &w.Character.BodyGraph
-	reports := make([]TransferReport, 0, len(w.Ops.Requests)+len(g.Channels))
+	reports := make([]TransferReport, 0, len(w.Ops.Requests)+2*len(g.Channels))
 	entrained := make([][ElementCount]int64, len(g.Acupoints))
 	chanFlow := make([][ElementCount]int64, len(g.Channels))   // 本 Tick 逐经脉逐元素实际流量（→ FlowPrev）
-	activeFlow := make([][ElementCount]int64, len(g.Channels)) // 本 Tick 逐经脉逐元素主动流量（被动让行判据）
+	activeFlow := make([][ElementCount]int64, len(g.Channels)) // 本 Tick 逐经脉逐元素主动/自主流量（被动让行判据）
 	controlErrMax := fpMul(ControlErrorBase, One-w.Character.Control)
+	// 教学样本（0.7.0，feedback.go）：逐经脉天然向送达（进边来流）与
+	// 手动驱动实流（教学出流），供学习遍消费。
+	ts := &teachSamples{
+		chanDelivered: make([][ElementCount]int64, len(g.Channels)),
+		manualOut:     make([][ElementCount]int64, len(g.Channels)),
+	}
+	// 手动请求占道（0.7.0，T-J3 语义）：出边某元素被主动请求占用时，
+	// 该元素本 Tick 不产生自主命令——协议执行期的受控流不得伪装成自主。
+	manualReqOn := make([][ElementCount]bool, len(g.Channels))
+	for _, req := range w.Ops.Requests {
+		if req.Channel < 0 || req.Channel >= len(g.Channels) {
+			continue
+		}
+		for e := 0; e < ElementCount; e++ {
+			if req.Amount[e] > 0 {
+				manualReqOn[req.Channel][e] = true
+			}
+		}
+	}
 	ds := &driveSettle{
 		strain: make([]int64, len(g.Acupoints)),
 		ratio:  make([][ElementCount]int64, len(g.Acupoints)),
@@ -703,28 +759,31 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 	// = 发起者（逆流请求的 To 端）是核点。
 	core := CorePointOf(g)
 
-	for _, req := range w.Ops.Requests {
-		if req.Channel < 0 || req.Channel >= len(g.Channels) {
-			continue
-		}
-		ch := &g.Channels[req.Channel]
+	// chanCtx 汇集一条经脉一个方向的统一驱动求解静态项（评审稿 §9.4
+	// ResolveDrive 的校验输入：传导/容量/驱动容量/效率/逆流做功单价）。
+	// 手动请求与自主命令共用同一 buildCtx/resolve——Manual 与 Autonomous
+	// 不得走两套「魔法通道」（评审稿 §9.4）。
+	type chanCtx struct {
+		ci             int
+		srcIdx, dstIdx int
+		reverse        bool
+		cond, eff, cap [ElementCount]int64
+		effDriveCap    int64
+		effi           int64
+		workUnit       int64 // 逆流专用：A2 做功单价
+	}
+	buildCtx := func(ci int, reverse bool) *chanCtx {
+		ch := &g.Channels[ci]
 		if ch.From < 0 || ch.From >= len(g.Acupoints) || ch.To < 0 || ch.To >= len(g.Acupoints) {
-			continue
+			return nil
 		}
-		tr := TransferReport{Channel: req.Channel, From: ch.From, To: ch.To, Reverse: req.Reverse}
-
-		// 端点选取：顺流 From→To；逆流 To→From（A2）。
 		src, dst := &g.Acupoints[ch.From], &g.Acupoints[ch.To]
-		srcIdx, dstIdx := ch.From, ch.To
-		if req.Reverse {
-			if ch.To != core {
-				// 发起者不是核点——逆经脉而行，唯丹田能推得动。
-				tr.Rejected = true
-				reports = append(reports, tr)
-				continue
-			}
+		if reverse {
 			src, dst = &g.Acupoints[ch.To], &g.Acupoints[ch.From]
-			srcIdx, dstIdx = ch.To, ch.From
+		}
+		ctx := &chanCtx{ci: ci, srcIdx: ch.From, dstIdx: ch.To, reverse: reverse}
+		if reverse {
+			ctx.srcIdx, ctx.dstIdx = ch.To, ch.From
 		}
 
 		chanAdapt := ch.ChannelAdaptation / 1000
@@ -737,119 +796,239 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 		if d := dst.effectiveThroughput(); d < chanCap {
 			chanCap = d
 		}
-
-		// D4-5：控制误差幅值 × (1 - Refine_src×KControl)。src 已按流向取对
-		// （顺流源 = From 端，逆流源 = To 端）。
-		controlErrEff := fpMul(controlErrMax, One-fpMul(refines[srcIdx], KControl))
-
-		// A2：逆流目的地的即时负载比（推入越满，做功越贵）。
-		// workUnit = BaseWork × (1 + LoadRatio_dst × KBack)；(1 - Conductance) 逐元素乘。
-		workUnit := int64(0)
-		if req.Reverse {
-			lrDst := loadRatio(dst, dst.load())
-			workUnit = fpMul(BaseWork, One+fpMul(lrDst, KBack))
+		for e := 0; e < ElementCount; e++ {
+			aff := fpSqrt(fpMul(src.effectiveAffinity(e), dst.effectiveAffinity(e)))
+			cond := fpMul(fpMul(baseCond, aff), condFactor)
+			ctx.cond[e] = cond
+			ctx.eff[e] = fpClamp(cond, 0, One)
+			ctx.cap[e] = fpMul(chanCap, cond) // §8.1 ChannelCapacity
 		}
 
 		// 驱动容量与驱动效率（0.5.0，评审稿 §9.4 校验项）：实际驱动不得
 		// 超过驱动端穴位的有效驱动容量——存储容量（Capacity）不再替代
 		// 驱动维度（§26.3；外部代码审查第 6 条）。逆流的驱动端是发起核点
 		// （src 已按流向取对）。
-		effDriveCap := src.effectiveDriveCapacity()
-		effi := src.driveEfficiency()
+		ctx.effDriveCap = src.effectiveDriveCapacity()
+		ctx.effi = src.driveEfficiency()
+		if reverse {
+			// A2：逆流目的地的即时负载比（推入越满，做功越贵）。
+			// workUnit = BaseWork × (1 + LoadRatio_dst × KBack)。
+			lrDst := loadRatio(dst, dst.load())
+			ctx.workUnit = fpMul(BaseWork, One+fpMul(lrDst, KBack))
+		}
+		return ctx
+	}
+
+	// resolve 统一驱动求解的逐元素执行（评审稿 §9.4/§10 定点管线）：
+	// 请求驱动 → 限幅（管线容量 / 源穴存量 / 有效驱动容量，§26.3）→
+	// 做功 → 能量收敛（§26.4：无可用能量则实际驱动衰减为零）→ 实际驱动
+	// + 废热 + 应变。返回实际驱动量（0 = 未成驱动）。0.7.0 起手动与自主
+	// 共用本闭包。
+	resolve := func(ctx *chanCtx, e int, requested int64, tr *TransferReport) int64 {
+		src := &g.Acupoints[ctx.srcIdx]
+		dst := &g.Acupoints[ctx.dstIdx]
+		actual := requested
+		if src.Qi[e] < actual {
+			actual = src.Qi[e]
+		}
+		if ctx.cap[e] < actual {
+			actual = ctx.cap[e]
+		}
+		if ctx.effDriveCap < actual {
+			actual = ctx.effDriveCap // 驱动容量限幅（§26.3）
+		}
+		// 做功公式：顺流 = §10.1 二次律；逆势 = A2（结构不变，裁决①）。
+		// 逆势不做功效率折算：A2 公式结构原样保留。
+		workOf := func(a int64) int64 {
+			if ctx.reverse {
+				return fpMul(a, fpMul(ctx.workUnit, One-ctx.eff[e]))
+			}
+			return driveWorkOf(a, ctx.effi)
+		}
+		actual = driveEnergyFit(actual, src.Qi[e], workOf) // 无可用能量则衰减为零（§26.4）
+		if actual <= 0 {
+			return 0
+		}
+		work := workOf(actual)
+
+		// §9 传输损耗。
+		delivered := fpMul(actual, ctx.eff[e])
+		loss := actual - delivered
+
+		// 做功从真实能源扣除（评审稿 §10.1：DriveWork 必须从可用能源扣）
+		// ——fit 已保证 actual + work ≤ src.Qi[e]，扣后不透支。
+		src.Qi[e] -= actual
+		src.Qi[e] -= work
+		dst.Qi[e] += delivered
+		dst.heatAccum += fpMul(loss, One-DiffuseShare) // 传输损耗 50% → 热
+
+		// Part J J3：接收端途经纳气（主动/自主流同样卷入环境气）。
+		entrainInto(ctx.dstIdx, dst, e, actual)
+
+		// 废热去向（定稿阶段二范围 2：做功去向=热）：
+		//   顺流——热化于驱动穴位（heatAccum → ThermalLoad / §17 TransformHeat）；
+		//   逆势——A2 结构不变：×KHeat 热化于逆流目的地（reverseHeatAccum）。
+		if ctx.reverse {
+			dst.reverseHeatAccum += fpMul(work, KHeat)
+			tr.WorkCost[e] = work
+		} else {
+			src.heatAccum += work
+			tr.DriveWork[e] = work
+		}
+
+		// 驱动应变与驱动比（评审稿 §10.2）：过驱 + 加力突变项逐穴位按
+		// 最受力一路归并；驱动比滚动进 ds.ratio（收尾落 prevDriveRatio）。
+		if ctx.effDriveCap > 0 {
+			ratio := fpDiv(actual, ctx.effDriveCap)
+			ds.ratio[ctx.srcIdx][e] = ratio
+			if s := driveStrainOf(ratio, src.prevDriveRatio[e]); s > ds.strain[ctx.srcIdx] {
+				ds.strain[ctx.srcIdx] = s
+			}
+		}
+		ds.work[ctx.srcIdx] += work
+
+		src.elemFlowAccum[e] += actual
+		dst.elemFlowAccum[e] += delivered
+		src.flowAccum += actual
+		dst.flowAccum += delivered
+		g.Channels[ctx.ci].flowAccum += actual
+		chanFlow[ctx.ci][e] += actual
+		if !ctx.reverse {
+			// 天然向送达（To 端实收）——耦合学习的进边来流样本（0.7.0）。
+			ts.chanDelivered[ctx.ci][e] += delivered
+		}
+
+		tr.Actual[e] = actual
+		tr.Delivered[e] = delivered
+		tr.Loss[e] = loss
+		return actual
+	}
+
+	for _, req := range w.Ops.Requests {
+		if req.Channel < 0 || req.Channel >= len(g.Channels) {
+			continue
+		}
+		ch := &g.Channels[req.Channel]
+		if ch.From < 0 || ch.From >= len(g.Acupoints) || ch.To < 0 || ch.To >= len(g.Acupoints) {
+			continue
+		}
+		tr := TransferReport{Channel: req.Channel, From: ch.From, To: ch.To, Reverse: req.Reverse}
+
+		// 端点选取：顺流 From→To；逆流 To→From（A2）。发起者不是核点
+		// ——逆经脉而行，唯驱动容量显著主导者推得动：拒绝。
+		if req.Reverse && ch.To != core {
+			tr.Rejected = true
+			reports = append(reports, tr)
+			continue
+		}
+		ctx := buildCtx(req.Channel, req.Reverse)
+
+		// D4-5：控制误差幅值 × (1 - Refine_src×KControl)。src 已按流向取对
+		//（顺流源 = From 端，逆流源 = To 端）。控制误差是意识控制的属性
+		//——自主命令不经 ε（见下方自主命令循环）。
+		controlErrEff := fpMul(controlErrMax, One-fpMul(refines[ctx.srcIdx], KControl))
 
 		for e := 0; e < ElementCount; e++ {
 			tr.Requested[e] = req.Amount[e]
 			if req.Amount[e] <= 0 {
 				continue
 			}
-			// §8 Conductance。
-			aff := fpSqrt(fpMul(src.effectiveAffinity(e), dst.effectiveAffinity(e)))
-			cond := fpMul(fpMul(baseCond, aff), condFactor)
-			tr.Conductance[e] = cond
-
-			// §8.1 ChannelCapacity。
-			cap := fpMul(chanCap, cond)
-			tr.Capacity[e] = cap
-			eff := fpClamp(cond, 0, One)
+			tr.Conductance[e] = ctx.cond[e]
+			tr.Capacity[e] = ctx.cap[e]
 
 			// §8.2 控制误差 ε = deterministic_noise(seed, tick, channel, e)。
 			eps := noiseSigned(w.NoiseSeed, w.Tick, req.Channel, e) * controlErrEff / 1000
 			requested := fpMul(req.Amount[e], One+eps)
 
-			// 统一驱动求解（0.5.0，评审稿 §9.4/§10）：限幅 → 做功 → 能量收敛。
-			actual := requested
-			if src.Qi[e] < actual {
-				actual = src.Qi[e]
-			}
-			if cap < actual {
-				actual = cap
-			}
-			if effDriveCap < actual {
-				actual = effDriveCap // 驱动容量限幅（§26.3）
-			}
-			// 做功公式：顺流 = §10.1 二次律；逆势 = A2（结构不变，裁决①）。
-			// 逆势不做功效率折算：A2 公式结构原样保留。
-			workOf := func(a int64) int64 {
-				if req.Reverse {
-					return fpMul(a, fpMul(workUnit, One-eff))
-				}
-				return driveWorkOf(a, effi)
-			}
-			actual = driveEnergyFit(actual, src.Qi[e], workOf) // 无可用能量则衰减为零（§26.4）
-			if actual <= 0 {
-				continue
-			}
-			work := workOf(actual)
-
-			// §9 传输损耗。
-			delivered := fpMul(actual, eff)
-			loss := actual - delivered
-
-			// 做功从真实能源扣除（评审稿 §10.1：DriveWork 必须从可用能源扣）
-			// ——fit 已保证 actual + work ≤ src.Qi[e]，扣后不透支。
-			src.Qi[e] -= actual
-			src.Qi[e] -= work
-			dst.Qi[e] += delivered
-			dst.heatAccum += fpMul(loss, One-DiffuseShare) // 传输损耗 50% → 热
-
-			// Part J J3：接收端途经纳气（主动流同样卷入环境气）。
-			entrainInto(dstIdx, dst, e, actual)
-
-			// 废热去向（定稿阶段二范围 2：做功去向=热）：
-			//   顺流——热化于驱动穴位（heatAccum → ThermalLoad / §17 TransformHeat）；
-			//   逆势——A2 结构不变：×KHeat 热化于逆流目的地（reverseHeatAccum）。
-			if req.Reverse {
-				dst.reverseHeatAccum += fpMul(work, KHeat)
-				tr.WorkCost[e] = work
-			} else {
-				src.heatAccum += work
-				tr.DriveWork[e] = work
-			}
-
-			// 驱动应变与驱动比（评审稿 §10.2）：过驱 + 加力突变项逐穴位按
-			// 最受力一路归并；驱动比滚动进 ds.ratio（收尾落 prevDriveRatio）。
-			if effDriveCap > 0 {
-				ratio := fpDiv(actual, effDriveCap)
-				ds.ratio[srcIdx][e] = ratio
-				if s := driveStrainOf(ratio, src.prevDriveRatio[e]); s > ds.strain[srcIdx] {
-					ds.strain[srcIdx] = s
+			if actual := resolve(ctx, e, requested, &tr); actual > 0 {
+				activeFlow[req.Channel][e] += actual // 主动占道（R1：被动让行）
+				if !req.Reverse {
+					// 教学样本（0.7.0，评审稿 §12.3）：手动驱动的实流是
+					// 「受控教学输出」；逆流是调度不是续推示范，不计入。
+					ts.manualOut[req.Channel][e] += actual
 				}
 			}
-			ds.work[srcIdx] += work
-
-			src.elemFlowAccum[e] += actual
-			dst.elemFlowAccum[e] += delivered
-			src.flowAccum += actual
-			dst.flowAccum += delivered
-			ch.flowAccum += actual
-			chanFlow[req.Channel][e] += actual
-			activeFlow[req.Channel][e] += actual
-
-			tr.Actual[e] = actual
-			tr.Delivered[e] = delivered
-			tr.Loss[e] = loss
 		}
 		reports = append(reports, tr)
+	}
+
+	// 自主命令（0.7.0，评审稿 §7.2/§13；定稿阶段三范围 3）：耦合产生的
+	// 是响应命令，必须经统一驱动求解方成真实自主驱动——耦合不是隐藏
+	// 能源（§28.2）。触发条件（§26.11 局部内化）：
+	//   - 出边该元素本 Tick 无主动请求占道——协议执行期的受控流不得
+	//     伪装成自主（T-J3 语义）；
+	//   - 进边有来流（LatencyTicks=1 取上一 Tick 的进边总来流——被动
+	//     送达与主动/自主送达同计入信号，「来流之后」天然一拍延迟；
+	//     d > 1 取更早历史档）——无来流不得凭空启动（§26.7/§26.11）；
+	//   - 来流信号在该耦合的教学档位容差内（评审稿 §24.3 Tolerance）；
+	//   - 强度 > 0——未内化的转移永不自响应。
+	// 命令量 = 强度 × 观测来流 × 习得响应（评审稿 §13.1 最小形式的定点
+	// 化：§13.1 的归一化 InputSignal 在绝对流量空间取观测来流，使命令
+	// 复现「来流 × 学得增益」；归一化信号用于学习门控与容差判别）。
+	// 遍历序 = 穴位下标序 × 耦合序（NewWorld 预建序，确定性）。
+	for i := range g.Acupoints {
+		a := &g.Acupoints[i]
+		if len(a.Couplings) == 0 {
+			continue
+		}
+		effTP := a.effectiveThroughput()
+		if effTP < ShockEpsilon {
+			effTP = ShockEpsilon
+		}
+		for k := range a.Couplings {
+			cp := &a.Couplings[k]
+			if !cp.validFor(g, i) {
+				continue
+			}
+			ctx := buildCtx(cp.OutChannel, false)
+			if ctx == nil {
+				continue
+			}
+			var tr TransferReport
+			tr.Channel, tr.From, tr.To = cp.OutChannel, ctx.srcIdx, ctx.dstIdx
+			fired := false
+			for e := 0; e < ElementCount; e++ {
+				if manualReqOn[cp.OutChannel][e] {
+					continue // 受控流不伪装自主（T-J3 语义）
+				}
+				if cp.Strength[e] <= 0 {
+					continue // 未内化：无自主响应（§26.7）
+				}
+				// 命令输入 = 进边来流历史（LatencyTicks=1：上一 Tick 总
+				// 来流；被动送达发生在自主求解之后，当 Tick live 量对
+				// 本 Tick 命令不可见——一拍延迟是「来流之后续上」的
+				// 自然语义）。
+				hi := cp.LatencyTicks - 1
+				if hi < 0 {
+					hi = 0
+				}
+				if hi >= MaxFeedLatency {
+					hi = MaxFeedLatency - 1
+				}
+				inflow := cp.inflowHist[e][hi]
+				if inflow <= 0 {
+					continue // 无来流不得凭空启动（§26.11）
+				}
+				sig := fpClamp(fpDiv(inflow, effTP), 0, One)
+				if d := sig - cp.LastInputSignal[e]; abs64(d) > cp.Tolerance {
+					continue // 来流模式超出教学档位容差：身体「认不出」
+				}
+				cmd := fpMul(cp.Strength[e], fpMul(inflow, cp.LearnedResponse[e]))
+				if cmd <= 0 {
+					continue
+				}
+				tr.Conductance[e] = ctx.cond[e]
+				tr.Capacity[e] = ctx.cap[e]
+				if actual := resolve(ctx, e, cmd, &tr); actual > 0 {
+					tr.Autonomous[e] = actual
+					activeFlow[cp.OutChannel][e] += actual // 占道：被动让行（R1）
+					fired = true
+				}
+			}
+			if fired {
+				reports = append(reports, tr)
+			}
+		}
 	}
 
 	// Part J J2：被动输运——压差驱动的背景环流（与主动请求叠加，见上注释）。
@@ -953,7 +1132,8 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 			src.Qi[e] -= pf
 			dst.Qi[e] += delivered
 			dst.heatAccum += fpMul(loss, One-DiffuseShare)
-			nodeIn[ch.To][e] += delivered // live 入流：本 Tick 送达可即段接力
+			nodeIn[ch.To][e] += delivered       // live 入流：本 Tick 送达可即段接力
+			ts.chanDelivered[c][e] += delivered // 耦合学习的进边来流样本（被动送达同计，0.7.0）
 
 			// Part J J3：接收端途经纳气（被动流同样卷入环境气）。
 			entrainInto(ch.To, dst, e, pf)
@@ -981,7 +1161,7 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 	for c := range g.Channels {
 		g.Channels[c].FlowPrev = chanFlow[c]
 	}
-	return reports, entrained, ds
+	return reports, entrained, ds, ts
 }
 
 // runSheng 实现 §10（快照语义：所有转化量按本阶段开始时的 Qi 计算）。

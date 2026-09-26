@@ -185,7 +185,7 @@ func TestBackpressureNearFullNoIntake(t *testing.T) {
 	for i := range w.Character.BodyGraph.Acupoints {
 		a := &w.Character.BodyGraph.Acupoints[i]
 		a.Qi = [ElementCount]int64{}
-		a.Qi[Wood] = 3600 // 体内势 = 环境势
+		a.Qi[Wood] = 3600  // 体内势 = 环境势
 		a.Retention = 1000 // 关闭泄出，隔离变量
 	}
 	it := make([]int64, len(w.Character.BodyGraph.Acupoints))

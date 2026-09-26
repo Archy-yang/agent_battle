@@ -250,6 +250,15 @@ func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64, t
 		sense.Feelings = append(sense.Feelings, painKindWords[tok.Kind-1][tok.Pain.level])
 	}
 
+	// 局部反馈耦合感知（0.7.0，评审稿 §22 感知映射）：已内化的「来流 →
+	// 续推」以定性词显形——零数字零机器词，且只在耦合已成形、该转移确有
+	// 来流时出现（感知隔离律：未被实验揭示的结构不预 render）。
+	if w.Last != nil && idx < len(w.Last.Points) {
+		if word := feedSenseWord(a); word != "" {
+			sense.Feelings = append(sense.Feelings, word)
+		}
+	}
+
 	// 炼化三档感知词（修订包 Part F）：只在有存气时渲染（空穴无"驳杂"可言）。
 	if _, load := dominantElement(a.Qi); load >= natureMinLoad {
 		sense.Feelings = append(sense.Feelings, refineWords[tok.Refine])

@@ -102,6 +102,14 @@ type Acupoint struct {
 	// （§48 直接以吸收后 LoadRatio 计算"下一 Tick BackPressure"）。
 	lastLoadRatioMilli int64
 
+	// Couplings 是该穴位的局部反馈耦合（0.7.0，评审稿 §7.3/§24.3；
+	// feedback.go）：挂在「进边 → 出边」局部转移上的习得响应映射。耦合
+	// 是控制关系不是能量来源（评审稿 §7.2）——只产生响应命令，命令经
+	// 统一驱动求解方成真实自主驱动。NewWorld 按当前图预建（进边 × 出边，
+	// 下标序，确定性）；图谱被上层改造后失效耦合按端点校验静默休眠。
+	// 学习状态随 World 状态演进，同 seed 重放逐位一致。
+	Couplings []FeedbackCoupling
+
 	// flowAccum / elemFlowAccum 是本 Tick 流量累计，Advance 内部使用。
 	flowAccum     int64
 	elemFlowAccum [ElementCount]int64

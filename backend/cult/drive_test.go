@@ -283,7 +283,9 @@ func TestCoreCriterionDriveCapacityDominance(t *testing.T) {
 }
 
 // TestWorkLedgerAttribution（定稿阶段二范围 4；评审稿 §15/§24.6）：台账三分
-// 归因 + 守恒项对账；自主做功本阶段恒零、内化度恒 0（派生量，不落存储）。
+// 归因 + 守恒项对账；自主做功为零（0.7.0 起自主经统一驱动求解入账，但本
+// 世界耦合未受教学、强度全零——未内化的转移无自主响应，§26.7）、内化度
+// 恒 0（派生量，不落存储）。
 func TestWorkLedgerAttribution(t *testing.T) {
 	w := partjRingWorld() // 三穴环：被动环流 + 主动引流混合
 	w.Ops = Ops{Requests: []FlowRequest{
@@ -296,7 +298,7 @@ func TestWorkLedgerAttribution(t *testing.T) {
 		t.Errorf("主动引流应记 ManualWork: %d", led.ManualWork)
 	}
 	if led.AutonomousWork != 0 {
-		t.Errorf("自主做功本阶段应恒零（阶段三才引入）: %d", led.AutonomousWork)
+		t.Errorf("未教学的耦合不应产生自主做功（§26.7）: %d", led.AutonomousWork)
 	}
 	if led.DriveWork != rep.Conservation.DriveWork {
 		t.Errorf("台账驱动做功应与守恒账同源: %d vs %d", led.DriveWork, rep.Conservation.DriveWork)
@@ -311,9 +313,9 @@ func TestWorkLedgerAttribution(t *testing.T) {
 	if led.Generated != 0 {
 		t.Errorf("本阶段无净生成: %d", led.Generated)
 	}
-	// 内化度 = 自主/(自主+主动)（评审稿 §15）：自主恒零 → 恒 0。
+	// 内化度 = 自主/(自主+主动)（评审稿 §15）：耦合未教学 → 自主做功零 → 恒 0。
 	if got := DeriveInternalization(led); got != 0 {
-		t.Errorf("内化度应恒 0（自主做功未引入）: %d", got)
+		t.Errorf("内化度应恒 0（耦合未教学，无自主响应）: %d", got)
 	}
 
 	// 无驱动 Tick：台账主动/驱动做功归零（金手指：无驱动路径不生新账）。

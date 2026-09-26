@@ -96,8 +96,8 @@ func runRingProtocol(t *testing.T, seed uint64, amount, cycles int64) *CultSessi
 
 func TestPartJDeadlockRegression(t *testing.T) {
 	const (
-		amount        = 2000
-		releaseTicks  = 40
+		amount       = 2000
+		releaseTicks = 40
 	)
 	rounds := []int64{300, 900, 1800}
 	means := make([]int64, len(rounds))

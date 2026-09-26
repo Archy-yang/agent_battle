@@ -10,9 +10,9 @@ package cult
 //
 //	请求驱动 → 校验驱动容量与可用能量 → 计算做功 → 产出废热与应变 → 实际驱动
 //
-// 本阶段接入该管线的驱动源只有手动驱动（玩家意图 / 协议运行，Ops.Requests）；
-// 自主驱动（评审稿 §9.3，FeedbackCoupling → AutonomousCommand）属阶段三，
-// 届时走同一管线（评审稿：Manual 与 Autonomous 不得走两套「魔法通道」）。
+// 本阶段接入该管线的驱动源：手动驱动（玩家意图 / 协议运行，Ops.Requests）
+// 与自主驱动（0.7.0 起，FeedbackCoupling → AutonomousCommand，评审稿
+// §9.3/§13——Manual 与 Autonomous 不得走两套「魔法通道」）。
 // 被动输运（Part J J2）是势差自然释放，无意识参与、不付做功（评审稿 §15：
 // PassiveWork 不是凭空能量，也不进内化度分母），不经本求解。
 //
@@ -34,8 +34,9 @@ type WorkLedger struct {
 	// PassiveWork 是被动输运的实际流量合计（势差自然释放的有效做功，
 	// 评审稿 §15：不代表身体控制，不进内化度分母）。
 	PassiveWork int64
-	// AutonomousWork 是自主驱动的实际驱动合计。本阶段恒零——自主驱动
-	// （FeedbackCoupling → AutonomousCommand → DriveResolver）属阶段三。
+	// AutonomousWork 是自主驱动的实际驱动合计（0.7.0 起接入：耦合产生
+	// AutonomousCommand，经统一驱动求解成真实自主驱动后按实际流量入账；
+	// 评审稿 §9.3/§13）。内化度 = 自主/(自主+手动) 随之自然生效。
 	AutonomousWork int64
 	// ManualWork 是手动驱动（玩家意图 / 协议运行）的实际驱动合计。
 	ManualWork int64
