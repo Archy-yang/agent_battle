@@ -25,7 +25,7 @@ L2 LLM Agent       探索未知：观察 → 假设 → 实验 → 归纳 → �
 - **洞府**：单页叙事流——身体图上穴位以"模糊波动"待你发现，感知流如对话般流淌，心念卡是你给分身的心意
 - **主环周天**：丹田 → 土府 → 中庭 → 阳枢 → 神庭 → 青关 → 归丹田。逆经脉而行唯有丹田能推动，费力且生热——火候
 - **气炼化**：气在循环中被身体筛选，"更少更精纯"是涌现现象而非属性
-- **筑基**：不是打卡一百次，而是闭合、平衡、自持、安稳、内化五项真实跨过相变条件
+- **筑基**：不是打卡一百次，而是闭合、平衡、自持、安稳、内化五项真实跨过相变条件。松手之后气仍自行运转——身体在稳定行环中学会了"来流之后自行续推"，引擎观察到这个稳定自主结构，才称之为筑基
 
 ## 运行
 
@@ -49,13 +49,15 @@ docs/cultivation_realm_and_sensory_model_v0.1.md   境界相变判据 + 感知�
 docs/stage_2.md                                    架构与闭环（玩家=本尊，LLM=分身，Engine=因果）
 docs/stage_3.md                                    数值公式与标度约定
 docs/specs/2026-09-21-stage3-revision-circulation-refinement.md  主环拓扑/逆流/炼化修订包（已标定）
+docs/specs/2026-09-26-engine-drive-foundation-v1.md  引擎驱动模型与筑基判定定稿（被动环流/驱动代价/边界交换/反馈耦合，三阶段已落地）
 docs/specs/2026-09-22-m2-plan.md                   M2 路线图
 docs/design/yiqi-dongfu-redesign.html              洞府交互设计稿（可直接打开玩）
-backend/cmd/cultmc/                                Monte Carlo 标定台（六命题）
+backend/cmd/cultmc/                                Monte Carlo 标定台（命题台 + 千级角色扫描）
+docs/reports/2026-09-27-drive-foundation-calibration.md  驱动模型标定报告（可重放）
 ```
 
 ## 状态
 
-`RuleVersion 0.3.0-mainloop` · M2 进行中（洞府前端已重构；功法编译端到端、探索僵局对策、角色差异性验证、金丹设计待做）。
+`RuleVersion 0.7.1-passive-recv-gate` · M2 进行中（洞府前端已重构；引擎驱动模型与筑基判定定稿三阶段已落地并标定；功法编译端到端、探索僵局对策、角色差异性验证、金丹设计待做）。
 
 战斗篇（回合制对战、场景包、Replay）保留于 `backend/engine|match|scenario` 与 docs 战斗文档，作为后续"修真世界的斗法"复用底座。
