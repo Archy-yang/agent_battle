@@ -1,8 +1,13 @@
 package main
 
-// cultmc —— Monte Carlo 标定台（修订包 docs/specs/2026-09-21-stage3-
-// revision-circulation-refinement.md Part G 六命题；基线 RuleVersion
-// 0.3.0-mainloop 主环拓扑，commit 78f68c6）。
+// cultmc —— Monte Carlo 标定台。
+//
+// 两块场景（2026-09-27 标定块，基线 RuleVersion 0.7.1-passive-recv-gate，
+// 判定口径 foundation-metrics-v2，见 scan.go 与定稿注记）：
+//   - main.go：P1-P9 修订包/Part J 命题台（原 0.3.0 基线的九命题，场景
+//     结构保持，在新物理下复测——场景升级点见各场景注释）；
+//   - scan.go：P10 千级角色扫描（§27）+ P11 移交门 + P12 SelfSustain
+//     分辨力 + P13 多环闭合 + P14 被动/手动量级。
 //
 // 纯引擎程序：无 LLM、无网络、无浮点（报告统计亦全定点整数）。
 // 每个 (seed, 场景) 独立建世界（ctmatch.SpikeWorld 同源拓扑，
@@ -1467,8 +1472,10 @@ func suggestions(in mcInput, p1, p2, p3, p4, p5, p6, p7, p8, p9 bool,
 // ---------------------------------------------------------------------------
 
 func main() {
-	nSeeds := flag.Int("seeds", 100, "seed 数（seed = 1..N）")
+	nSeeds := flag.Int("seeds", 100, "seed 数（P1-P9 命题台，seed = 1..N）")
 	ticks := flag.Int("ticks", 3000, "P1 场景的 Tick 预算")
+	nChars := flag.Int("chars", 1000, "SA 千级扫描角色数（seed = 1..N）")
+	nBodies := flag.Int("bodies", 24, "SB 路线对照身体数")
 	outPath := flag.String("out", "", "报告输出路径（默认 stdout）")
 	flag.Parse()
 
@@ -1512,7 +1519,66 @@ func main() {
 	}
 	in.elapsed = time.Since(start)
 
-	report := renderReport(in)
+	// ---------------- P10 千级扫描 + 专项（scan.go） ----------------
+	scanAcc := &accounting{}
+	sin := &scanInput{nChars: *nChars, acc: scanAcc}
+	sin.sa = make([]scanARes, *nChars)
+	for c := 1; c <= *nChars; c++ {
+		sin.sa[c-1] = runScanA(uint64(c), scanAcc)
+	}
+	sin.sb = make([][]scanBRes, *nBodies)
+	for bi := 0; bi < *nBodies; bi++ {
+		sin.sb[bi] = make([]scanBRes, len(sbRoutes))
+		for ri := range sbRoutes {
+			sin.sb[bi][ri] = runScanB(bi, ri, scanAcc)
+		}
+	}
+	// P11 移交门扫频。
+	sin.p11 = make([][]int64, len(p11Strengths))
+	sin.p11End = make([][]int64, len(p11Strengths))
+	sin.p11Brk = make([][]bool, len(p11Strengths))
+	sin.p11Osc = make([][]int64, len(p11Strengths))
+	for si, s := range p11Strengths {
+		sin.p11[si] = make([]int64, p11Seeds)
+		sin.p11End[si] = make([]int64, p11Seeds)
+		sin.p11Brk[si] = make([]bool, p11Seeds)
+		sin.p11Osc[si] = make([]int64, p11Seeds)
+		for k := 0; k < p11Seeds; k++ {
+			ret, endR, brk, osc := runP11(uint64(20000+k), s, scanAcc)
+			sin.p11[si][k], sin.p11End[si][k] = ret, endR
+			sin.p11Brk[si][k], sin.p11Osc[si][k] = brk, osc
+		}
+	}
+	// P12 SelfSustain 分辨力网格。
+	sin.p12 = map[[2]int][]int64{}
+	sin.p12Sat = map[[2]int][]int64{}
+	for oi := range p12Open {
+		for ei := range p12Env {
+			key := [2]int{oi, ei}
+			sin.p12[key] = []int64{}
+			sin.p12Sat[key] = []int64{}
+			for k := 0; k < p12SeedsPerCell; k++ {
+				seed := uint64(30000 + oi*100 + ei*10 + k)
+				sin.p12[key] = append(sin.p12[key], runP12Cell(p12Open[oi], p12Env[ei], seed, false, scanAcc))
+				sin.p12Sat[key] = append(sin.p12Sat[key], runP12Cell(p12Open[oi], p12Env[ei], seed, true, scanAcc))
+			}
+		}
+	}
+	// P13 多环/支路闭合。
+	sin.p13 = make([][]p13Res, len(p13Topologies))
+	for ti := range p13Topologies {
+		sin.p13[ti] = make([]p13Res, p13Seeds)
+		for k := 0; k < p13Seeds; k++ {
+			sin.p13[ti][k] = runP13(&p13Topologies[ti], uint64(40000+ti*100+k), scanAcc)
+		}
+	}
+	// P14 被动/手动量级。
+	sin.p14 = make([]p14Res, p14Seeds)
+	for k := 0; k < p14Seeds; k++ {
+		sin.p14[k] = runP14(uint64(50000+k), scanAcc)
+	}
+
+	report := renderReport(in) + renderScanReport(sin)
 	if *outPath == "" {
 		fmt.Print(report)
 		return
@@ -1532,5 +1598,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "写入报告失败: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("报告已写入 %s（耗时 %s，总 tick 数 %d）\n", *outPath, in.elapsed, acc.ticks)
+	fmt.Printf("报告已写入 %s（耗时 %s，P 台 tick %d + 扫描 tick %d）\n", *outPath, in.elapsed, acc.ticks, scanAcc.ticks)
 }

@@ -684,7 +684,8 @@ type driveSettle struct {
 //	                    + KInertia×inflow(源穴),          // R4 惯性接力项
 //	                   0, min(chanCap×Conductance,        // §8.1 管线容量
 //	                          源穴储气×KQiShare,           // 压而不泻封顶
-//	                          管线余量))                   // 主动已占容量不计
+//	                          管线余量,                    // 主动已占容量不计
+//	                          受端份额封顶))               // 0.7.1 受不至胀
 //	ΔP = Pressure(a) - Pressure(b)（Pressure = LoadRatio²，交换后口径）
 //
 // 被动项是势差自然释放：不占驱动容量、不付做功、不打驱动应变（评审稿
@@ -1117,7 +1118,28 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 					capPf = 0
 				}
 			}
+			// 受端份额封顶（0.7.1 标定裁决，Monte Carlo 标定发现的世界语义
+			// 修复；与源端「压而不泻」对称的「受不至胀」）：受端每元素每
+			// Tick 的被动受流量 ≤ KQiShare ×（该元素存量 + 受端受纳余量）。
+			// 归因：惯性项越过压差均衡点继续输运（被动永不逆天然向，无反向
+			// 刹车），而源穴储气份额封顶（KQiShare）只闸源端——下游小穴
+			// 「进得来、送不出」，被环流缓慢灌过 LR 1.0（应变→稳定崩→永久
+			// 损伤）。M1 引气黄金路径（absorb@青关 + guide 青关→丹田）实测
+			// 124 tick 内土府 damage 999——无意识参与的开局体验自毁邻穴，
+			// 违反 0.6.0 注记④「静养应无伤」世界语义约束在输运维的延伸。
+			// 份额分两段：过流段取「存量 × KQiShare」（满穴余量为零，只剩
+			// 与源端出流份额同值的过流份额），环流可穿过满穴不衰减（J5 惯性
+			// 接力语义保持）；缓充段取「余量 × KRecvShare」：空穴按余量 2%
+			// 缓充，负载比渐近 1.0 而不得越过，且缓充速率温和到不打 §15
+			// FlowShock——被动流永不构成过载源。门控只作用被动流：主动引气
+			// 灌胀脆穴（神庭 large）是 M2 设计的「不适→自主调整」触发面，
+			// 不受此门。
+			dstCapEff := dst.effectiveCapacity()
+			recvCap := fpMul(dst.Qi[e], KQiShare) + fpMul(dstCapEff-dst.load(), KRecvShare)
 			pf := fpClamp(gf+inert, 0, capPf)
+			if pf > recvCap {
+				pf = recvCap
+			}
 			if pf > src.Qi[e] {
 				pf = src.Qi[e]
 			}

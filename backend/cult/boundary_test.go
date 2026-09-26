@@ -244,7 +244,11 @@ func TestIsolatedLoopDepletion(t *testing.T) {
 	w := partjRingWorld()
 	w.Env.Qi = [ElementCount]int64{} // 绝灵：无任何环境补给（纳入/纳气恒零）
 
-	const ticks = 250
+	// 0.7.1 受端份额封顶后口径注记：受端封顶降低环流摩擦（被动过流不再
+	// 失血式冲刷库存），储备耗竭时点整体后移——观察窗 250→320 tick。
+	// §26.14 的法则是「无补给循环储备持续下降、流量随储备衰减至零」，
+	// 不是固定时限内的固定比例；窗口取到储备实质归零即可核验法则。
+	const ticks = 320
 	initial := totalQiOf(w)
 	var firstFlow int64
 	for i := 0; i < ticks; i++ {

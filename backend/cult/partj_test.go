@@ -211,28 +211,41 @@ func TestPartJInertiaRelayDecay(t *testing.T) {
 		}
 	}
 
-	// 有耗无源：环流不放大、不永动。流量被源穴储气份额封顶（KQiShare），
-	// 随库存损耗单调回落——衰减时间常数由结构决定（J5：Conductance 越高
-	// 衰减越慢），故不要求窗内归零，只要求单调回落且严格下降。
-	if tail := flows[len(flows)-1]; tail >= flows[1] {
-		t.Errorf("无源环流应随库存损耗回落: 尾流 %d >= 首窗 %d", tail, flows[1])
-	}
-	for i := 2; i < len(flows); i++ {
-		if flows[i] > flows[i-1] {
-			t.Errorf("tick %d: 无源环流应单调回落: %d -> %d", i, flows[i-1], flows[i])
-			break
-		}
-	}
-	// 不放大：接力瞬态受储气份额封顶，全程流量不超过初值的有界倍数。
-	var maxF int64
-	for _, f := range flows {
+	// 有耗无源：环流不放大、不永动（J5 法则本体）。
+	//
+	// 0.7.1 受端份额封顶后的口径注记：受端封顶让环流可「穿过」满穴
+	//（过流份额 = 源端出流份额），不再靠受端失血衰减——预置 FlowPrev
+	// 后流量先向份额封顶均衡收敛（前 ~10 tick 的爬升是收敛瞬态，不是
+	// 放大），随后随库存损耗单调回落。故法则按本体断言：
+	//   ① 界内：全程流量 ≤ 源穴储气份额封顶（KQiShare×库存），
+	//      且不超过初值 2 倍（不放大）；
+	//   ② 有耗：先达峰后回落，尾流显著低于峰值（不永动）。
+	// 逐 tick 严格单调是旧动力学（受端失血式衰减）的偶然形态，不再断言。
+	var maxF, peakIdx int64
+	for i, f := range flows {
 		if f > maxF {
 			maxF = f
+			peakIdx = int64(i)
 		}
 	}
 	initial := int64(seedFlow) * ElementCount * int64(len(w.Character.BodyGraph.Channels))
 	if maxF > 2*initial {
 		t.Errorf("惯性接力不应放大环流: max=%d > 2×初值 %d", maxF, initial)
+	}
+	// ① 压而不泻上界：单通道单元素流量 ≤ 初库 10%（KQiShare）加同一 Tick
+	// 内先收后发的补给余量（份额按发货时点库存读，含本 Tick 上游送达），
+	// 上界放宽一成。
+	shareCap := int64(len(w.Character.BodyGraph.Channels)) * ElementCount *
+		(6000 * KQiShare / One) * 1100 / 1000
+	if maxF > shareCap {
+		t.Errorf("无源环流受储气份额封顶: max=%d > 份额上界 %d", maxF, shareCap)
+	}
+	// ② 有耗衰减：尾流 < 峰值（达峰后只降不升）。
+	if tail := flows[len(flows)-1]; tail >= maxF {
+		t.Errorf("无源环流应随库存损耗回落: 尾流 %d >= 峰值 %d (tick %d)", tail, maxF, peakIdx)
+	}
+	if tail := flows[len(flows)-1]; tail*10 >= maxF*8 {
+		t.Errorf("无源环流峰值后应实质衰减: 尾流 %d 未降到峰值八成内 (峰值 %d)", tail, maxF)
 	}
 	t.Logf("惯性衰减序列（前 12 Tick）：%v", flows[:12])
 }

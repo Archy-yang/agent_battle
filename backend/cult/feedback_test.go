@@ -220,13 +220,14 @@ func TestFeedUninternalizedReleaseDecays(t *testing.T) {
 // 加力，学习不加速（目标响应被钳制 + 门饱和 → 学习更新逐位相同）。
 func TestFeedTeacherGateSaturates(t *testing.T) {
 	// 门函数：达到教学强度即满值，继续猛推不增长。
-	if got := teacherGateOf(1000); got != 500 {
+	//（0.7.1 标定回填 TeacherDriveRef = 300，依据见 params.go。）
+	if got := teacherGateOf(150); got != 500 {
 		t.Errorf("半教学强度门应 0.5: %d", got)
 	}
-	if got := teacherGateOf(2000); got != 1000 {
+	if got := teacherGateOf(300); got != 1000 {
 		t.Errorf("教学强度门应饱和到 1.0: %d", got)
 	}
-	if got := teacherGateOf(8000); got != 1000 {
+	if got := teacherGateOf(1200); got != 1000 {
 		t.Errorf("四倍猛推门不应超过 1.0: %d（禁止「用力十倍内化十倍」）", got)
 	}
 
@@ -246,8 +247,8 @@ func TestFeedTeacherGateSaturates(t *testing.T) {
 		cp := feedCoupleOf(w, 1, 0, 1)
 		return cp.Strength[Wood], cp.LearnedResponse[Wood]
 	}
-	s1, l1 := step(2 * TeacherDriveRef) // 2 倍猛推：目标 2.0（恰在钳制线上）
-	s8, l8 := step(8 * TeacherDriveRef) // 8 倍猛推：目标钳制后同为 2.0
+	s1, l1 := step(16 * TeacherDriveRef) // 猛推档：目标 ≥2.0 被 FeedResponseMax 钳制
+	s8, l8 := step(32 * TeacherDriveRef) // 更猛推：目标钳制后同为 2.0
 	if s1 != s8 || l1 != l8 {
 		t.Errorf("§26.8: 猛推不应加速学习: 强度 %d vs %d, 习得响应 %d vs %d", s1, s8, l1, l8)
 	}
