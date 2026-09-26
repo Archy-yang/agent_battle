@@ -57,6 +57,19 @@ func assertNear(t *testing.T, what string, got, want int64) {
 }
 
 // TestGoldenCase 复现 stage_3 §46-48 的手算例子（黄金用例）。
+//
+// 0.6.0 金手指复核（势差版统一边界交换，定稿裁决②）——逐项归因：
+//   - 第一 Tick 体内势为零 → 势差 = 环境密度，且 KPermBase +
+//     KPermDrive×0.6 ≈ 0.002+0.598 = 0.60 = 旧 §7 intensity 档，乘法链同序
+//     → 边界交换纳入总量与旧 §7 吸收量逐位一致（见下方总量断言）。
+//   - 报告口径变化：Intake 现在是「意识驱动放大的纳入增量」
+//     （perm = KPermBase+KPermDrive×0.6 = 0.60 中的 KPermDrive 份额），
+//     被动通透性基线单列 ExchangeIn（KPermBase=0.002 的份额，量级极小）。
+//     两者之和 = 旧 §7 值。
+//   - 第二 Tick 起势差参与：纳入总量 ∝ (环境势 − 体内势)，不再是
+//     旧 §7 的「与环境密度成正比、与体内存量无关」——Tick1 已纳入的
+//     7200 木经相生转化后存量 7014，势差压到 ≈2986，叠加反压 0.493
+//     → 木纳入总量 1062（旧 §7 值为 3550）。
 func TestGoldenCase(t *testing.T) {
 	w := NewWorld(goldenCharacter(), goldenEnv())
 	w.Ops = Ops{Intensity: []int64{600}} // §46：intensity 0.60
@@ -65,39 +78,49 @@ func TestGoldenCase(t *testing.T) {
 	rep := Advance(w)
 	p := &rep.Points[0]
 
-	// §46 各行吸收量（手算 → 千分位）：
+	// §46 各行纳入总量（手算 → 千分位；0.6.0 起为 Intake+ExchangeIn 之和，
+	// 数值与旧 §7 吸收量逐位一致）：
 	//   木 10×1.25×1.20×0.80×0.60×1×1 = 7.20
 	//   火 1×0.80×0.75×0.80×0.60      = 0.288
 	//   土 1×0.90×0.90×0.80×0.60      = 0.389
 	//   金 0.5×0.75×0.85×0.80×0.60    = 0.153
 	//   水 4×1.10×1.00×0.80×0.60      = 2.112
-	assertNear(t, "木吸收", p.Intake[Wood], 7200)
-	assertNear(t, "火吸收", p.Intake[Fire], 288)
-	assertNear(t, "土吸收", p.Intake[Earth], 389)
-	assertNear(t, "金吸收", p.Intake[Metal], 153)
-	assertNear(t, "水吸收", p.Intake[Water], 2112)
+	wantTotal := [ElementCount]int64{7200, 288, 389, 153, 2112}
+	for e := 0; e < ElementCount; e++ {
+		assertNear(t, "纳入总量", p.Intake[e]+p.ExchangeIn[e], wantTotal[e])
+	}
+	// 归因分解：被动基线 = gap × KPermBase(0.002)×其余因子（木 24、水 7），
+	// 意识驱动增量 = 总量 − 被动基线（perm(600) − KPermBase(2) 的份额）。
+	assertNear(t, "木意识驱动增量", p.Intake[Wood], 7176)
+	assertNear(t, "木被动基线", p.ExchangeIn[Wood], 24)
+	assertNear(t, "水意识驱动增量", p.Intake[Water], 2105)
+	assertNear(t, "水被动基线", p.ExchangeIn[Water], 7)
 
 	total := int64(0)
 	for e := 0; e < ElementCount; e++ {
-		total += p.Intake[e]
+		total += p.Intake[e] + p.ExchangeIn[e]
 	}
 	// 引擎逐元素四舍五入后总和 = 10142，与手算 10.142 一致。
 	if total != 10142 {
-		t.Errorf("吸收总量: got %d, want 10142", total)
+		t.Errorf("纳入总量: got %d, want 10142", total)
 	}
 
 	// §47：LoadRatio = 10.142/10 = 1.0142；Pressure = 1.0142² ≈ 1.029。
-	assertNear(t, "吸收后 LoadRatio", p.PostIntakeRatio, 1014)
-	assertNear(t, "吸收后 Pressure", fpMul(p.PostIntakeRatio, p.PostIntakeRatio), 1028)
+	assertNear(t, "交换后 LoadRatio", p.PostIntakeRatio, 1014)
+	assertNear(t, "交换后 Pressure", fpMul(p.PostIntakeRatio, p.PostIntakeRatio), 1028)
 
 	// ---- Tick 2 ----
 	rep2 := Advance(w)
 	p2 := &rep2.Points[0]
 
-	// §48：BackPressure = 1/(1+1.0142²) ≈ 0.493。
+	// §48：BackPressure = 1/(1+1.0142²) ≈ 0.493（反压链不受 0.6.0 影响）。
 	assertNear(t, "Tick2 BackPressure", p2.BackPressure, 493)
-	// §48：木本 Tick 约 7.20 × 0.493 ≈ 3.55。
-	assertNear(t, "Tick2 木吸收", p2.Intake[Wood], 3550)
+	// 0.6.0 重算（归因见函数头）：木纳入总量 = 势差 2986 × 0.60(perm)
+	// × 1.25 × 1.20 × 0.80 × 0.493(反压) ≈ 1062（意识增量 1058 +
+	// 被动基线 4）。
+	assertNear(t, "Tick2 木纳入总量", p2.Intake[Wood]+p2.ExchangeIn[Wood], 1062)
+	assertNear(t, "Tick2 木意识增量", p2.Intake[Wood], 1058)
+	assertNear(t, "Tick2 木被动基线", p2.ExchangeIn[Wood], 4)
 }
 
 // TestGolden_TenTicks 冒烟：连续 10 Tick 状态不出界（§49 调低强度）。
@@ -388,11 +411,14 @@ func TestDamageAndRecovery(t *testing.T) {
 		t.Fatal("持续 5 倍过载应产生损伤")
 	}
 
-	// 清空负载 → §21 条件（Pressure<0.4 且 Strain<0.05）满足，
+	// 清空负载并隔绝环境（0.6.0：环境有灵气时身体会被动吐纳、静息压力
+	// 停在环境势水平，§21 恢复条件无法满足——「静养」语义 = 无负载 +
+	// 无环境交换）→ §21 条件（Pressure<0.4 且 Strain<0.05）满足，
 	// 稳定性以 0.01/Tick 回升；越过 0.40 阈值后损伤开始净恢复。
 	for i := range w.Character.BodyGraph.Acupoints {
 		w.Character.BodyGraph.Acupoints[i].Qi = [ElementCount]int64{}
 	}
+	w.Env.Qi = [ElementCount]int64{}
 	w.Ops = Ops{}
 	recovered := peak
 	for i := 0; i < 400; i++ {

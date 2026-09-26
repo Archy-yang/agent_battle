@@ -42,7 +42,10 @@ type WorkLedger struct {
 	// DriveWork 是驱动的能量代价合计（守恒账 DriveWork 同源）：顺流做功
 	// （§10.1 二次律）+ 逆势做功（A2）。去向=热。
 	DriveWork int64
-	// ExternalInput 是环境流入合计（§7 纳气 + Part J J3 途经纳气）。
+	// ExternalInput 是环境流入合计（§7 边界交换纳入总量 = 意识驱动
+	// 增量 Intake + 被动基线 ExchangeIn，0.6.0 + Part J J3 途经纳气）。
+	// 与守恒账 ExternalInput = cons.Intake + cons.ExchangeIn +
+	// cons.Entrained 同源（评审稿 §14.4 能量平衡的环境侧口径）。
 	ExternalInput int64
 	// Generated 是内部生成（评审稿 §19 DeltaEnergy 的 Generated 项）。
 	// 本阶段恒零：相生转化是元素互转（效率 0.9 的损耗已入 ShengLoss），

@@ -23,8 +23,8 @@ package cult
 //	tier 2（acuity 3，熟练）：设计稿"神识三层（熟练）"列，附"约几成"
 //		级近似提示（全部汉字数字，不留真值痕迹；铁律 1 允许的粗档位）。
 //
-// 压感取 §47 吸收后即时负载比（PostIntakeRatio²）——"胀"是灵气涌入
-// 瞬间的感受（§47/§48 叙事口径）；世界尚未推进时用现场状态计算。
+// 压感取 §47 边界交换后即时负载比（PostIntakeRatio²）——"胀"是灵气
+// 涌入瞬间的感受（§47/§48 叙事口径）；世界尚未推进时用现场状态计算。
 // PerceivedSignalStrength 允许措辞向下静默，但最多两档
 // （felt ≥ 真值档-2）：低感知是对危险的钝化，不是全盲——剧痛不可能
 // 被报成"轻微充盈"（§19 损伤机制也要求强压必然可感）。
@@ -283,9 +283,10 @@ func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64, t
 
 // flowWord 由流量变化量生成 flow 词（stage_2 §25）。
 // 优先级：停滞 → 加速 → 进入 → 逸散/汇聚 → 流转。
-// 判定只用两个量：Intake（本 Tick 自环境吸收，§7）与 CurrentFlow
-// （本 Tick 经脉总流量 = 流出 Actual + 流入 Delivered，§8/§15）——
-// AcupointReport 不含逐经脉明细，穴位口径足够定性。
+// 判定只用两个量：Intake（本 Tick 意识驱动纳入增量，§7 边界交换的主动
+// 吐纳口径）与 CurrentFlow（本 Tick 经脉总流量 = 流出 Actual + 流入
+// Delivered，§8/§15）——AcupointReport 不含逐经脉明细，穴位口径足够定性。
+// 被动交换基线（ExchangeIn）不进本判定：自然吐纳不成"进入"之感。
 func flowWord(a *Acupoint, r *AcupointReport) string {
 	intake := int64(0)
 	for e := 0; e < ElementCount; e++ {

@@ -4,13 +4,14 @@ package cult
 //
 // 结算顺序固定：
 //
-//	§7  灵气吸收（BackPressure 用上一 Tick 吸收后负载比，§47→§48 链）
+//	§7  边界交换（势差版统一原语，0.6.0：吸收与逸散两条旧通路的并入；
+//	    纳入方向 BackPressure 用上一 Tick 交换后负载比，§47→§48 链）
 //	§8  灵气传输（传导/容量/控制误差 ε）
 //	§9  传输损耗（50% Diffuse、50% 热 → 目标穴位 LocalStrain）
 //	§10 相生转化（快照语义：本阶段所有转化量按阶段开始时的 Qi 计算）
 //	§11 相克压活性（固定顺序、活值语义）
 //	§12 活性恢复
-//	§13 逸散
+//	§13 逸散（0.6.0 起并入 §7 泄出方向，不再单列）
 //	§14 压力（本 Tick 结束后负载）
 //	§15 FlowShock
 //	§16 Compatibility
@@ -25,9 +26,10 @@ package cult
 // 全程定点整数，无浮点；同 seed 同 Ops 流重演逐位一致。
 
 // Ops 是调用方（Runtime / 测试）交给引擎的本 Tick 操作。
-// 引擎不解释意图——它只知道每个穴位以多大强度吸收、每条经脉请求多少流量。
+// 引擎不解释意图——它只知道每个穴位以多大强度驱动纳气、每条经脉请求多少流量。
 type Ops struct {
-	// Intensity[i] 是穴位 i 的功法强度 ∈ (0,1000]；0 表示本 Tick 不吸收。
+	// Intensity[i] 是穴位 i 的功法强度 ∈ (0,1000]；0 表示本 Tick 无意识
+	// 驱动（仅保留被动边界交换基线，0.6.0）。
 	// 长度必须与穴位数一致（nil 视为全 0）。
 	Intensity []int64
 	// Requests 是本 Tick 的经脉流量请求，按给出顺序结算。
@@ -148,35 +150,42 @@ type AcupointReport struct {
 	Stability       int64
 	Damage          int64
 	CurrentFlow     int64
-	BackPressure    int64 // 本 Tick 吸收时使用的反压
-	PostIntakeLoad  int64 // 吸收后立即测得的负载（§47）
-	PostIntakeRatio int64 // 吸收后负载比（§47，也是下一 Tick 反压的输入）
+	BackPressure    int64 // 本 Tick 边界交换纳入时使用的反压
+	PostIntakeLoad  int64 // 边界交换后立即测得的负载（§47）
+	PostIntakeRatio int64 // 边界交换后负载比（§47，也是下一 Tick 反压的输入）
 	ThermalLoad     int64 // 热负荷累积（修订包 A2/B4；散热衰减后含本 Tick 新热）
 	DriveStrain     int64 // 驱动应变分量（0.5.0，评审稿 §10.2；已计入 Strain）
 	DriveWork       int64 // 本穴位支付的驱动做功合计（0.5.0，去向=热）
 	Qi              [ElementCount]int64
 	Activity        [ElementCount]int64
-	Intake          [ElementCount]int64 // §7 环境吸收（主动纳入；途经纳气另列 Entrained）
+	Intake          [ElementCount]int64 // §7 边界交换的意识驱动纳入增量（主动吐纳回执口径；无意识 → 0；途经纳气另列 Entrained）
+	ExchangeIn      [ElementCount]int64 // §7 边界交换的被动纳入基线（无意识参与的自然吐纳，0.6.0）
+	Diffuse         [ElementCount]int64 // §7 边界交换泄出量（去向=环境；原 §13 逸散并入，0.6.0）
 	Entrained       [ElementCount]int64 // Part J J3 途经纳气（环境纳入，随实际流量逐穴计量）
 }
 
 // Conservation 是一次 Advance 的守恒归账（修订包 A3：任何总量变化必须
 // 逐项可归因，无凭空增益）。恒等式（精确整数，逐项与运算用同一舍入值）：
 //
-//	QiAfter - QiBefore == Intake - Diffuse - TransferLoss - ShengLoss
-//	                    - DriveWork + Entrained
+//	QiAfter - QiBefore == Intake + ExchangeIn - Diffuse - TransferLoss
+//	                    - ShengLoss - DriveWork + Entrained
 //
 // 去向标注：Diffuse 与 TransferLoss 的一半 → 环境；TransferLoss 另一半、
 // ShengLoss、DriveWork → 热（穴位 heatAccum / reverseHeatAccum /
-// ThermalLoad）。Entrained 是 Part J J3 途经纳气（来源=环境，随实际流量
-// 逐穴计量）。0.5.0 语义迁移（定稿裁决①）：原 ReverseWork 项并入
-// DriveWork——逆流做功（A2）与顺流做功（§10.1）同为统一驱动求解的
-// 做功代价输出，不再单列。
+// ThermalLoad）。Intake 与 ExchangeIn 是 §7 边界交换纳入方向的归因分解
+// （0.6.0，评审稿 §5.2/§5.3）：Intake = 意识驱动放大的纳入增量（主动
+// 吐纳回执口径，无意识 → 0）；ExchangeIn = 被动通透性基线的纳入
+// （「人体自然吐纳」，无意识也在发生）。两者之和 = 本 Tick 边界交换
+// 纳入总量。Entrained 是 Part J J3 途经纳气（来源=环境，随实际流量
+// 逐穴计量，流动调制形态，裁决②）。0.5.0 语义迁移（定稿裁决①）：
+// 原 ReverseWork 项并入 DriveWork——逆流做功（A2）与顺流做功（§10.1）
+// 同为统一驱动求解的做功代价输出，不再单列。
 type Conservation struct {
 	QiBefore     int64 // Tick 开始时 Σ 穴位储气
 	QiAfter      int64 // Tick 结束时 Σ 穴位储气
-	Intake       int64 // Σ §7 环境输入（逐穴计量）
-	Diffuse      int64 // Σ §13 逸散（去向=环境）
+	Intake       int64 // Σ §7 边界交换意识驱动纳入增量（逐穴计量）
+	ExchangeIn   int64 // Σ §7 边界交换被动纳入基线（0.6.0；来源=环境）
+	Diffuse      int64 // Σ §7 边界交换泄出（去向=环境；原 §13 逸散并入，0.6.0）
 	TransferLoss int64 // Σ §9 传输损耗
 	ShengLoss    int64 // Σ §10 转化损耗（去向=热）
 	DriveWork    int64 // Σ 驱动做功代价（0.5.0：顺流 §10.1 + 逆势 A2，去向=热）
@@ -204,6 +213,8 @@ func Advance(w *World) *TickReport {
 
 	backPressure := make([]int64, n)
 	intake := make([][ElementCount]int64, n)
+	exchangeIn := make([][ElementCount]int64, n)
+	diffuse := make([][ElementCount]int64, n)
 	postLoad := make([]int64, n)
 	postRatio := make([]int64, n)
 
@@ -230,43 +241,104 @@ func Advance(w *World) *TickReport {
 		cons.QiBefore += w.Character.BodyGraph.Acupoints[i].load()
 	}
 
-	// §7 BackPressure：由上一 Tick 吸收后的负载比决定（§47→§48 链式定义）。
+	// §7 BackPressure：由上一 Tick 交换后的负载比决定（§47→§48 链式定义）。
 	for i := 0; i < n; i++ {
 		a := &w.Character.BodyGraph.Acupoints[i]
 		lr2 := fpMul(a.lastLoadRatioMilli, a.lastLoadRatioMilli)
 		backPressure[i] = fpDiv(One, One+lr2)
 	}
 
-	// §7 灵气吸收。
+	// §7 边界交换（势差版统一原语，0.6.0；定稿裁决② + 阶段二范围 1/2；
+	// 评审稿 §5 BoundaryExchange、§5.1 基本公式、§14.2 能量来源）：
+	//
+	//	ExchangeFlow ∝ 通透性 × 有效开放度 × 亲和 × (环境势 − 体内势) × 活跃度
+	//
+	// 环境势 = Environment.Qi[e]（环境灵气密度，不因交换消耗——stage_3 §6）；
+	// 体内势 = 穴位该元素存量（与环境密度同标度的浓度势）。势差为正 → 纳入；
+	// 为负 → 泄出（去向=环境；原 §13 逸散并入泄出方向，D3/D4-1 乘子结构
+	// 原样，环境势为零时与旧 §13 公式逐位一致）。无势差 → 双向皆零
+	// （零净流，评审稿 §28.5 防免费吸气禁令）。
+	//
+	// 方向门控（§28.5 约束清单逐项落位：势差/通透性/开放度/反压/亲和）：
+	//   纳入方向 × BackPressure（§47→§48 反压链：满则难纳，D6 烧蚀闭环；
+	//   且势差本身随体内势升高而闭合——满则吸不进在结构上更强）；
+	//   泄出方向 × (1 − Retention_effective) × (1 − Refine×KRefine)
+	//   （D3「留与散」+ D4-1 炼化抗逸散）。
+	//
+	// 意识驱动不是第二套物理（评审稿 §5.2）：intensity 只放大纳入方向的
+	// 通透性 perm = KPermBase + KPermDrive×intensity（提高开放度/通透性）。
+	// 泄出方向不受意识放大——散逸由结构保留度决定，不随意识开合。
+	// 报告/守恒归因把纳入分解为：放大增量 → Intake（主动吐纳回执/感知
+	// 口径与旧 §7 对齐：无意识 → 0），被动基线 → ExchangeIn（§5.3 人体
+	// 自然吐纳）。分解单调无重叠（perm 单调 ⇒ 增量 ≥ 0）。黄金用例第一
+	// Tick：体内势为零 → 势差=环境密度 → 总纳入与旧 §7 逐位一致
+	//（KPermBase + KPermDrive×0.6 = 0.6 = 旧 intensity 档，乘法链同序）。
 	for i := 0; i < n; i++ {
 		a := &w.Character.BodyGraph.Acupoints[i]
 		intensity := int64(0)
 		if i < len(w.Ops.Intensity) {
 			intensity = w.Ops.Intensity[i]
 		}
-		if intensity <= 0 {
-			continue
+		if intensity < 0 {
+			intensity = 0
 		}
 		effOpen := a.effectiveOpenness()
+		perm := KPermBase + fpMul(KPermDrive, intensity)
 		for e := 0; e < ElementCount; e++ {
-			actFactor := 500 + fpMul(500, w.Env.Activity[e]) // §7.2
-			v := fpMul(w.Env.Qi[e], w.Character.Affinity[e])
-			v = fpMul(v, a.Affinity[e])
-			v = fpMul(v, effOpen)
-			v = fpMul(v, intensity)
-			v = fpMul(v, backPressure[i])
-			v = fpMul(v, actFactor)
-			if v <= 0 {
-				continue
+			gap := w.Env.Qi[e] - a.Qi[e] // 环境势 − 体内势
+			if gap > 0 {
+				// 纳入方向。乘法链与旧 §7 同序（gap 处于旧 EnvQi 位置、
+				// perm 处于旧 intensity 位置）。
+				actFactor := 500 + fpMul(500, w.Env.Activity[e]) // §7.2
+				v := fpMul(gap, perm)
+				v = fpMul(v, w.Character.Affinity[e])
+				v = fpMul(v, a.Affinity[e])
+				v = fpMul(v, effOpen)
+				v = fpMul(v, backPressure[i])
+				v = fpMul(v, actFactor)
+				if v <= 0 {
+					continue
+				}
+				a.Qi[e] += v
+				// 边界交换是缓和交换，不计入 FlowShock/QiFlow
+				//（见 body.go flowAccum 注释）。
+				pv := v
+				if intensity > 0 {
+					// 被动基线（perm = KPermBase 的同链乘积）。
+					pv = fpMul(gap, KPermBase)
+					pv = fpMul(pv, w.Character.Affinity[e])
+					pv = fpMul(pv, a.Affinity[e])
+					pv = fpMul(pv, effOpen)
+					pv = fpMul(pv, backPressure[i])
+					pv = fpMul(pv, actFactor)
+					if pv > v {
+						pv = v // 单调性下不会发生；防御性钳制保恒等式
+					}
+				}
+				exchangeIn[i][e] = pv
+				intake[i][e] = v - pv
+				cons.ExchangeIn += pv
+				cons.Intake += v - pv
+			} else if gap < 0 {
+				// 泄出方向（原 §13 逸散并入，0.6.0）：驱动量由存量改为
+				// 净势差（体内势 − 环境势）；环境势为零时即旧 §13 公式。
+				// d 系数上界 = BaseDiffuseRate×1×1×1 = 2% ≪ 1，且
+				// gap < 0 ⇒ −gap < a.Qi[e]，天然不透支存量。
+				retEff := fpClamp(fpMul(a.Retention, a.refineAffinity(e)), 0, One)
+				d := fpMul(fpMul(fpMul(-gap, BaseDiffuseRate), One-retEff), a.Activity[e])
+				d = fpMul(d, One-fpMul(refines[i], KRefine))
+				if d <= 0 {
+					continue
+				}
+				a.Qi[e] -= d
+				// 逸散是缓和交换，不计入 FlowShock/QiFlow（同上）。
+				diffuse[i][e] = d
+				cons.Diffuse += d
 			}
-			a.Qi[e] += v
-			// 吸收不计入 FlowShock/QiFlow（见 body.go flowAccum 注释）。
-			intake[i][e] = v
-			cons.Intake += v
 		}
 	}
 
-	// §47 吸收后立即测得的负载与压力（黄金用例口径）。
+	// §47 边界交换后立即测得的负载与压力（黄金用例口径）。
 	for i := 0; i < n; i++ {
 		a := &w.Character.BodyGraph.Acupoints[i]
 		postLoad[i] = a.load()
@@ -308,20 +380,9 @@ func Advance(w *World) *TickReport {
 		}
 	}
 
-	// §13 逸散（修订包 D3：筛选机制——穴位按亲和"留与散"，
-	// Retention_effective[i,e] = Retention[i] × AcupointAffinity[i,e]；
-	// 亲和低的成分按比例逸散，去向=环境，计入守恒账。
-	// D4-1：逸散 × (1 - Refine×KRefine)，Refine=0 时乘子=1）。
-	for i := 0; i < n; i++ {
-		a := &w.Character.BodyGraph.Acupoints[i]
-		for e := 0; e < ElementCount; e++ {
-			retEff := fpClamp(fpMul(a.Retention, a.refineAffinity(e)), 0, One)
-			d := fpMul(fpMul(fpMul(a.Qi[e], BaseDiffuseRate), One-retEff), a.Activity[e])
-			d = fpMul(d, One-fpMul(refines[i], KRefine))
-			a.Qi[e] -= d
-			cons.Diffuse += d
-		}
-	}
+	// §13 逸散已并入 §7 边界交换泄出方向（0.6.0，定稿裁决②）——泄出
+	// 按 Tick 开始时的势差在 §7 结算；§10 转化的产物自下一 Tick 起参与
+	// 势差交换（Tick 初结算的世界语义：交换先于流转与转化）。
 
 	// §14-§24 逐穴位状态结算。
 	rep.Points = make([]AcupointReport, n)
@@ -333,6 +394,8 @@ func Advance(w *World) *TickReport {
 		r.PostIntakeRatio = postRatio[i]
 		for e := 0; e < ElementCount; e++ {
 			r.Intake[e] = intake[i][e]
+			r.ExchangeIn[e] = exchangeIn[i][e]
+			r.Diffuse[e] = diffuse[i][e]
 			r.Entrained[e] = entrainedArr[i][e]
 		}
 
@@ -466,7 +529,8 @@ func Advance(w *World) *TickReport {
 		ch.flowAccum = 0
 	}
 
-	// 守恒归账收尾（修订包 A3）：Qi 在 §13 后不再变化，此处汇总。
+	// 守恒归账收尾（修订包 A3）：Qi 在 §10 相生转化后不再变化（§7 边界
+	// 交换与 §8-9 传输均已结算），此处汇总。
 	for i := 0; i < n; i++ {
 		cons.QiAfter += w.Character.BodyGraph.Acupoints[i].load()
 	}
@@ -487,7 +551,7 @@ func Advance(w *World) *TickReport {
 		}
 	}
 	led.DriveWork = cons.DriveWork
-	led.ExternalInput = cons.Intake + cons.Entrained
+	led.ExternalInput = cons.Intake + cons.ExchangeIn + cons.Entrained
 	led.Loss = cons.TransferLoss + cons.Diffuse + cons.ShengLoss
 
 	w.Last = rep
@@ -576,7 +640,7 @@ type driveSettle struct {
 // 并入 Strain 打稳定；温和稳定驱动（安全比内、无突变）应变为零。
 //
 // Part J J2 被动输运：全部主动请求结算完毕后，对每条经脉按天然气向追加
-// 压差驱动的被动项（压差快照 = 本 Tick 吸收后的负载比，对全部经脉同源，
+// 压差驱动的被动项（压差快照 = 本 Tick 边界交换后的负载比，对全部经脉同源，
 // 与经脉遍历顺序无关）：
 //
 //	passiveFlow = clamp(chanCap×KPassive×ΔP×Conductance   // 压差梯度项
@@ -584,7 +648,7 @@ type driveSettle struct {
 //	                   0, min(chanCap×Conductance,        // §8.1 管线容量
 //	                          源穴储气×KQiShare,           // 压而不泻封顶
 //	                          管线余量))                   // 主动已占容量不计
-//	ΔP = Pressure(a) - Pressure(b)（Pressure = LoadRatio²，吸收后口径）
+//	ΔP = Pressure(a) - Pressure(b)（Pressure = LoadRatio²，交换后口径）
 //
 // 被动项是势差自然释放：不占驱动容量、不付做功、不打驱动应变（评审稿
 // §15 PassiveWork 语义），与主动请求叠加（J2），但只填同一 §8.1 管线的
@@ -789,7 +853,7 @@ func runTransfers(w *World, refines []int64, postRatio []int64) ([]TransferRepor
 	}
 
 	// Part J J2：被动输运——压差驱动的背景环流（与主动请求叠加，见上注释）。
-	// 压差快照取本 Tick 吸收后的负载比（postRatio），与遍历顺序无关。
+	// 压差快照取本 Tick 边界交换后的负载比（postRatio），与遍历顺序无关。
 	// 惯性项（R4）按"输送带"语义：经脉的惯性输入 = 流入其源穴位的实际
 	// 流量（节点入流：上一 Tick 流量打底 + 本 Tick 已到达的送达量live累加
 	// ——经脉按下标序结算，主环拓扑下恰好沿行进方向逐段接力，环流连续

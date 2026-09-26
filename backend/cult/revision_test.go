@@ -63,15 +63,16 @@ func revWorld() *World {
 
 // checkConservation 断言一个 Tick 报告的守恒恒等式（修订包 A3：精确整数，
 // 无凭空增益；Part J J3 恒等式扩 Entrained 项；0.5.0 扩驱动做功 DriveWork
-// 项——顺流 §10.1 + 逆势 A2，去向=热）。
+// 项；0.6.0 扩边界交换被动纳入 ExchangeIn 项——纳入总量 = 意识驱动增量
+// Intake + 被动基线 ExchangeIn，泄出走 Diffuse）。
 func checkConservation(t *testing.T, rep *TickReport) {
 	t.Helper()
 	c := rep.Conservation
 	net := c.QiAfter - c.QiBefore
-	accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.DriveWork + c.Entrained
+	accounted := c.Intake + c.ExchangeIn - c.Diffuse - c.TransferLoss - c.ShengLoss - c.DriveWork + c.Entrained
 	if net != accounted {
-		t.Errorf("tick %d 守恒破坏: ΔQi=%d, 归账=%d (intake=%d diffuse=%d transfer=%d sheng=%d drive=%d entrained=%d)",
-			rep.Tick, net, accounted, c.Intake, c.Diffuse, c.TransferLoss, c.ShengLoss, c.DriveWork, c.Entrained)
+		t.Errorf("tick %d 守恒破坏: ΔQi=%d, 归账=%d (intake=%d exchangeIn=%d diffuse=%d transfer=%d sheng=%d drive=%d entrained=%d)",
+			rep.Tick, net, accounted, c.Intake, c.ExchangeIn, c.Diffuse, c.TransferLoss, c.ShengLoss, c.DriveWork, c.Entrained)
 	}
 }
 
@@ -132,20 +133,30 @@ func TestReverse_DantianOnly(t *testing.T) {
 	if rej.Actual[Wood] != 0 || rej.Delivered[Wood] != 0 {
 		t.Errorf("被拒绝的逆流不应有任何流量: actual=%d delivered=%d", rej.Actual[Wood], rej.Delivered[Wood])
 	}
-	if got := w.Character.BodyGraph.Acupoints[2].Qi[Wood]; got != 0 {
-		t.Errorf("被拒绝的逆流不应改变神庭存量: got %d", got)
-	}
 
 	// 存量核对（含 §10 相生转化的同 Tick 快照结算；Refinement=0 → 乘子=1；
-	// Part J J3：逆流入库 1900 在接收端青关卷入环境纳气 240
-	// = 2000×3.0(环境木密度)×0.04，转化快照按 2140 计）：
-	//   丹田：5000 − 逆流 2000 − 做功 20 = 2980 → 木→火转化 119（2980×0.04）；
-	//   青关：入库 1900 + 途经纳气 240 = 2140 → 转化 86（2140×0.04）。
-	if got := w.Character.BodyGraph.Acupoints[0].Qi[Wood]; got != 2980-119 {
-		t.Errorf("丹田存量: got %d, want %d", got, 2980-119)
+	// Part J J3：逆流入库 1900 在接收端青关卷入环境纳气 240）。
+	// 0.6.0 重算归因（势差版统一边界交换）：空穴会被动纳入环境气——
+	// 神庭、青关在 §7 阶段各被动纳入木 6（= 势差 3000 × 被动通透率 0.002，
+	// 亲和/开度/反压/活跃度全 1），丹田存量 5000 > 环境势 3000 但满保留
+	//（Retention=1000 → 1−Retention_eff=0）→ 不泄出：
+	//   丹田：5000 − 逆流 2000 − 做功 20 = 2980 → 木→火转化 119（2980×0.04）
+	//         → 2861（与旧引擎一致——被动纳入量级极小，不动木账）；
+	//   青关：入库 1900 + 途经纳气 240 + 被动 6 = 2146 → 转化 −86 → 2060；
+	//   神庭：被动 6 + 水转木微调 → 6（被拒逆流本身未动它一根毫毛）。
+	if got := w.Character.BodyGraph.Acupoints[0].Qi[Wood]; got != 2861 {
+		t.Errorf("丹田存量: got %d, want 2861", got)
 	}
-	if got := w.Character.BodyGraph.Acupoints[1].Qi[Wood]; got != 2140-86 {
-		t.Errorf("青关存量: got %d, want %d", got, 2140-86)
+	if got := w.Character.BodyGraph.Acupoints[1].Qi[Wood]; got != 2060 {
+		t.Errorf("青关存量: got %d, want 2060", got)
+	}
+	// 被拒逆流不应改变神庭存量——对照世界（同配置、无任何请求）下神庭
+	// 存量应与上方完全一致：0.6.0 起空穴会被动吐纳（6 = 被动纳入 + 相生
+	// 微调），这部分与环境有关、与被拒的请求无关。
+	ctrl := revWorld()
+	Advance(ctrl)
+	if got, want := w.Character.BodyGraph.Acupoints[2].Qi[Wood], ctrl.Character.BodyGraph.Acupoints[2].Qi[Wood]; got != want {
+		t.Errorf("被拒绝的逆流不应改变神庭存量: got %d, 无请求对照 %d", got, want)
 	}
 
 	// 逆流参与的 Tick 同样守恒。
@@ -168,19 +179,24 @@ func TestReverse_ThermalLoadPulse(t *testing.T) {
 
 	// 对照：除无逆流请求外完全相同的世界，目的地 ThermalLoad 应为 0
 	// （逆流做功热是热源，不是呼吸性背景）。
+	// 0.6.0：环境有灵气时空穴会被动吐纳 → 相生转化自带微量背景热
+	// （实测 1）——隔绝环境后该背景消失，对照断言在静息环境下成立。
 	ctrl := revWorld()
 	ctrl.Ops = Ops{}
+	ctrl.Env.Qi = [ElementCount]int64{}
 	if got := Advance(ctrl).Points[1].ThermalLoad; got != 0 {
-		t.Errorf("无逆流对照世界目的地 ThermalLoad 应为 0: got %d", got)
+		t.Errorf("无逆流对照世界（静息环境）目的地 ThermalLoad 应为 0: got %d", got)
 	}
 
-	// 清空储气（停掉 §10 转化热源）→ 纯散热：单调不升，回落到近零。
+	// 清空储气并隔绝环境（停掉 §10 转化热源与 0.6.0 被动吐纳热源）
+	// → 纯散热：单调不升，回落到近零。
 	w.Ops = Ops{}
 	last := peak
 	for i := 0; i < 60; i++ {
 		for j := range w.Character.BodyGraph.Acupoints {
 			w.Character.BodyGraph.Acupoints[j].Qi = [ElementCount]int64{}
 		}
+		w.Env.Qi = [ElementCount]int64{}
 		cur := Advance(w).Points[1].ThermalLoad
 		if cur > last {
 			t.Fatalf("散热阶段 ThermalLoad 不应回升: %d -> %d", last, cur)

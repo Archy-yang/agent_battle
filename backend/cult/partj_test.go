@@ -75,10 +75,10 @@ func TestPartJConservationEntrained(t *testing.T) {
 		rep := Advance(w)
 		c := rep.Conservation
 		net := c.QiAfter - c.QiBefore
-		accounted := c.Intake - c.Diffuse - c.TransferLoss - c.ShengLoss - c.DriveWork + c.Entrained
+		accounted := c.Intake + c.ExchangeIn - c.Diffuse - c.TransferLoss - c.ShengLoss - c.DriveWork + c.Entrained
 		if net != accounted {
-			t.Fatalf("tick %d 守恒破坏: ΔQi=%d, 归账=%d (intake=%d diffuse=%d transfer=%d sheng=%d reverse=%d entrained=%d)",
-				i, net, accounted, c.Intake, c.Diffuse, c.TransferLoss, c.ShengLoss, c.DriveWork, c.Entrained)
+			t.Fatalf("tick %d 守恒破坏: ΔQi=%d, 归账=%d (intake=%d exchangeIn=%d diffuse=%d transfer=%d sheng=%d drive=%d entrained=%d)",
+				i, net, accounted, c.Intake, c.ExchangeIn, c.Diffuse, c.TransferLoss, c.ShengLoss, c.DriveWork, c.Entrained)
 		}
 	}
 }
@@ -123,15 +123,23 @@ func TestPartJEntrainedReportedAndCapped(t *testing.T) {
 
 // TestPartJGoldenSingleAcupointUnchanged（T-J5 金手指复核）：单穴无经脉
 // 世界（无压差、无流、无纳气路径）下，Part J 各新项恒等 0，stage_3 §46-48
-// 黄金用例数值逐位不变。
+// 黄金用例数值保持。
+//
+// 0.6.0 金手指复核（势差版统一边界交换）——逐项归因：
+//   - 第一 Tick 体内势为零 → 势差=环境密度 → 纳入总量与旧 §7 逐位一致；
+//     报告口径拆为 意识增量 Intake + 被动基线 ExchangeIn（KPermBase 份额）。
+//   - 第二 Tick 势差参与（Tick1 存量压低势差），纳入总量从 3550 降至
+//     1062（详见 cult_test.go TestGoldenCase 头注）。
+//   - 本世界穴位 Retention=400：存量高于环境势的元素开始泄出（原 §13
+//     语义，去向=环境）——无经脉世界的 Entrained 仍恒 0。
 func TestPartJGoldenSingleAcupointUnchanged(t *testing.T) {
 	w := NewWorld(goldenCharacter(), goldenEnv())
 	w.Ops = Ops{Intensity: []int64{600}}
 
 	rep := Advance(w)
 	p := &rep.Points[0]
-	assertNear(t, "木吸收", p.Intake[Wood], 7200)
-	assertNear(t, "水吸收", p.Intake[Water], 2112)
+	assertNear(t, "木纳入总量", p.Intake[Wood]+p.ExchangeIn[Wood], 7200)
+	assertNear(t, "水纳入总量", p.Intake[Water]+p.ExchangeIn[Water], 2112)
 	if rep.Conservation.Entrained != 0 {
 		t.Errorf("无经脉世界 Entrained 应为 0: %d", rep.Conservation.Entrained)
 	}
@@ -144,10 +152,10 @@ func TestPartJGoldenSingleAcupointUnchanged(t *testing.T) {
 		}
 	}
 
-	// 双 Tick 反压链不变（§48）。
+	// 双 Tick 反压链不变（§48）；纳入量按势差重算（归因见头注）。
 	rep2 := Advance(w)
 	assertNear(t, "Tick2 BackPressure", rep2.Points[0].BackPressure, 493)
-	assertNear(t, "Tick2 木吸收", rep2.Points[0].Intake[Wood], 3550)
+	assertNear(t, "Tick2 木纳入总量", rep2.Points[0].Intake[Wood]+rep2.Points[0].ExchangeIn[Wood], 1062)
 }
 
 // TestPartJNoFlowNoPassive（T-J5 附属）：等压无流世界（诸穴同负载比、
@@ -198,7 +206,7 @@ func TestPartJInertiaRelayDecay(t *testing.T) {
 			t.Fatal("惯性接力失效：松手首 Tick 环流即归零")
 		}
 		c := rep.Conservation
-		if net, acc := c.QiAfter-c.QiBefore, c.Intake-c.Diffuse-c.TransferLoss-c.ShengLoss-c.DriveWork+c.Entrained; net != acc {
+		if net, acc := c.QiAfter-c.QiBefore, c.Intake+c.ExchangeIn-c.Diffuse-c.TransferLoss-c.ShengLoss-c.DriveWork+c.Entrained; net != acc {
 			t.Fatalf("tick %d 守恒破坏: ΔQi=%d 归账=%d", i, net, acc)
 		}
 	}

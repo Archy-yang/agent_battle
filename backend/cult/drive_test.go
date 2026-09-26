@@ -301,8 +301,9 @@ func TestWorkLedgerAttribution(t *testing.T) {
 	if led.DriveWork != rep.Conservation.DriveWork {
 		t.Errorf("台账驱动做功应与守恒账同源: %d vs %d", led.DriveWork, rep.Conservation.DriveWork)
 	}
-	if led.ExternalInput != rep.Conservation.Intake+rep.Conservation.Entrained {
-		t.Errorf("环境流入对账: %d vs intake %d + entrained %d", led.ExternalInput, rep.Conservation.Intake, rep.Conservation.Entrained)
+	if led.ExternalInput != rep.Conservation.Intake+rep.Conservation.ExchangeIn+rep.Conservation.Entrained {
+		t.Errorf("环境流入对账: %d vs intake %d + exchangeIn %d + entrained %d",
+			led.ExternalInput, rep.Conservation.Intake, rep.Conservation.ExchangeIn, rep.Conservation.Entrained)
 	}
 	if led.Loss != rep.Conservation.TransferLoss+rep.Conservation.Diffuse+rep.Conservation.ShengLoss {
 		t.Errorf("损耗对账: %d", led.Loss)
