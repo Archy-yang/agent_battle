@@ -191,17 +191,35 @@ type Pilot interface {
 // 意图，供测试与 SPIKE 前的桥接使用。
 type ScriptedPilot struct {
 	Script [][]Intent // 每次 Decide 依次弹出一条；耗尽后返回 nil
-	Calls  int        // 已被征询次数（测试断言用）
-	Last   *Observation
+	// AfterAdvice 是"听劝"续接脚本（M2 WP-M2-3）：首次收到会话转向
+	// 提示（非空 GiveAdvice）即切换到它逐次弹出（弃用 Script 余下部
+	// 分，耗尽后同样返回 nil）；为空/nil 则对提示置之不理（"固执"），
+	// 继续按 Script 弹出。
+	AfterAdvice [][]Intent
+	Calls       int // 已被征询次数（测试断言用）
+	Last        *Observation
 
-	// 会话层经可选接口给到的回执与账本视图（测试断言用）。
+	// 会话层经可选接口给到的回执、账本视图与转向提示（测试断言用）。
 	LastReceipts []IntentReceipt
 	LastLedger   []string
+	LastAdvice   []string
+
+	afterAdvice bool // 收到提示后是否已切换到 AfterAdvice
+	afterCalls  int  // 切换后的征询次数（AfterAdvice 的弹出下标）
 }
 
 func (p *ScriptedPilot) Decide(obs *Observation) []Intent {
 	p.Calls++
 	p.Last = obs
+	if p.afterAdvice {
+		// 听劝路径：弹出下标相对切换时刻计（弃用 Script 余下部分）。
+		if p.afterCalls < len(p.AfterAdvice) {
+			out := p.AfterAdvice[p.afterCalls]
+			p.afterCalls++
+			return out
+		}
+		return nil
+	}
 	if p.Calls-1 < len(p.Script) {
 		return p.Script[p.Calls-1]
 	}

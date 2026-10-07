@@ -11,6 +11,14 @@ package ctmatch
 //
 // Agent 可见视图（AgentView）零数字：三态用词、后果方向用词、假说证据
 // 多寡用分档词，绝不出现计数。
+//
+// M2 WP-M2-3（探索僵局对策）：账本另供 UntriedDirections——基于分身
+// 自己的尝试记录推导"已知名所之间、但从未试过"的方向，供僵局转向提示
+// 与账本凸显使用。只回喂分身自己说过的名字，不泄露任何未探明事实。
+
+import (
+	"strings"
+)
 
 // ---------------------------------------------------------------------------
 // 证据条目
@@ -24,6 +32,9 @@ type EvidenceEntry struct {
 	Summary string // 定性意图摘要（零数字）
 	Receipt string // 回执词：WordApplied / WordRejected / WordBlocked / WordUnclear
 	Outcome string // 后果方向词（WordPressureUp/Down/Same；未落地时为空）
+	Why     string // 拒绝/阻断补语词（receipt.go Why*；内部记账用，不进
+	// Agent 视图）。UntriedDirections 依它过滤"目标穴位不存在"的条目——
+	// 分身念错的名字（幻觉穴名）不回喂、不进已知名所。
 }
 
 // ActionKey 把意图归约为账本的行动键。非动作意图返回空串（不入账）。
@@ -232,6 +243,91 @@ func (l *EvidenceLedger) Solidify(name, path string) {
 		}
 	}
 	l.Solidified = append(l.Solidified, SolidEntry{Name: name, Path: path})
+}
+
+// ---------------------------------------------------------------------------
+// 未试方向（M2 WP-M2-3：僵局转向的证据凸显）
+// ---------------------------------------------------------------------------
+
+// UntriedDirections 基于分身自己的尝试记录，推导"已知名所之间、但从未
+// 试过"的方向（M2 WP-M2-3：转向提示与账本凸显的数据源）。
+//
+// 感知隔离律的边界：
+//   - 穴位名只取分身亲自交出过、且回执补语不是"目标穴位不存在"的名字——
+//     分身自己说过的，才可以说回去；幻觉穴名（WhyNoAcupoint）一律过滤。
+//   - 经脉存在性一律不做断言：建议"引气自乙至甲"不是说那条路通，只是
+//     提示它从未试过——试了才有回执（Engine 决定实际结果）。
+//   - 输出确定性：全部按账本首次尝试/首现序排列，map 只作去重查存，
+//     绝不作遍历序（重演一致性的组成部分）。
+func (l *EvidenceLedger) UntriedDirections() []string {
+	// 已知穴位（按证据条目序的首现序）。
+	var known []string
+	seenPt := make(map[string]bool)
+	for i := range l.Entries {
+		e := &l.Entries[i]
+		if e.Why == WhyNoAcupoint {
+			continue // 回执说过"目标穴位不存在"的名字，不回喂
+		}
+		var pts []string
+		if rest, ok := strings.CutPrefix(e.Action, "absorb@"); ok {
+			pts = []string{rest}
+		} else if rest, ok := strings.CutPrefix(e.Action, "guide@"); ok {
+			if j := strings.Index(rest, "→"); j >= 0 {
+				pts = []string{rest[:j], rest[j+len("→"):]}
+			}
+		}
+		for _, p := range pts {
+			if p != "" && !seenPt[p] {
+				seenPt[p] = true
+				known = append(known, p)
+			}
+		}
+	}
+
+	var out []string
+	seenSug := make(map[string]bool)
+	// 一、未试的引气方向：已试通路的反向（去程走通之后，回程常是
+	// 下一个该问的问题；此路不通的通路其反向同样值得一试）。
+	for _, key := range l.order {
+		rest, ok := strings.CutPrefix(key, "guide@")
+		if !ok {
+			continue
+		}
+		j := strings.Index(rest, "→")
+		if j < 0 {
+			continue
+		}
+		from, to := rest[:j], rest[j+len("→"):]
+		if from == to {
+			continue
+		}
+		// 该通路至少要有一次"名字真实"的尝试（Why 过滤），两端穴位
+		// 才算分身已知的实有所在。
+		real := false
+		for i := range l.Entries {
+			if l.Entries[i].Action == key && l.Entries[i].Why != WhyNoAcupoint {
+				real = true
+				break
+			}
+		}
+		if !real {
+			continue
+		}
+		sug := "引气自" + to + "至" + from
+		if !seenSug[sug] && l.StateOf("guide@"+to+"→"+from) == NeverTried {
+			seenSug[sug] = true
+			out = append(out, sug)
+		}
+	}
+	// 二、未试的纳气处：分身已知的穴位里，还没纳过气的。
+	for _, p := range known {
+		sug := "于" + p + "纳气"
+		if !seenSug[sug] && l.StateOf("absorb@"+p) == NeverTried {
+			seenSug[sug] = true
+			out = append(out, sug)
+		}
+	}
+	return out
 }
 
 // AgentView 是给 Pilot 征询载荷的定性视图：先列走过的路（三态 + 最近

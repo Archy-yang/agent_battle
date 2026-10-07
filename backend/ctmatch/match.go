@@ -19,6 +19,7 @@ package ctmatch
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"agentbattle/backend/cult"
 )
@@ -71,6 +72,8 @@ type TickResult struct {
 	Escalated   bool             // 是否需要唤醒 Pilot（Guard stop / 出界 / 未知异常）
 	Advanced    bool             // 引擎是否被推进
 	Observation *Observation     // Observe 钩子接入时的最新观察（可能为 nil）
+	Advice      []string         // 转向提示（M2 WP-M2-3：僵局时的定性附言，
+	// 零数字零机器词；无僵局时为空。随回执/观察附加语呈现给上层与 Pilot）
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +120,18 @@ type CultSession struct {
 	lastReceipts     []IntentReceipt  // 最近一次交出意图的回执组（唤醒 Pilot 时随观察给出）
 	loopEngaged      bool             // 筑基后是否已注册 AutonomousLoop（幂等）
 	establishedNoted bool             // 筑基事件是否已发（幂等）
+
+	// —— 认知辅助：无效重复检测（M2 WP-M2-3，B2 探索固执）——
+	// 全部是会话侧确定性记账（同回执序列必得同提示）；分身侧只见定性词、
+	// 零数字（计数与阈值绝不外泄）。DisableStallAdvice 供 MC 对照实验
+	// 开关检测（生产默认开启）。
+	DisableStallAdvice bool
+
+	stallKey     string   // 当前连续 streak 的行动键（同语义动作）
+	stallSig     string   // 最近回执签名（主词|补语|方向）
+	stallCount   int      // 连续同质回执计数（工程口径，绝不进分身侧）
+	stallAdvised bool     // 本轮僵局是否已生成转向提示
+	advice       []string // 活跃的转向提示（僵局解除即清，给空即撤）
 }
 
 // NewSession 建会话；seed 同时写入 World.NoiseSeed（0 视为 1）。
@@ -229,13 +244,27 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 
 	// 1. 升级挂起 → 唤醒 Pilot（stage_2 §34 行为生命周期最后一段）。
 	// 征询载荷携带：最新观察 + 上一组意图的回执 + 证据账本视图
-	//（全部定性措辞、零数字——铁律 1/6）。
+	//（全部定性措辞、零数字——铁律 1/6），外加认知层的转向提示
+	//（M2 WP-M2-3：僵局持续期间每次唤醒重给，解除时给空——是建议，
+	// 不是强制；分身可以听，也可以固执）。
 	if s.lastEscalated && s.Pilot != nil {
+		advice := s.currentAdvice()
+		if aa, ok := s.Pilot.(AdviceAware); ok {
+			aa.GiveAdvice(advice)
+		}
 		if ra, ok := s.Pilot.(ReceiptAware); ok {
 			ra.GiveReceipts(s.lastReceipts)
 		}
 		if la, ok := s.Pilot.(LedgerAware); ok {
-			la.GiveLedgerView(s.Ledger.AgentView())
+			lv := s.Ledger.AgentView()
+			if len(advice) > 0 {
+				// 僵局期间在账本视图中凸显未试方向（只基于分身自己的
+				// 尝试记录推导，零泄露——knowledge.go UntriedDirections）。
+				for _, d := range s.Ledger.UntriedDirections() {
+					lv = append(lv, "未试方向："+d)
+				}
+			}
+			la.GiveLedgerView(lv)
 		}
 		var obs *Observation
 		if s.Observe != nil {
@@ -301,6 +330,7 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 				//（铁律 6：每意图恰一条，升级 Tick 不吞回执）。
 				res.Receipts = append(receipts, s.settleReceipts(pending, nil, res, true)...)
 				s.keepReceipts(res)
+				res.Advice = s.currentAdvice()
 				res.Events = s.drainNewEvents()
 				return res
 			}
@@ -359,6 +389,9 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 	receipts = append(receipts, s.settleReceipts(pending, plans, res, runtimePath)...)
 	res.Receipts = receipts
 	s.keepReceipts(res)
+	// 转向提示随本 Tick 结果一并给出（M2 WP-M2-3：以回执/观察附加语
+	// 形式呈现；给 Pilot 的注入在下一息唤醒路径统一做）。
+	res.Advice = s.currentAdvice()
 
 	// 6. 证据账本：动作 → 后果方向（settleReceipts 内入账，
 	// SPIKE 结论二：三态事实凭据）。
@@ -385,6 +418,88 @@ func (s *CultSession) keepReceipts(res *TickResult) {
 	if len(res.Receipts) > 0 {
 		s.lastReceipts = res.Receipts
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 认知辅助：无效重复检测与转向提示（M2 WP-M2-3，B2 探索固执）
+// ---------------------------------------------------------------------------
+
+// 无效重复检测的工程参数（会话侧阈值；分身侧只见"几次"等定性词，
+// 阈值与计数绝不进任何 Agent 可见载荷——任务书第 5 条口径）。
+const (
+	// stallAdviceAfter：同一行动键连续得到同质回执的次数达到该值即生成
+	// 转向提示（"连续多次"的口径：含首次，即连续第 3 条同质回执触发）。
+	stallAdviceAfter = 3
+	// stallAdviceMaxUntried：转向提示中最多列举的未试方向条数（防刷屏）。
+	stallAdviceMaxUntried = 4
+)
+
+// noteStall 更新无效重复检测（会话/认知层，非引擎物理）。口径：
+//   - "同语义动作"= 同一行动键（ActionKey：档位/属性/流量的变化不改键
+//     ——换了力度还撞同一堵墙，仍是撞墙）；
+//   - "同质回执"= 回执主词 + 补语 + 方向词全部与上一条相同；
+//   - "无效"= 被拒 / 不入 / 意图不明，或已生效而压力不变；已生效且压力
+//     有方向回应（升/降）不算固执——那是节律，不是撞墙，反而清账。
+//
+// streak 单槽：以最近一条动作回执为锚（任务书"同意图连续多次"的口径；
+// 两种僵局动作交替的情形不在本期覆盖，见 WP-M2-3 遗留）。全部确定性：
+// 同回执序列必得同提示（重演一致性的组成部分）。
+func (s *CultSession) noteStall(key string, r IntentReceipt) {
+	if key == "" || s.DisableStallAdvice {
+		return
+	}
+	if r.Outcome == WordApplied && r.Direction != WordPressureSame {
+		s.clearStall() // 身体在回应：这是节律，不是固执
+		return
+	}
+	sig := r.Outcome + "|" + r.Detail + "|" + r.Direction
+	if key != s.stallKey || sig != s.stallSig {
+		s.stallKey, s.stallSig, s.stallCount, s.stallAdvised = key, sig, 1, false
+		s.advice = nil
+		return
+	}
+	s.stallCount++
+	if s.stallCount >= stallAdviceAfter && !s.stallAdvised {
+		s.stallAdvised = true
+		s.advice = s.buildAdvice(key)
+	}
+}
+
+// clearStall 清除僵局计数与活跃提示。
+func (s *CultSession) clearStall() {
+	s.stallKey, s.stallSig, s.stallCount, s.stallAdvised = "", "", 0, false
+	s.advice = nil
+}
+
+// currentAdvice 返回当前活跃的转向提示（副本；无僵局时为 nil）。
+func (s *CultSession) currentAdvice() []string {
+	if len(s.advice) == 0 {
+		return nil
+	}
+	out := make([]string, len(s.advice))
+	copy(out, s.advice)
+	return out
+}
+
+// buildAdvice 生成一条转向提示（分身自述口吻的定性附言，零数字零
+// 机器词）。未试方向取自分身自己的账本（UntriedDirections：只回喂
+// 分身说过的名字，不泄露未探明事实）；账本里推不出新路时，给定性
+// 的换法建议而非具体方向。
+func (s *CultSession) buildAdvice(key string) []string {
+	label := s.Ledger.labelOf(key)
+	lines := []string{
+		"「" + label + "」这条路你已试过几次，气息的回应并无不同。可曾想过换一个方向？",
+	}
+	untried := s.Ledger.UntriedDirections()
+	if len(untried) > stallAdviceMaxUntried {
+		untried = untried[:stallAdviceMaxUntried]
+	}
+	if len(untried) > 0 {
+		lines = append(lines, "未试方向："+strings.Join(untried, "；")+"。")
+	} else {
+		lines = append(lines, "账本里还没有现成的新路——可换个力度、换个次序，或先静静感受，再看气息的回应。")
+	}
+	return lines
 }
 
 // finishTrial 在试跑结束（跑满 Cycles）时做达标判定，达标即转正
@@ -639,7 +754,8 @@ func (s *CultSession) settleReceipts(intents []Intent, plans []intentPlan, res *
 }
 
 // recordEvidence 把动作意图的回执记入证据账本（SPIKE 结论二：账本是
-// "动作 → 观察到的后果方向"的事实凭据；感知/内视/假说不入账）。
+// "动作 → 观察到的后果方向"的事实凭据；感知/内视/假说不入账），并
+// 同步无效重复检测（M2 WP-M2-3）。
 func (s *CultSession) recordEvidence(it Intent, r IntentReceipt) {
 	key := ActionKey(it)
 	if key == "" {
@@ -655,7 +771,9 @@ func (s *CultSession) recordEvidence(it Intent, r IntentReceipt) {
 		Summary: r.Summary,
 		Receipt: r.Outcome,
 		Outcome: outcome,
+		Why:     r.Detail,
 	})
+	s.noteStall(key, r)
 }
 
 // scanAnomalies 在结算后扫描未知异常（stage_2 §36 第三段）：

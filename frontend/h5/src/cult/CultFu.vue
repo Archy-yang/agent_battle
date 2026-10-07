@@ -38,6 +38,7 @@ const chron = computed<ChronLine[]>(() => {
 
 function lineCls(kind: string): string {
   if (kind === 'receipt' || kind === 'echo') return 'rc'
+  if (kind === 'advice') return 'rc' // 会话附言（转向提示）：与回执同源的定性语
   if (kind === 'voice') return 'voice'
   if (kind === 'event') return 'ev'
   return ''

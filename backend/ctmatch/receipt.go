@@ -175,6 +175,15 @@ type LedgerAware interface {
 	GiveLedgerView(view []string)
 }
 
+// AdviceAware 是 Pilot 的可选扩展（M2 WP-M2-3）：愿意接收会话层的
+// "无效重复"转向提示——同意图连续多次同质回执时的定性附言。提示是
+// 认知辅助：建议分身换个方向，不是强制；分身可以听，也可以固执。
+// 僵局持续期间每次唤醒都会重给（幂等覆盖），解除时给 nil/空切片表示
+// 提示已撤。
+type AdviceAware interface {
+	GiveAdvice(lines []string)
+}
+
 // GiveReceipts 使 ScriptedPilot 可记录会话层给到的回执（测试断言用）。
 func (p *ScriptedPilot) GiveReceipts(rs []IntentReceipt) {
 	if p != nil {
@@ -186,5 +195,18 @@ func (p *ScriptedPilot) GiveReceipts(rs []IntentReceipt) {
 func (p *ScriptedPilot) GiveLedgerView(v []string) {
 	if p != nil {
 		p.LastLedger = v
+	}
+}
+
+// GiveAdvice 使 ScriptedPilot 可记录会话层的转向提示（M2 WP-M2-3，
+// AdviceAware 同构消费）：提示存入 LastAdvice（测试断言用）；若配置了
+// AfterAdvice 续接脚本，首次收到非空提示即切换（脚本可控地"听劝"），
+// 未配置则置之不理（"固执"）。提示撤下时 LastAdvice 清空。
+func (p *ScriptedPilot) GiveAdvice(lines []string) {
+	if p != nil {
+		p.LastAdvice = lines
+		if len(lines) > 0 && len(p.AfterAdvice) > 0 {
+			p.afterAdvice = true
+		}
 	}
 }

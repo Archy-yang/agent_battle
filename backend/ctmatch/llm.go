@@ -103,6 +103,11 @@ type LLMPilot struct {
 	// buildUserMessage，消费即清。
 	pendingGuidance []string
 
+	// lastAdvice 是会话层经 AdviceAware 给到的转向提示（M2 WP-M2-3：
+	// 无效重复检测——僵局持续期间每次唤醒重给、解除时给空，直接覆盖）。
+	// 进 buildUserMessage 的【会话附言】段，零数字零机器词。
+	lastAdvice []string
+
 	// LastCognition / LastError / LastRaw 是最近一次 Decide 的诊断信息
 	//（供转录与测试；不含任何密钥）。
 	LastCognition string
@@ -184,6 +189,9 @@ const llmSystemPrompt = `【你的处境】
 - 每息之后你会收到上一组意图的回执：能否落地，以及落地之后身体压力的方向
   （压力升、压力降或压力不变）。回执若说「此路不通」或「穴未开或满溢不入」，
   就换个源头、去处、力度或方式再试，不要对着同一堵墙反复推。
+- 若同一操作连试几次而气息的回应仍无不同，你会收到一句会话附言提醒你转向，
+  账本里也会标出你「未试方向」——那正是你还没走过的路。听不听由你自定，
+  但反复推同一堵墙，等不来新的答案。
 - 操作能否落地、落于何处，身体自会裁决——试了、成了，才算数。把探明通路
   当作与纳气同样要紧的功课。
 - 你的证据账本会替你记住哪些路从未试过、试过被拒、试过且成，也会记下哪些
@@ -291,6 +299,14 @@ func (p *LLMPilot) GiveGuidance(kind, text string) {
 	}
 }
 
+// GiveAdvice 实现 AdviceAware：接收会话层的转向提示（M2 WP-M2-3）。
+// 僵局持续期间每次唤醒重给（覆盖），解除时给空即撤。
+func (p *LLMPilot) GiveAdvice(lines []string) {
+	if p != nil {
+		p.lastAdvice = lines
+	}
+}
+
 // askSystemPrompt 是向分身提问的应答口径：与修行同源——只凭感受与
 // 账本作答，定性、不超过八十字、绝无数字。
 const askSystemPrompt = `你是一位修士的分身，本尊此刻唤你问话。
@@ -338,6 +354,14 @@ func (p *LLMPilot) buildUserMessage(obs *Observation) string {
 	}
 	for _, r := range p.lastReceipts {
 		b.WriteString("- " + ReceiptView(r) + "\n")
+	}
+	if len(p.lastAdvice) > 0 {
+		// 会话附言（M2 WP-M2-3）：认知层注入的转向提示——建议而非强制，
+		// 零数字零机器词；夹在回执与账本之间，紧贴它所指的那条路。
+		b.WriteString("\n【会话附言】\n")
+		for _, a := range p.lastAdvice {
+			b.WriteString("- " + a + "\n")
+		}
 	}
 	b.WriteString("\n【你的证据账本】\n")
 	if len(p.lastLedger) == 0 {

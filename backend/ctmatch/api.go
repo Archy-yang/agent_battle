@@ -152,7 +152,7 @@ type cultHandle struct {
 // StreamLine 是感知流的一行。
 type StreamLine struct {
 	Tick int64  `json:"tick"`
-	Kind string `json:"kind"` // sense | receipt | event | voice
+	Kind string `json:"kind"` // sense | receipt | event | voice | advice
 	Text string `json:"text"`
 }
 
@@ -474,6 +474,12 @@ func (h *cultHandle) appendTickLines(res *TickResult) {
 	for _, rc := range res.Receipts {
 		h.receipts = append(h.receipts, ReceiptLine{Tick: t, Text: ReceiptView(rc)})
 		h.stream = append(h.stream, StreamLine{Tick: t, Kind: "receipt", Text: "【回执】" + ReceiptView(rc)})
+	}
+	// 转向提示（M2 WP-M2-3）：定性附言随感知流呈现——给玩家的见闻与
+	// 给分身的征询同源，零数字零机器词（感知隔离律不变：不预-render
+	// 任何未揭示的底层结构，只说"这条路试过几次没有不同"）。
+	for _, a := range res.Advice {
+		h.stream = append(h.stream, StreamLine{Tick: t, Kind: "advice", Text: "【附言】" + a})
 	}
 	if line := senseLine(res.Observation); line != "" {
 		h.stream = append(h.stream, StreamLine{Tick: t, Kind: "sense", Text: line})
