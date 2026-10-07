@@ -99,14 +99,27 @@ func evidenceWord(n int) string {
 }
 
 // ---------------------------------------------------------------------------
+// 固化台账（M2 WP-M2-2：功法试跑达标转正即固化在案，成为可复用的功法）
+// ---------------------------------------------------------------------------
+
+// SolidEntry 是一条固化记录：试运行达标转正的功法（stage_2 §29
+// 知识→功法、stage_3 §29）。固化语义：进台账、成为可复用之基；同名
+// 草案此后不可覆盖（draft.go 的草案校验把关）。
+type SolidEntry struct {
+	Name string // 功法名
+	Path string // 定性路径行（protocolPath，"青关 → 下丹田"式）
+}
+
+// ---------------------------------------------------------------------------
 // 账本
 // ---------------------------------------------------------------------------
 
-// EvidenceLedger 是证据账本 + 假说表。全部操作确定性：同输入序列必得
-// 同视图（重演一致性的组成部分）。
+// EvidenceLedger 是证据账本 + 假说表 + 固化台账。全部操作确定性：
+// 同输入序列必得同视图（重演一致性的组成部分）。
 type EvidenceLedger struct {
 	Entries    []EvidenceEntry
 	Hypotheses []*Hypothesis
+	Solidified []SolidEntry
 
 	order []string // 行动键的首次尝试顺序（视图排序依据，不用 map 遍历）
 }
@@ -211,6 +224,16 @@ func (l *EvidenceLedger) SetHypothesisStatus(text string, st HypothesisStatus) b
 	return false
 }
 
+// Solidify 把一门已转正的功法记入固化台账（幂等：同名不重记）。
+func (l *EvidenceLedger) Solidify(name, path string) {
+	for _, e := range l.Solidified {
+		if e.Name == name {
+			return
+		}
+	}
+	l.Solidified = append(l.Solidified, SolidEntry{Name: name, Path: path})
+}
+
 // AgentView 是给 Pilot 征询载荷的定性视图：先列走过的路（三态 + 最近
 // 后果方向），再列猜想。全文零数字。
 func (l *EvidenceLedger) AgentView() []string {
@@ -227,6 +250,9 @@ func (l *EvidenceLedger) AgentView() []string {
 	}
 	for _, h := range l.Hypotheses {
 		out = append(out, "猜想〔"+string(h.Status)+"〕"+h.Text+"（"+evidenceWord(h.Evidence)+"）")
+	}
+	for _, e := range l.Solidified {
+		out = append(out, "功法〔已固化〕"+e.Name+"："+e.Path)
 	}
 	return out
 }

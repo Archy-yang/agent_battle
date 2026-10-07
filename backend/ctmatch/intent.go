@@ -100,12 +100,14 @@ const One = 1000 // 定点 1.0（千分位，与 cult 包标度一致）
 type IntentKind int
 
 const (
-	IntentSense      IntentKind = iota // sense() 主动感知环境
-	IntentAbsorb                       // absorb(target, level)
-	IntentGuide                        // guide(from, to, element, level, amount)
-	IntentStop                         // stop() 停止一切操作
-	IntentInspect                      // inspect(target) 内视指定目标
-	IntentHypothesis                   // record_hypothesis(text) 登记猜想（stage_2 §26 第六接口）
+	IntentSense         IntentKind = iota // sense() 主动感知环境
+	IntentAbsorb                          // absorb(target, level)
+	IntentGuide                           // guide(from, to, element, level, amount)
+	IntentStop                            // stop() 停止一切操作
+	IntentInspect                         // inspect(target) 内视指定目标
+	IntentHypothesis                      // record_hypothesis(text) 登记猜想（stage_2 §26 第六接口）
+	IntentProtocolDraft                   // give_protocol_draft(text) 提交功法 YAML 草案（M2 WP-M2-2）
+	IntentStartProtocol                   // start_protocol(name) 请起功试跑某门已录入的功法（M2 WP-M2-2）
 )
 
 func (k IntentKind) String() string {
@@ -122,6 +124,10 @@ func (k IntentKind) String() string {
 		return "inspect"
 	case IntentHypothesis:
 		return "record_hypothesis"
+	case IntentProtocolDraft:
+		return "give_protocol_draft"
+	case IntentStartProtocol:
+		return "start_protocol"
 	}
 	return "unknown"
 }
@@ -134,6 +140,10 @@ func (k IntentKind) String() string {
 //	Stop              —— 无字段
 //	Inspect           —— Acupoint
 //	RecordHypothesis  —— Text（猜想原文）
+//	ProtocolDraft     —— Text（功法 YAML 草案全文；M2 WP-M2-2。LLM 只提交
+//	                     草案文本，编译/校验/定性回执由会话层裁决——宪法
+//	                     §7：LLM 永不直接创造世界事实）
+//	StartProtocol     —— Text（功法名；起功试跑，前置条件仍由会话层把关）
 type Intent struct {
 	Kind     IntentKind
 	Acupoint string // Absorb 目标 / Inspect 目标（穴位名）

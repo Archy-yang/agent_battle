@@ -135,18 +135,21 @@ func (p *LLMPilot) BudgetLeft() int {
 	return p.MaxCalls - p.Calls
 }
 
-// llmSystemPrompt 是分身的全部"先天认知"：处境、能力清单、修行态度、
-// 意图手册、输出格式。铁律 1：这里没有任何数字，也没有任何世界规律的
-// 剧透——身体如何构成、天地有何属性、操作之间有何因果，分身一律只能
-// 靠实际感受与回执自己摸出来（llm_test.go 锁死）。
-const llmSystemPrompt = `你是一位修士的分身。本尊沉睡未醒，只留下你独自在一间静室中修行。
+// llmSystemPrompt 是分身的全部"先天认知"。铁律 1：这里没有任何数字，
+// 也没有任何世界规律的剧透——身体如何构成、天地有何属性、操作之间有何
+// 因果，分身一律只能靠实际感受与回执自己摸出来（llm_test.go 锁死）。
+//
+// R3 重排（M2 WP-M2-2）：提示词按"处境→每息如何行事→门径如何写成草案→
+// 身体如何作答→输出格式"分段，避免语义膨胀稀释；功法草案的可探索表象
+// 集中在独立一节——只给格架与规矩，不泄公式与参数（界限量用力度档词
+// 表达，分身无需也不能捏造世界之数）。
+const llmSystemPrompt = `【你的处境】
+你是一位修士的分身。本尊沉睡未醒，只留下你独自在一间静室中修行。
 你完全不知道修炼的法门：没有功法，没有口诀，也没有人教过你。你只能凭身体的感受摸索。
 
-你的心愿，是让自身气血活起来：吐故纳新、有进有出、生生不息——而不是把某一处
+【你的心愿】
+让自身气血活起来：吐故纳新、有进有出、生生不息——而不是把某一处
 越胀越满，胀到撕裂。满而不泄是死水，通而不息才是修行。
-
-你能做的事：静静感知、尝试纳气、尝试引导、停下一切、内视自身、
-把猜想记入证据账本、把已经验证过的门径登记在案让身体自己记住。
 
 你身上似有若干可感之处，天地间似有可感之气。这些可感之处之间有无联系、
 如何联系、种种操作有何后果——无人告知你，只能靠你实际的感受与回执
@@ -155,8 +158,7 @@ const llmSystemPrompt = `你是一位修士的分身。本尊沉睡未醒，只�
 一次只信复现过的现象：偶然一得未必是真，同样的操作得到同样的回应，才算数。
 把已验证的门径固化下来，让身体自己记住，此后不必事事从头摸索。
 
-安全为先：异变之感、吃力之感一旦出现，宁可先停，再作道理。
-
+【每息如何行事】
 每息（每个时机）你可以下达一组意图，天生意志决定它们的真实效果；
 效果如何，你会收到回执，也能从下一息的感受里去体会。可用的意图如下：
 
@@ -168,6 +170,12 @@ const llmSystemPrompt = `你是一位修士的分身。本尊沉睡未醒，只�
 - inspect：内视某个穴位。字段：target（穴位名）。
 - record_hypothesis：把你此刻的一条猜想记入证据账本（如「某穴或偏亲某性」）。
   字段：text（猜想原文）。
+- give_protocol_draft：把一门你设计的功法写成草案交上去，身体会替你校验、
+  录入，错了会逐条定性告诉你错在哪一段。字段：text（草案全文，一字不差地
+  按【把门径写成草案】一节的架子写）。
+- start_protocol：请身体起功，照某一门已录入的功法自行运转（试跑）。
+  字段：name（功法名）。试跑期间身体自循，你照常受询；试跑行满周天会
+  收到一份总结回执——成则固化在册，不成交回你修订。
 
 关于这组意图，还有几件事你需要知道：
 
@@ -178,20 +186,54 @@ const llmSystemPrompt = `你是一位修士的分身。本尊沉睡未醒，只�
   就换个源头、去处、力度或方式再试，不要对着同一堵墙反复推。
 - 操作能否落地、落于何处，身体自会裁决——试了、成了，才算数。把探明通路
   当作与纳气同样要紧的功课。
-- 你的证据账本会替你记住哪些路从未试过、试过被拒、试过且成。猜想请交
-  record_hypothesis 登记，由账本里的证据来印证或推翻；修行笔记只是附注，
-  证据才是凭据。
+- 你的证据账本会替你记住哪些路从未试过、试过被拒、试过且成，也会记下哪些
+  功法已固化在册。猜想请交 record_hypothesis 登记，由账本里的证据来印证或
+  推翻；修行笔记只是附注，证据才是凭据。
 - 只有真正纳气、引气时，身体才会有新的感受；静观与内视不会带来新信息。
+
+【把门径写成草案】
+摸索出的门径可以写成一份功法草案交上去。草案照下面的架子写（尖括号处
+换成你的实情，架子本身一字不差）：
+
+protocol: <功法名>
+actions:
+  - absorb: {target: <穴位名>, level: <力度档>}
+  - guide: {from: <穴位名>, to: <穴位名>, element: <五行>, level: <力度档>}
+validated_range:
+  - channel: [<穴位名>, <穴位名>]
+    element: <五行>
+    max_level: <力度档>
+cadence: <每步默认延续几息>
+cycles: <行多少个周天>
+
+规矩：
+- 动作只有纳气与引气两种，各占一行；只写你亲身感知过的穴位；两穴之间的
+  通路，须是回执告诉过你「试过且成」的。
+- validated_range 是你敢让身体自循的界限：上限用力度档表达——写了某档，
+  即是宣告"这一档以内的流量我都走过"。没写界限的通路，身体一步也不敢
+  自循，起功即停。
+- 同一息里并作的几段，各自标上相同的 parallel: <组号>——相邻同号的段
+  同息并作，同息各段的延续息数必须一致。
+- 各步可写 duration: <延续几息>；不写则一步一息。cycles 不写只行一个
+  周天——要验出真章，请多写些。
+- 交上去后身体逐条校验：错在哪一段、错在何处，回执会定性相告；照回执
+  修订再交便是。试跑达标，功法即固化在册，成为可复用之基。
+
+【身体如何作答】
 - 状态之语的次序：开度由闭到开是「闭、微开、半开、大开、洞开」；
   稳固由强到弱是「稳如磐石、稳固、微澜、不稳、将溃」；
   损伤由轻到重是「无损、隐伤、作痛、重创、脉裂」。
+- 力度粗档只有四档：trace（极微）、small（少量）、medium（中等）、large（大量）。
 
-力度粗档只有四档：trace（极微）、small（少量）、medium（中等）、large（大量）。
+【安全为先】
+异变之感、吃力之感一旦出现，宁可先停，再作道理。
 
+【输出格式】
 每息你只能输出一个 JSON 对象，除此之外一个字都不要输出。格式如下：
 {"cognition": "你此刻的心得：你对身体、灵气与门径的新认识、猜测与下一步打算",
  "intents": [{"kind": "absorb", "target": "某穴位", "level": "small"},
              {"kind": "guide", "from": "某穴位", "to": "另一穴位", "level": "medium"},
+             {"kind": "start_protocol", "name": "某功法"},
              {"kind": "record_hypothesis", "text": "你的猜想原文"}]}
 intents 也可以是空数组。cognition 会被记入你的修行笔记（附注），下次唤醒时原样还给你。`
 
@@ -391,7 +433,8 @@ type llmIntent struct {
 	To      string `json:"to"`
 	Element string `json:"element"`
 	Level   string `json:"level"`
-	Text    string `json:"text"` // record_hypothesis 的猜想原文
+	Text    string `json:"text"` // record_hypothesis 猜想 / give_protocol_draft 草案全文
+	Name    string `json:"name"` // start_protocol 的功法名
 }
 
 type llmResponse struct {
@@ -454,6 +497,18 @@ func (r *llmResponse) toIntents() []Intent {
 		case "record_hypothesis", "hypothesis":
 			it.Kind = IntentHypothesis
 			it.Text = strings.TrimSpace(li.Text)
+		case "give_protocol_draft", "protocol_draft", "draft":
+			// M2 WP-M2-2：功法 YAML 草案全文。编译校验与定性回执由会话
+			// 层裁决（draft.go）——本包只搬运文本，不做世界相关校验。
+			it.Kind = IntentProtocolDraft
+			it.Text = li.Text
+		case "start_protocol", "start":
+			// 请起功试跑：会话层按功法名与前置条件把关。
+			it.Kind = IntentStartProtocol
+			it.Text = strings.TrimSpace(li.Name)
+			if it.Text == "" {
+				it.Text = strings.TrimSpace(li.Text)
+			}
 		default:
 			continue
 		}

@@ -188,10 +188,11 @@ type yamlGuard struct {
 }
 
 type yamlRange struct {
-	Channel []string `yaml:"channel"` // [from, to]
-	Element string   `yaml:"element"`
-	Min     int64    `yaml:"min"`
-	Max     int64    `yaml:"max"`
+	Channel  []string `yaml:"channel"` // [from, to]
+	Element  string   `yaml:"element"`
+	Min      int64    `yaml:"min"`
+	Max      int64    `yaml:"max"`
+	MaxLevel string   `yaml:"max_level"` // 力度档表述的上限（分身草案表象；编译期经 FlowForLevel 定格）
 }
 
 type yamlProtocol struct {
@@ -204,6 +205,26 @@ type yamlProtocol struct {
 	ValidatedRange []yamlRange `yaml:"validated_range"`
 }
 
+// CompileError 是编译拒绝的结构化错误（M2 WP-M2-2）：
+//   - Error() 维持机读口径（转录、既有测试锁定的措辞）；
+//   - Agent 是定性化错误行（零数字、零 ASCII 字母——感知隔离律对回执
+//     同样成立），供分身草案回执与玩家界面渲染。每行自含、可指导修订。
+type CompileError struct {
+	Name    string   // 功法名（yaml 级解析失败时为空）
+	Machine []string // 机读错误（原 Compile 口径）
+	Agent   []string // 定性错误行
+}
+
+func (e *CompileError) Error() string {
+	if e.Name == "" {
+		return e.Machine[0]
+	}
+	return fmt.Sprintf("protocol %q rejected: %s", e.Name, strings.Join(e.Machine, "; "))
+}
+
+// AgentView 返回定性错误行（回执/界面用，零数字零机器词）。
+func (e *CompileError) AgentView() []string { return e.Agent }
+
 // Compile 解析并静态校验一份 Protocol YAML（针对指定身体图）。
 // 穴位/经脉存在性、边序列合法性（修订包 C1：每条 guide 边须是图中真实
 // 经脉，任一方向；逆流边只允许核点发起）、参数域（档位/强度/流量/
@@ -211,21 +232,27 @@ type yamlProtocol struct {
 func Compile(data []byte, g *cult.BodyGraph) (*Protocol, error) {
 	var y yamlProtocol
 	if err := yaml.Unmarshal(data, &y); err != nil {
-		return nil, fmt.Errorf("protocol yaml: %w", err)
+		return nil, &CompileError{
+			Machine: []string{fmt.Sprintf("protocol yaml: %v", err)},
+			Agent:   []string{"草案的字句没能读懂——像是格式有误，请比照草案的架子逐字核对。"},
+		}
 	}
 	return compileYAML(&y, g)
 }
 
+// cdiag 是一条双口径编译诊断：m 机读、a 定性（零数字零机器词）。
+type cdiag struct{ m, a string }
+
 func compileYAML(y *yamlProtocol, g *cult.BodyGraph) (*Protocol, error) {
-	var errs []string
-	add := func(format string, args ...any) { errs = append(errs, fmt.Sprintf(format, args...)) }
+	var errs, qerrs []string
+	add2 := func(m, a string) { errs = append(errs, m); qerrs = append(qerrs, a) }
 
 	p := &Protocol{Name: y.Protocol, Cadence: y.Cadence, Cycles: y.Cycles, Status: StatusDraft}
 	if p.Name == "" {
-		add("protocol: name is required")
+		add2("protocol: name is required", "这份功法还没有名字——先给它起个名号。")
 	}
 	if p.Cadence < 0 {
-		add("cadence: must be >= 0")
+		add2("cadence: must be >= 0", "节律的息数写反了，不该是负数。")
 	}
 	if p.Cadence == 0 {
 		p.Cadence = 1
@@ -238,200 +265,244 @@ func compileYAML(y *yamlProtocol, g *cult.BodyGraph) (*Protocol, error) {
 
 	// 前置条件。
 	for i, c := range y.Preconditions {
-		cond, err := compileCond(&c, nameIdx)
-		if err != nil {
-			add("preconditions[%d]: %v", i, err)
+		cond, d := compileCond(&c, nameIdx, "起功条件")
+		if d != nil {
+			add2(fmt.Sprintf("preconditions[%d]: %v", i, d.m), "起功条件有误："+d.a)
 			continue
 		}
-		p.Preconditions = append(p.Preconditions, cond)
+		p.Preconditions = append(p.Preconditions, *cond)
 	}
 
 	// 动作序列。
 	for i, s := range y.Actions {
+		head := "第" + cnum(i+1) + "段："
 		switch {
 		case s.Absorb != nil && s.Guide != nil:
-			add("actions[%d]: absorb and guide are mutually exclusive", i)
+			add2(fmt.Sprintf("actions[%d]: absorb and guide are mutually exclusive", i),
+				head+"一段既想纳气又想引气——一段只做得一件事。")
 		case s.Absorb != nil:
-			st, err := compileAbsorb(s.Absorb, nameIdx)
-			if err != nil {
-				add("actions[%d]: %v", i, err)
+			st, d := compileAbsorb(s.Absorb, nameIdx)
+			if d != nil {
+				add2(fmt.Sprintf("actions[%d]: %v", i, d.m), head+d.a)
 				continue
 			}
 			st.Parallel = s.Absorb.Parallel
 			p.Steps = append(p.Steps, st)
 		case s.Guide != nil:
-			st, err := compileGuide(s.Guide, g, nameIdx)
-			if err != nil {
-				add("actions[%d]: %v", i, err)
+			st, d := compileGuide(s.Guide, g, nameIdx)
+			if d != nil {
+				add2(fmt.Sprintf("actions[%d]: %v", i, d.m), head+d.a)
 				continue
 			}
 			st.Parallel = s.Guide.Parallel
 			p.Steps = append(p.Steps, st)
 		default:
-			add("actions[%d]: must specify absorb or guide", i)
+			add2(fmt.Sprintf("actions[%d]: must specify absorb or guide", i),
+				head+"这一段既不是纳气也不是引气，身体无从做起。")
 		}
 	}
 	if len(p.Steps) == 0 {
-		add("actions: at least one step is required")
+		add2("actions: at least one step is required", "草案里没有一段可行的行功——至少要有一段纳气或引气。")
 	}
 
 	// 同息并行编排（SPIKE 结论三：吸收-引流同息并行，化解纳引相位割裂）。
 	slots, err := buildSlots(p.Steps, p.Cadence)
 	if err != nil {
-		add("actions: %v", err)
+		add2("actions: "+err.Error(), slotDiagText(err))
 	} else {
 		p.Slots = slots
 	}
 
 	// Guards。
 	for i, gr := range y.Guards {
-		cond, err := compileCond(&gr.When, nameIdx)
-		if err != nil {
-			add("guards[%d]: %v", i, err)
+		cond, d := compileCond(&gr.When, nameIdx, "护卫条件")
+		if d != nil {
+			add2(fmt.Sprintf("guards[%d]: %v", i, d.m), "护卫条件有误："+d.a)
 			continue
 		}
 		switch GuardAction(gr.Do) {
 		case GuardStop, GuardReduceFlow:
 		default:
-			add("guards[%d]: unknown action %q (want stop|reduce_flow)", i, gr.Do)
+			add2(fmt.Sprintf("guards[%d]: unknown action %q (want stop|reduce_flow)", i, gr.Do),
+				"护卫的处置只识「即止」与「缓行」。")
 			continue
 		}
-		p.Guards = append(p.Guards, Guard{When: cond, Do: GuardAction(gr.Do)})
+		p.Guards = append(p.Guards, Guard{When: *cond, Do: GuardAction(gr.Do)})
 	}
 
-	// 已验证流量区间（stage_3 §30）。
+	// 已验证流量区间（stage_3 §30）。max_level：以力度档表述的上限
+	//（分身草案表象，R3——分身的世界里没有数字，界限用档位词表达；
+	// 编译期经既有的档位换算 FlowForLevel 定格为区间，属 Intent 侧
+	// 粗档位语义，非新世界法则）。
 	for i, r := range y.ValidatedRange {
 		if len(r.Channel) != 2 {
-			add("validated_range[%d]: channel must be [from, to]", i)
+			add2(fmt.Sprintf("validated_range[%d]: channel must be [from, to]", i),
+				"界限有误：界限须指明一来一去两处穴位。")
 			continue
 		}
-		ch, err := resolveRangeChannel(g, r.Channel, nameIdx)
-		if err != nil {
-			add("validated_range[%d]: %v", i, err)
+		ch, fi, ti, d := resolveRangeChannel(g, r.Channel, nameIdx)
+		if d != nil {
+			add2(fmt.Sprintf("validated_range[%d]: %v", i, d.m), "界限有误："+d.a)
 			continue
 		}
-		elem, err := parseElement(r.Element)
-		if err != nil {
-			add("validated_range[%d]: %v", i, err)
+		elem, d := parseElementDiag(r.Element)
+		if d != nil {
+			add2(fmt.Sprintf("validated_range[%d]: %v", i, d.m), "界限有误："+d.a)
 			continue
 		}
-		if r.Min < 0 || r.Max < r.Min {
-			add("validated_range[%d]: need 0 <= min <= max", i)
+		maxV := r.Max
+		if r.MaxLevel != "" {
+			lv, lvErr := ParseLevel(r.MaxLevel)
+			if lvErr != nil {
+				add2(fmt.Sprintf("validated_range[%d]: %v", i, lvErr),
+					"界限有误：界限的力度档不在四档之内（微微、少量、中等、大量）。")
+				continue
+			}
+			if maxV != 0 {
+				add2(fmt.Sprintf("validated_range[%d]: max and max_level are mutually exclusive", i),
+					"界限有误：上限的定数与力度档只可写其一。")
+				continue
+			}
+			maxV = FlowForLevel(lv, g, fi, ti, ch)
+		}
+		if r.Min < 0 || maxV < r.Min {
+			add2(fmt.Sprintf("validated_range[%d]: need 0 <= min <= max", i),
+				"界限有误：界限的下限高过了上限，或出了可行之域。")
 			continue
 		}
-		p.Ranges = append(p.Ranges, ValidatedRange{Channel: ch, Element: elem, Min: r.Min, Max: r.Max})
+		p.Ranges = append(p.Ranges, ValidatedRange{Channel: ch, Element: elem, Min: r.Min, Max: maxV})
 	}
 
 	if len(errs) > 0 {
-		return nil, fmt.Errorf("protocol %q rejected: %s", y.Protocol, strings.Join(errs, "; "))
+		return nil, &CompileError{Name: y.Protocol, Machine: errs, Agent: qerrs}
 	}
 	return p, nil
 }
 
-func compileAbsorb(a *yamlAbsorb, nameIdx map[string]int) (Step, error) {
+func compileAbsorb(a *yamlAbsorb, nameIdx map[string]int) (Step, *cdiag) {
 	idx, ok := nameIdx[a.Target]
 	if !ok {
-		return Step{}, fmt.Errorf("absorb: unknown acupoint %q", a.Target)
+		return Step{}, &cdiag{m: fmt.Sprintf("absorb: unknown acupoint %q", a.Target),
+			a: fmt.Sprintf("纳气的落点「%s」，你尚未辨识——它并非你身上的可感之处。", a.Target)}
 	}
 	lv, err := ParseLevel(a.Level)
 	if err != nil {
-		return Step{}, fmt.Errorf("absorb: %v", err)
+		return Step{}, &cdiag{m: fmt.Sprintf("absorb: %v", err),
+			a: "力度档不在四档之内（微微、少量、中等、大量）。"}
 	}
 	if lv == LevelUnset && (a.Intensity <= 0 || a.Intensity > One) {
-		return Step{}, fmt.Errorf("absorb: need level or intensity in (0,1]")
+		return Step{}, &cdiag{m: "absorb: need level or intensity in (0,1]",
+			a: "既未写力度档，也未写纳气之量——总得说明一份。"}
 	}
 	if lv != LevelUnset && a.Intensity != 0 {
-		return Step{}, fmt.Errorf("absorb: level and intensity are mutually exclusive")
+		return Step{}, &cdiag{m: "absorb: level and intensity are mutually exclusive",
+			a: "力度档与纳气之量只可写其一。"}
 	}
 	dur := a.Duration
 	if dur < 0 {
-		return Step{}, fmt.Errorf("absorb: negative duration")
+		return Step{}, &cdiag{m: "absorb: negative duration", a: "延续的息数不该是负数。"}
 	}
 	return Step{Kind: StepAbsorb, PointIdx: idx, Level: lv, Intensity: a.Intensity, Duration: dur}, nil
 }
 
-func compileGuide(gd *yamlGuide, g *cult.BodyGraph, nameIdx map[string]int) (Step, error) {
-	from, ok := nameIdx[gd.From]
-	if !ok {
-		return Step{}, fmt.Errorf("guide: unknown acupoint %q", gd.From)
-	}
-	to, ok := nameIdx[gd.To]
-	if !ok {
-		return Step{}, fmt.Errorf("guide: unknown acupoint %q", gd.To)
+func compileGuide(gd *yamlGuide, g *cult.BodyGraph, nameIdx map[string]int) (Step, *cdiag) {
+	from, ok1 := nameIdx[gd.From]
+	to, ok2 := nameIdx[gd.To]
+	switch {
+	case !ok1:
+		return Step{}, &cdiag{m: fmt.Sprintf("guide: unknown acupoint %q", gd.From),
+			a: fmt.Sprintf("引气的来处「%s」，你尚未辨识——它并非你身上的可感之处。", gd.From)}
+	case !ok2:
+		return Step{}, &cdiag{m: fmt.Sprintf("guide: unknown acupoint %q", gd.To),
+			a: fmt.Sprintf("引气的去处「%s」，你尚未辨识——它并非你身上的可感之处。", gd.To)}
 	}
 	// 边序列校验（修订包 C1）：每条边须是真实经脉（任一方向）；
 	// 逆流边（声明向与天然向相反）只允许核点发起（A2，结构判据同引擎核）。
 	ch, rev, found := edgeFor(g, from, to)
 	if !found {
 		if from == to {
-			return Step{}, fmt.Errorf("guide: from and to are the same acupoint %q", gd.From)
+			return Step{}, &cdiag{m: fmt.Sprintf("guide: from and to are the same acupoint %q", gd.From),
+				a: "引气的来处与去处是同一处——气无处可去。"}
 		}
-		return Step{}, fmt.Errorf("guide: no channel %q -> %q (path not connected)", gd.From, gd.To)
+		return Step{}, &cdiag{m: fmt.Sprintf("guide: no channel %q -> %q (path not connected)", gd.From, gd.To),
+			a: fmt.Sprintf("想让气自「%s」去「%s」，可这两处之间没有相连的经脉——先探明通路再写进草案。", gd.From, gd.To)}
 	}
 	if rev && !isCorePoint(g, from) {
-		return Step{}, fmt.Errorf("guide: reverse edge %q -> %q denied: only the core point may push against the natural flow", gd.From, gd.To)
+		return Step{}, &cdiag{m: fmt.Sprintf("guide: reverse edge %q -> %q denied: only the core point may push against the natural flow", gd.From, gd.To),
+			a: fmt.Sprintf("想让气自「%s」逆着自然走向去「%s」——逆流而行，唯丹田推得动。", gd.From, gd.To)}
 	}
-	elem, err := parseElement(gd.Element)
-	if err != nil {
-		return Step{}, fmt.Errorf("guide: %v", err)
+	elem, d := parseElementDiag(gd.Element)
+	if d != nil {
+		return Step{}, &cdiag{m: fmt.Sprintf("guide: %v", d.m), a: d.a}
 	}
 	lv, err := ParseLevel(gd.Level)
 	if err != nil {
-		return Step{}, fmt.Errorf("guide: %v", err)
+		return Step{}, &cdiag{m: fmt.Sprintf("guide: %v", err),
+			a: "力度档不在四档之内（微微、少量、中等、大量）。"}
 	}
 	if lv == LevelUnset && gd.Amount <= 0 {
-		return Step{}, fmt.Errorf("guide: need level or positive amount")
+		return Step{}, &cdiag{m: "guide: need level or positive amount",
+			a: "既未写力度档，也未写引气之量——总得说明一份。"}
 	}
 	if lv != LevelUnset && gd.Amount != 0 {
-		return Step{}, fmt.Errorf("guide: level and amount are mutually exclusive")
+		return Step{}, &cdiag{m: "guide: level and amount are mutually exclusive",
+			a: "力度档与引气之量只可写其一。"}
 	}
 	dur := gd.Duration
 	if dur < 0 {
-		return Step{}, fmt.Errorf("guide: negative duration")
+		return Step{}, &cdiag{m: "guide: negative duration", a: "延续的息数不该是负数。"}
 	}
 	return Step{Kind: StepGuide, From: from, To: to, Channel: ch, Reverse: rev, Element: elem,
 		Level: lv, Amount: gd.Amount, Duration: dur}, nil
 }
 
 // resolveRangeChannel 解析 validated_range 的 channel [from, to]：
-// 与 guide 步骤同用 edgeFor（任一方向，含逆流边）。
-func resolveRangeChannel(g *cult.BodyGraph, names []string, nameIdx map[string]int) (int, error) {
-	fi, ok1 := nameIdx[names[0]]
-	ti, ok2 := nameIdx[names[1]]
+// 与 guide 步骤同用 edgeFor（任一方向，含逆流边）。一并返回两端下标，
+// 供 max_level 档位换算（FlowForLevel 需知路径两端）。
+func resolveRangeChannel(g *cult.BodyGraph, names []string, nameIdx map[string]int) (ch, fi, ti int, d *cdiag) {
+	f, ok1 := nameIdx[names[0]]
+	t, ok2 := nameIdx[names[1]]
 	if !ok1 {
-		return -1, fmt.Errorf("unknown acupoint %q", names[0])
+		return -1, -1, -1, &cdiag{m: fmt.Sprintf("unknown acupoint %q", names[0]),
+			a: fmt.Sprintf("界限里提到的「%s」，你尚未辨识——它并非你身上的可感之处。", names[0])}
 	}
 	if !ok2 {
-		return -1, fmt.Errorf("unknown acupoint %q", names[1])
+		return -1, -1, -1, &cdiag{m: fmt.Sprintf("unknown acupoint %q", names[1]),
+			a: fmt.Sprintf("界限里提到的「%s」，你尚未辨识——它并非你身上的可感之处。", names[1])}
 	}
-	ch, _, found := edgeFor(g, fi, ti)
+	c, _, found := edgeFor(g, f, t)
 	if !found {
-		return -1, fmt.Errorf("guide: no channel %q -> %q (path not connected)", names[0], names[1])
+		return -1, -1, -1, &cdiag{m: fmt.Sprintf("guide: no channel %q -> %q (path not connected)", names[0], names[1]),
+			a: fmt.Sprintf("界限里的「%s」与「%s」之间，并没有相连的经脉。", names[0], names[1])}
 	}
-	return ch, nil
+	return c, f, t, nil
 }
 
-func compileCond(c *yamlCond, nameIdx map[string]int) (Cond, error) {
+func compileCond(c *yamlCond, nameIdx map[string]int, label string) (*Cond, *cdiag) {
 	idx, ok := nameIdx[c.Point]
 	if !ok {
-		return Cond{}, fmt.Errorf("unknown acupoint %q", c.Point)
+		return nil, &cdiag{m: fmt.Sprintf("unknown acupoint %q", c.Point),
+			a: fmt.Sprintf("所察之处「%s」，你尚未辨识——它并非你身上的可感之处。", c.Point)}
 	}
 	m := Metric(c.Metric)
 	switch m {
 	case MetricPressure, MetricStrain, MetricStability, MetricDamage,
 		MetricFlowShock, MetricLoadRatio, MetricCurrentFlow:
 	default:
-		return Cond{}, fmt.Errorf("unknown metric %q", c.Metric)
+		return nil, &cdiag{m: fmt.Sprintf("unknown metric %q", c.Metric),
+			a: "所察的东西，身体无从察起（可察的是：压力、劳损、稳固、损伤、震荡、载重、流速）。"}
 	}
 	switch c.Op {
 	case ">=", ">", "<=", "<":
 	default:
-		return Cond{}, fmt.Errorf("unknown op %q (want >= > <= <)", c.Op)
+		return nil, &cdiag{m: fmt.Sprintf("unknown op %q (want >= > <= <)", c.Op),
+			a: "比较的方式身体不识，只识高于、低于及其等同之语。"}
 	}
 	if c.Value < 0 || c.Value > 100*One {
-		return Cond{}, fmt.Errorf("value %d out of domain [0,100]", c.Value)
+		return nil, &cdiag{m: fmt.Sprintf("value %d out of domain [0,100]", c.Value),
+			a: "界限之数出了身体可度量的范围。"}
 	}
-	return Cond{PointIdx: idx, Metric: m, Op: c.Op, Value: c.Value}, nil
+	return &Cond{PointIdx: idx, Metric: m, Op: c.Op, Value: c.Value}, nil
 }
 
 func pointIndex(g *cult.BodyGraph) map[string]int {
@@ -491,6 +562,50 @@ func parseElement(s string) (int, error) {
 		return cult.Water, nil
 	}
 	return -1, fmt.Errorf("unknown element %q", s)
+}
+
+// parseElementDiag 是 parseElement 的双口径包装（定性措辞零数字零机器词）。
+func parseElementDiag(s string) (int, *cdiag) {
+	e, err := parseElement(s)
+	if err != nil {
+		return -1, &cdiag{m: err.Error(), a: "所引的五行不在五行之列（木、火、土、金、水，或不挑属性）。"}
+	}
+	return e, nil
+}
+
+// cnum 把序号转成中文数词（"一"、"十二"、"二十五"……）——定性错误行
+// 里的"第几段"用，绝无阿拉伯数字（感知隔离律）。
+func cnum(n int) string {
+	if n <= 0 {
+		return "〇"
+	}
+	var digits = [...]string{"", "一", "二", "三", "四", "五", "六", "七", "八", "九"}
+	switch {
+	case n < 10:
+		return digits[n]
+	case n < 20:
+		return "十" + digits[n-10]
+	case n < 100:
+		return digits[n/10] + "十" + digits[n%10]
+	case n < 1000:
+		if n%100 == 0 {
+			return digits[n/100] + "百"
+		}
+		if n%100 < 10 {
+			return digits[n/100] + "百零" + digits[n%100]
+		}
+		return digits[n/100] + "百" + cnum(n%100)
+	}
+	return "多"
+}
+
+// slotDiagText 把 buildSlots 的机读错误映射成定性措辞（同息编排两类错）。
+func slotDiagText(err error) string {
+	msg := err.Error()
+	if strings.Contains(msg, "must be >= 0") {
+		return "同息并行的组号不该是负数。"
+	}
+	return "同息并行的几段，延续的息数须一致，方得同起同息。"
 }
 
 // ---------------------------------------------------------------------------

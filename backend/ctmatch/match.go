@@ -227,19 +227,6 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 		s.IntentLog = append(s.IntentLog, IntentLogEntry{Tick: s.World.Tick, Intent: it})
 	}
 
-	// 0.5 假说登记（stage_2 §26 第六接口；非动作意图，不打断 Runtime）。
-	var receipts []IntentReceipt
-	for _, it := range pending {
-		if it.Kind != IntentHypothesis {
-			continue
-		}
-		s.Ledger.RecordHypothesis(it.Text, s.World.Tick)
-		receipts = append(receipts, IntentReceipt{
-			Tick: s.World.Tick, Kind: it.Kind,
-			Summary: intentSummary(it), Outcome: WordNoted,
-		})
-	}
-
 	// 1. 升级挂起 → 唤醒 Pilot（stage_2 §34 行为生命周期最后一段）。
 	// 征询载荷携带：最新观察 + 上一组意图的回执 + 证据账本视图
 	//（全部定性措辞、零数字——铁律 1/6）。
@@ -261,6 +248,31 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 		pending = append(pending, pi...)
 	}
 	s.lastEscalated = false
+
+	// 1.5 记账类意图结算（非动作意图，不打断 Runtime）：假说登记（stage_2
+	// §26 第六接口）；功法草案提交与起功试跑（M2 WP-M2-2——分身只提交
+	// Intent，编译校验/起功资格/固化由会话层与世界法则裁决）。放在唤醒
+	// 之后统一结算：分身本息交出的记账类意图与队列/参数意图同一口径，
+	// 每条恰一回执（修正旧序中分身假说拿不到回执的缺口）。
+	var receipts []IntentReceipt
+	var kept []Intent
+	for _, it := range pending {
+		switch it.Kind {
+		case IntentHypothesis:
+			s.Ledger.RecordHypothesis(it.Text, s.World.Tick)
+			receipts = append(receipts, IntentReceipt{
+				Tick: s.World.Tick, Kind: it.Kind,
+				Summary: intentSummary(it), Outcome: WordNoted,
+			})
+		case IntentProtocolDraft:
+			receipts = append(receipts, s.settleProtocolDraft(it))
+		case IntentStartProtocol:
+			receipts = append(receipts, s.settleProtocolStart(it))
+		default:
+			kept = append(kept, it)
+		}
+	}
+	pending = kept
 
 	// 2. 产出本 Tick 的 Ops。
 	var ops cult.Ops
@@ -285,7 +297,9 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 				s.pushEvent(*ev)
 				s.lastEscalated = true
 				res.Escalated = true
-				res.Receipts = s.settleReceipts(pending, nil, res, true)
+				// 本 Tick 已落的记账类回执（假说/草案/起功）一并保留
+				//（铁律 6：每意图恰一条，升级 Tick 不吞回执）。
+				res.Receipts = append(receipts, s.settleReceipts(pending, nil, res, true)...)
 				s.keepReceipts(res)
 				res.Events = s.drainNewEvents()
 				return res
@@ -301,6 +315,7 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 		}
 	}
 
+	var conclusion IntentReceipt
 	if runtimePath {
 		wasDone := s.active.done
 		s.World.Ops = ops
@@ -325,6 +340,7 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 		}
 		if s.active != nil && s.active.done {
 			s.finishTrial(res)
+			conclusion = s.trialConclusion() // 试跑总结回执：固化或修订交回分身（M2 WP-M2-2）
 			s.active = nil
 		}
 	} else {
@@ -336,6 +352,10 @@ func Tick(s *CultSession, intents []Intent) *TickResult {
 	}
 
 	// 5. 回执结算（铁律 6）：每 Tick 每意图恰一条，随观察一并可供 Pilot 感知。
+	// 试跑总结回执（若有）排在记账类回执之后、动作回执之前。
+	if conclusion.Tick > 0 || conclusion.Summary != "" {
+		receipts = append(receipts, conclusion)
+	}
 	receipts = append(receipts, s.settleReceipts(pending, plans, res, runtimePath)...)
 	res.Receipts = receipts
 	s.keepReceipts(res)
@@ -368,7 +388,8 @@ func (s *CultSession) keepReceipts(res *TickResult) {
 }
 
 // finishTrial 在试跑结束（跑满 Cycles）时做达标判定，达标即转正
-// （stage_2 §29 / stage_3 §29：draft → validated）。
+// （stage_2 §29 / stage_3 §29：draft → validated），并固化在案（M2
+// WP-M2-2：进台账，成为可复用的功法；同名草案此后不可覆盖）。
 func (s *CultSession) finishTrial(res *TickResult) {
 	if s.Trial == nil || s.active == nil || s.active.proto != s.Trial.proto {
 		return
@@ -377,9 +398,11 @@ func (s *CultSession) finishTrial(res *TickResult) {
 	if !sum.Qualified {
 		return
 	}
-	s.active.proto.Status = StatusValidated
+	p := s.active.proto
+	p.Status = StatusValidated
+	s.Ledger.Solidify(p.Name, protocolPath(p, &s.World.Character.BodyGraph))
 	s.pushEvent(Event{
-		Kind: EventProtocolValidated, Tick: s.World.Tick, Protocol: s.active.proto.Name,
+		Kind: EventProtocolValidated, Tick: s.World.Tick, Protocol: p.Name,
 		Reason: "trial cycles held steady with losses well under one in ten and stability never wavering; promoted to validated",
 		Detail: map[string]int64{
 			"successful_cycles": int64(sum.SuccessfulCycles),

@@ -1300,7 +1300,8 @@ func (r *CultRegistry) HandleProtocols(w http.ResponseWriter, req *http.Request)
 	p, err := Compile([]byte(body.YAML), &h.sess.World.Character.BodyGraph)
 	if err != nil {
 		r.mu.Unlock()
-		writeCultErr(w, http.StatusBadRequest, err.Error())
+		// 界面层回执定性化（M2 WP-M2-2）：零数字、零机器词，逐条可指导修订。
+		writeCultErr(w, http.StatusBadRequest, strings.Join(draftErrLines(err), " "))
 		return
 	}
 	h.sess.LoadProtocol(p)

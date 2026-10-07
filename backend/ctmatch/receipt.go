@@ -28,6 +28,7 @@ const (
 	WordBlocked  = "穴未开或满溢不入" // 意图交出了，身体却没有接纳
 	WordUnclear  = "意图不明"     // 缺少必要说明（如未给出力度）
 	WordNoted    = "已记下"      // 记账类意图（如 record_hypothesis）
+	WordUnproven = "未足为凭"     // 试跑完毕但未达转正之准（M2 WP-M2-2）
 )
 
 // 落地后的粗档后果方向词：只给方向，不给数。
@@ -106,6 +107,10 @@ func intentSummary(it Intent) string {
 		return "引气自" + it.From + "至" + it.To + elementWord(it.Element) + levelWord(it.Level)
 	case IntentHypothesis:
 		return "记下一条猜想"
+	case IntentProtocolDraft:
+		return "呈上一份功法草案"
+	case IntentStartProtocol:
+		return "请起功「" + it.Text + "」"
 	}
 	return "一份不明的心意"
 }
