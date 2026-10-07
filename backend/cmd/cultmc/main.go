@@ -1476,8 +1476,18 @@ func main() {
 	ticks := flag.Int("ticks", 3000, "P1 场景的 Tick 预算")
 	nChars := flag.Int("chars", 1000, "SA 千级扫描角色数（seed = 1..N）")
 	nBodies := flag.Int("bodies", 24, "SB 路线对照身体数")
+	only := flag.String("only", "", "只跑指定场景组（\"sc\" = SC 角色差异性矩阵），默认全量")
 	outPath := flag.String("out", "", "报告输出路径（默认 stdout）")
 	flag.Parse()
+
+	// SC 角色差异性矩阵可单跑（WP-M2-4 批测；全量模式在报告尾部附带同款
+	// 场景，见 main 尾部）。
+	if *only == "sc" {
+		acc := &accounting{}
+		sin := runScanCMatrix(acc)
+		fmt.Print(renderSCReport(sin))
+		return
+	}
 
 	start := time.Now()
 	acc := &accounting{}
@@ -1578,7 +1588,10 @@ func main() {
 		sin.p14[k] = runP14(uint64(50000+k), scanAcc)
 	}
 
-	report := renderReport(in) + renderScanReport(sin)
+	// SC 角色差异性矩阵（WP-M2-4；报告尾部附带，同 sc.go 单跑口径）。
+	scIn := runScanCMatrix(scanAcc)
+
+	report := renderReport(in) + renderScanReport(sin) + renderSCReport(scIn)
 	if *outPath == "" {
 		fmt.Print(report)
 		return
