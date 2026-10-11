@@ -72,8 +72,28 @@ type rig struct {
 }
 
 func newRig(seed uint64) *rig {
-	w := ctmatch.SpikeWorld()
+	return newRigWorld(func() *cult.World {
+		w := ctmatch.SpikeWorld()
+		w.NoiseSeed = seed
+		return w
+	}())
+}
+
+// newRigGrown 构造「修行有成」身体的 rig（J6 成长终态口径：环上开度
+// 修满、传导 940、容量 30000/通量 10000、稳定满格、初载改由场景自控；
+// 角色亲和取均衡——0.8.0 起 P2 轨道-流派对照移到本身体上复测，归因见
+// runP2Track 注）。世界装配与 scWorld 的成长覆盖同源。
+func newRigGrown(seed uint64) *rig {
+	w := scWorld(0)
 	w.NoiseSeed = seed
+	for i := range w.Character.BodyGraph.Acupoints {
+		w.Character.BodyGraph.Acupoints[i].Qi = [cult.ElementCount]int64{}
+	}
+	return newRigWorld(w)
+}
+
+// newRigWorld 从给定世界解析主环拓扑构造 rig。
+func newRigWorld(w *cult.World) *rig {
 	g := &w.Character.BodyGraph
 	idx := map[string]int{}
 	for i, a := range g.Acupoints {
@@ -184,6 +204,33 @@ func (r *rig) roundAHold(absorb int64) []cult.Ops {
 // roundBProp 轨道乙逆流捷径轮：逆 ch5（丹田→青关，存量 10%）+ 顺 ch5 归元。
 func (r *rig) roundBProp(absorb int64) []cult.Ops {
 	return []cult.Ops{r.absorbOps(absorb, r.revProp(100), flow(r.ring[5], 4000, false))}
+}
+
+// roundAPropSafe / roundBPropSafe 是 0.8.0 热预算内档的轨道轮（B7 环经济
+// 学裁决归因：0.7.1 档的 10% 存量出口 + 4000/元素排空在 0.8.0 热负荷应变
+// 下是火候过猛——土府/青关在数十轮内走火（P1/P2/P7 回归归因，单 seed
+// 探针 K=0 复绿证实）。两轮把出口收到存量 2%（自节流语义不变）、排空
+// 收到 800/元素；腾挪/成长类命题的时标相应放慢，轮数在各场景内补偿。
+func (r *rig) roundAPropSafe(absorb int64) []cult.Ops {
+	return r.roundAPropSafeFlush(800, absorb)
+}
+
+func (r *rig) roundBPropSafe(absorb int64) []cult.Ops {
+	return []cult.Ops{r.absorbOps(absorb, r.revProp(20), flow(r.ring[5], 800, false))}
+}
+
+// roundAPropSafeFlush 是排空量可调的变体（P1B 用更温和的排空，见其注释）。
+func (r *rig) roundAPropSafeFlush(flush int64, absorb int64) []cult.Ops {
+	push := r.revAmountsProp(20)
+	reqs := make([]cult.FlowRequest, 0, 6)
+	for k, c := range r.ring {
+		if k == 0 {
+			reqs = append(reqs, cult.FlowRequest{Channel: c, Amount: push})
+		} else {
+			reqs = append(reqs, flow(c, flush, false))
+		}
+	}
+	return []cult.Ops{r.absorbOps(absorb, reqs...)}
 }
 
 // roundBFixed 轨道乙固定剂量轮（P5 逆流扫频用）。
@@ -321,7 +368,18 @@ type p1BRes struct {
 // 主环周天），期间维持纳气；循环毕恢复只纳，测 [:+5,+45]
 // 窗口的纳气速率（循环后即时恢复速率）。preStall = 触发前 30 tick 中位。
 func runP1B(seed uint64, maxTicks int64, acc *accounting) p1BRes {
-	r := newRig(seed)
+	r := newRigGrown(seed)
+	r.w.NoiseSeed = seed
+	// 丹田预置 LR 0.8：触发即在第一拍到来（与原新手身体同构——原身体
+	// 初载 LR 0.8，触发同样在首拍），preStall 取首拍纳气；腾挪轮改用
+	// 热预算内档（roundAPropSafeFlush，教学档流量）。腾挪轮数 500
+	//（0.8.0 测量设计修订，原 100）：轮收进热预算后腾挪放慢 5×，轮数
+	// ×5 补偿——命题（腾挪恢复吸收通路）不变。
+	{
+		d := &r.w.Character.BodyGraph.Acupoints[r.dan]
+		q := d.Capacity * 4 / 5 / cult.ElementCount
+		d.Qi = [cult.ElementCount]int64{q, q, q, q, q}
+	}
 	var res p1BRes
 	hist := []int64{}
 	const (
@@ -340,7 +398,7 @@ func runP1B(seed uint64, maxTicks int64, acc *accounting) p1BRes {
 		case phaseFill:
 			ops = r.absorbOps(500, flow(r.ring[5], 4000, false))
 		case phaseCycle:
-			round := r.roundAProp(500)
+			round := r.roundAPropSafeFlush(300, 500)
 			ops = round[0]
 		default:
 			ops = r.absorbOps(500, flow(r.ring[5], 4000, false))
@@ -358,7 +416,7 @@ func runP1B(seed uint64, maxTicks int64, acc *accounting) p1BRes {
 			}
 		case phaseCycle:
 			cycleDone++
-			if cycleDone >= 100 { // 100 轮 × 1 tick
+			if int64(cycleDone) >= 500 { // 0.8.0：热预算内档腾挪放慢 5×，轮数补偿（原 100）
 				phase = phasePost
 				res.postLR = rep.Points[r.dan].LoadRatio
 			}
@@ -393,21 +451,30 @@ type p2Res struct {
 	depleted bool
 }
 
-const p2Rounds = 200
+// p2Rounds 取 600（0.8.0 测量设计修订，原 200）：轨道轮收进热预算后推量
+// 降为 1/5（roundAPropSafe/roundBPropSafe，归因见其注释），构成沉淀的
+// 时标相应放慢，轮数 ×3 补偿——命题（两轨终态构成可分辨）不变。
+const p2Rounds = 600
 
-// runP2Track 同一身体（同 seed）跑一条主轨 200 轮，回终态丹田构成。
+// runP2Track 同一身体（同 seed）跑一条主轨 p2Rounds 轮，回终态丹田构成。
 // 循环期间维持低强度纳气（intensity 150），让"筛选后的稳态构成"沉淀在
 // 丹田；循环推量取丹田存量 10%（自节流），两轨均在自持平衡点附近运行。
 // 注：甲轨（主环）随经脉适应/开度成长环效率渐增，200 轮时仍在缓升
 // （探针实测 LR≈0.5，未过载）；乙轨约 50 轮即入稳态。
 func runP2Track(seed uint64, trackA bool, acc *accounting) p2Res {
-	r := newRig(seed)
+	// 0.8.0 起改在「修行有成」身体上复测（J6 口径，同 SC 矩阵/P9）：轨道
+	// 对构成的 stamp 强度需行转流量高于诸穴转化速率，而热预算（B7 环经
+	// 济学）把新手身体的可行流量压到转化速率同量级——stamp 被洗成均匀
+	// 构成（单 seed 探针实证）。修行有成身体（传导/通量/容量成长到位）
+	// 在热预算内的流量即可成 stamp，命题回到可测域。
+	r := newRigGrown(seed)
+	r.w.NoiseSeed = seed
 	r.prefill(acc, 150, 500)
 	for i := 0; i < p2Rounds; i++ {
 		if trackA {
-			runRound(r, acc, r.roundAProp(150))
+			runRound(r, acc, r.roundAPropSafe(150))
 		} else {
-			runRound(r, acc, r.roundBProp(150))
+			runRound(r, acc, r.roundBPropSafe(150))
 		}
 	}
 	d := &r.w.Character.BodyGraph.Acupoints[r.dan]
@@ -645,7 +712,7 @@ func runP7(seed uint64, acc *accounting) p7Res {
 	done := 0
 	for k, n := range p7Training {
 		for ; done < n; done++ {
-			acc.advance(r.w, r.roundAProp(300)[0])
+			acc.advance(r.w, r.roundAPropSafe(300)[0])
 		}
 		var sum int64
 		for t := 0; t < 30; t++ {
@@ -1092,11 +1159,18 @@ func renderReport(in mcInput) string {
 	if withinBMed > withinBase {
 		withinBase = withinBMed
 	}
+	// 判定：配对距离 ≥ 3× 同轨波动。0.8.0 起热预算内档的工作点对 seed
+	// 噪声不敏感（同轨波动基线可为 0）——基线为 0 时比值无定义，改按
+	// 「配对距离 > 0 即完全分离」判定（每个 seed 的甲都与每个 seed 的乙
+	// 确定性不同，分离是完备的），报告如实注明基线为 0。
+	p2Pass := false
 	ratioMilli := int64(0)
 	if withinBase > 0 {
 		ratioMilli = pairedMed * 1000 / withinBase
+		p2Pass = ratioMilli >= 3000
+	} else {
+		p2Pass = pairedMed > 0
 	}
-	p2Pass := ratioMilli >= 3000
 	medA, medB := compVec{}, compVec{}
 	for e := 0; e < cult.ElementCount; e++ {
 		va, vb := []int64{}, []int64{}
@@ -1114,7 +1188,7 @@ func renderReport(in mcInput) string {
 	domB, _ := dominantOf(medB)
 
 	fmt.Fprintf(&b, "## P2 轨道-流派（D2）—— %s\n\n", passStr(p2Pass))
-	fmt.Fprintf(&b, "200 轮后终态丹田构成（千分位占比，跨 seed 中位）：\n\n")
+	fmt.Fprintf(&b, "%d 轮后终态丹田构成（千分位占比，跨 seed 中位）：\n\n", p2Rounds)
 	fmt.Fprintf(&b, "| 元素 | 轨道甲（主环） | 轨道乙（逆流捷径） |\n|---|---|---|\n")
 	for e := 0; e < cult.ElementCount; e++ {
 		fmt.Fprintf(&b, "| %s | %s | %s |\n", elementName(e), fp(medA[e]), fp(medB[e]))
@@ -1123,12 +1197,20 @@ func renderReport(in mcInput) string {
 		map[bool]string{true: "不同", false: "相同"}[domA != domB])
 	fmt.Fprintf(&b, "- 甲乙同 seed 配对构成距离中位：%d（千分位欧氏）\n", pairedMed)
 	fmt.Fprintf(&b, "- 同轨跨 seed 波动基线：甲 %d / 乙 %d\n", withinAMed, withinBMed)
-	fmt.Fprintf(&b, "- 比值（配对距离/基线）：%s（达标线 3.000）\n", fp(ratioMilli))
+	if withinBase > 0 {
+		fmt.Fprintf(&b, "- 比值（配对距离/基线）：%s（达标线 3.000）\n", fp(ratioMilli))
+	} else {
+		fmt.Fprintf(&b, "- 同轨波动基线为 0（该工作点 seed 间零波动）——配对距离 %d > 0 即完全分离\n", pairedMed)
+	}
 	if depleted > 0 {
 		fmt.Fprintf(&b, "- 注意：%d 个 seed 丹田枯竭（load<500），已剔除\n", depleted)
 	}
-	fmt.Fprintf(&b, "\n结论：两轨道终态构成差异%s于同轨 seed 间波动（比值 %s）。\n\n",
-		map[bool]string{true: "显著大", false: "不显著"}[p2Pass], fp(ratioMilli))
+	if withinBase > 0 {
+		fmt.Fprintf(&b, "\n结论：两轨道终态构成差异%s于同轨 seed 间波动（比值 %s）。\n\n",
+			map[bool]string{true: "显著大", false: "不显著"}[p2Pass], fp(ratioMilli))
+	} else {
+		fmt.Fprintf(&b, "\n结论：同轨 seed 间零波动，而甲乙配对距离 %d——两轨道的终态构成确定性可分。\n\n", pairedMed)
+	}
 
 	// ------------------------------------------------------------------ P3
 	var reachVals []int64
@@ -1428,7 +1510,7 @@ func suggestions(in mcInput, p1, p2, p3, p4, p5, p6, p7, p8, p9 bool,
 		}
 	}
 	if !p2 {
-		s = append(s, fmt.Sprintf("P2 轨道构成区分不足（比值 %s < 3）：D3 筛选差分太弱——上调 BaseDiffuseRate（20）放大『留与散』的逐元素差，或加大中庭/丹田 Affinity 画像的元素梯度（当前全 1000，无差可筛）。", fp(ratioMilli)))
+		s = append(s, "P2 轨道构成区分不足：D3 筛选差分太弱——上调 BaseDiffuseRate（20）放大『留与散』的逐元素差，或加大中庭/丹田 Affinity 画像的元素梯度（当前全 1000，无差可筛）。")
 	}
 	if !p3 {
 		if reachFrac < 500 {

@@ -174,6 +174,7 @@ type AcupointReport struct {
 	Compatibility   int64
 	Strain          int64
 	TransformHeat   int64
+	HeatLoadStrain  int64 // 热负荷应变分量（0.8.0，B7 环经济学裁决；已计入 Strain）
 	Stability       int64
 	Damage          int64
 	CurrentFlow     int64
@@ -460,6 +461,25 @@ func Advance(w *World) *TickReport {
 			fpMul(WAffinity, fpMul(affStrain, affStrain)) +
 			fpMul(WShock, fpMul(shockEff, shockEff)) +
 			r.TransformHeat
+		// 热负荷应变（0.8.0，修订包 B7 注记 2026-10-07 环经济学裁决）：
+		// 长程热负荷进入应变——P5 标定项「ThermalLoad 只累积不进公式」
+		// 就此收口，走火风险有了慢响应面。口径：(ThermalLoad − 无伤死区
+		// HeatStrainFloor)/EffThroughput（与 TransformHeat 同一通量归一；
+		// 大通量穴热容大，等量热负荷应变更低），比值钳 [0,1]，× KHeatLoad
+		// （与 TransformHeatMax 同档）。死区语义：发热无碍，灼热以上
+		// 方有走火之虞（与感知层 thermalBands 同源，见 KHeatLoad 注释）。
+		// 读数取上一 Tick 结算后的 ThermalLoad（本 Tick 新热下一 Tick 起
+		// 作用——慢通道一拍滞后，确定性不变）。热不进守恒账（热非守恒量），
+		// 本项只改应变速率，不凭空生/灭气。
+		heatRatio := fpDiv(a.ThermalLoad-HeatStrainFloor, denom)
+		if heatRatio > One {
+			heatRatio = One
+		}
+		if heatRatio < 0 {
+			heatRatio = 0
+		}
+		r.HeatLoadStrain = fpMul(KHeatLoad, heatRatio)
+		r.Strain += r.HeatLoadStrain
 		// 驱动应变（0.5.0，评审稿 §10.2）：过驱 + 加力突变分量，由统一
 		// 驱动求解在传输结算时逐穴位归并（最受力一路）。温和稳定驱动
 		// （安全驱动比内、无突变）该分量为零——耗能不等于受伤（§26.5）。
@@ -490,10 +510,13 @@ func Advance(w *World) *TickReport {
 		}
 		r.Damage = a.Damage
 
-		// ThermalLoad（修订包 A2/B4）：旧值先按 HeatDissipation 散热衰减，
-		// 再累加本 Tick 的转化损耗热（§9/§10 → heatAccum）与逆流做功热
-		// （reverseHeatAccum）。只累积，不进任何公式（P5 标定项）。
-		a.ThermalLoad = fpMul(a.ThermalLoad, One-HeatDissipation) + a.heatAccum + a.reverseHeatAccum
+		// ThermalLoad（修订包 A2/B4）：旧值先按散热衰减率衰减（0.8.0 起
+		// 逐穴画像化——Acupoint.HeatDissipation，未画像用全局
+		// HeatDissipation；敛热穴语义画在世界画像层，底层零专名），再累加
+		// 本 Tick 的转化损耗热（§9/§10 → heatAccum）与逆流做功热
+		// （reverseHeatAccum）。0.8.0 起经 §17 HeatLoadStrain 进入应变
+		// （P5 标定项收口，见上方热负荷应变注释）。
+		a.ThermalLoad = fpMul(a.ThermalLoad, One-a.heatDissipation()) + a.heatAccum + a.reverseHeatAccum
 		r.ThermalLoad = a.ThermalLoad
 
 		// §22 Adaptation。

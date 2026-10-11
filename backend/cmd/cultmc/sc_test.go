@@ -61,7 +61,7 @@ func TestSCOrbitProtocols(t *testing.T) {
 	g := &w.Character.BodyGraph
 	for c := range scChars {
 		for o := range scOrbits {
-			p, err := ctmatch.Compile([]byte(scOrbitYAML(c, o, g, scCycleBudget)), g)
+			p, err := ctmatch.Compile([]byte(scOrbitYAML(c, o, g, scCycleBudget, 0)), g)
 			if err != nil {
 				t.Fatalf("c%d o%d 编译失败: %v", c, o, err)
 			}
@@ -90,8 +90,8 @@ func TestSCOrbitProtocols(t *testing.T) {
 // TestScanCDeterministic：同 seed 两次完整判定链逐位一致（全部标量场）。
 func TestScanCDeterministic(t *testing.T) {
 	acc := &accounting{}
-	a := runScanC(0, 0, scSeedBase, acc)
-	b := runScanC(0, 0, scSeedBase, acc)
+	a := runScanC(0, 0, scSeedBase, acc, 0)
+	b := runScanC(0, 0, scSeedBase, acc, 0)
 	if a != b {
 		t.Errorf("同 seed 重放不一致:\n%+v\n%+v", a, b)
 	}
@@ -100,8 +100,8 @@ func TestScanCDeterministic(t *testing.T) {
 // TestScanCConservation：判定链会话 tick 全部归账，零违例。
 func TestScanCConservation(t *testing.T) {
 	acc := &accounting{}
-	runScanC(0, 0, scSeedBase, acc)
-	runScanC(3, 2, scSeedBase+320, acc)
+	runScanC(0, 0, scSeedBase, acc, 0)
+	runScanC(3, 2, scSeedBase+320, acc, 0)
 	if acc.violations != 0 {
 		t.Errorf("守恒违例 %d 次（最大残差 %d）", acc.violations, acc.maxResidual)
 	}
@@ -110,9 +110,16 @@ func TestScanCConservation(t *testing.T) {
 	}
 }
 
-// TestScanCMatrixBatch：全矩阵单 seed 批测（主工作点）。锁定测量健康性：
-// 16 格全部可筑基（时标是可测应变量）、全程零损伤、零未知异常升级、
-// 守恒零违例。命题判定见报告（-only sc）。
+// TestScanCMatrixBatch：全矩阵单 seed 批测（主工作点）。0.8.0 环经济学
+// （B7 注记 2026-10-07）下的预期形态：
+//   - 全环 O0 / 捷径轮 O1（教学档热预算内）：可筑基、零损伤、零未知异常
+//     ——时标应变量在两轨上健康；
+//   - 重逆流轨道 O2 逆推轮 / O3 绕土府轮：教学档即走火（损伤 > 0、
+//     青关热越过灼热线）——绕土府短环的热代价正是裁决要的经济结构，
+//     不再是测量混淆；其筑基时标按未达/延迟处理；
+//   - 全部格子守恒零违例、丹田不枯竭。
+//
+// 命题判定见报告（-only sc）。
 func TestScanCMatrixBatch(t *testing.T) {
 	old := scRingCond
 	scRingCond = scCondMain
@@ -120,18 +127,27 @@ func TestScanCMatrixBatch(t *testing.T) {
 	acc := &accounting{}
 	for c := range scChars {
 		for o := range scOrbits {
-			r := runScanC(c, o, scSeedBase+uint64(c)*100+uint64(o)*10, acc)
-			if r.estTick < 0 {
-				t.Errorf("c%d(%s) o%d 未筑基——时标应变量失效", c, scChars[c].name, o)
-			}
-			if r.damage != 0 {
-				t.Errorf("c%d o%d 损伤 %d 次——机械过载淹没画像对照", c, o, r.damage)
-			}
-			if r.anomalies != 0 {
-				t.Errorf("c%d o%d 未知异常升级 %d 次", c, o, r.anomalies)
-			}
+			r := runScanC(c, o, scSeedBase+uint64(c)*100+uint64(o)*10, acc, 0)
 			if r.depleted {
 				t.Errorf("c%d o%d 丹田枯竭", c, o)
+			}
+			switch o {
+			case 0, 1:
+				if r.estTick < 0 {
+					t.Errorf("c%d(%s) o%d 未筑基——热预算内轨道的时标应变量失效", c, scChars[c].name, o)
+				}
+				if r.damage != 0 {
+					t.Errorf("c%d o%d 损伤 %d 次——热预算内轨道不应走火", c, o, r.damage)
+				}
+				if r.anomalies != 0 {
+					t.Errorf("c%d o%d 未知异常升级 %d 次", c, o, r.anomalies)
+				}
+			case 2, 3:
+				if r.damage == 0 {
+					t.Errorf("c%d o%d 教学档零损伤——重逆流轨道的热代价（走火）未显现", c, o)
+				}
+				// 走火伴随未知异常升级（损伤无 Guard 可解释）——0.8.0 下这是
+				// 裁决要的世界响应，由会话「观察继续」接管，不视为测量故障。
 			}
 		}
 	}

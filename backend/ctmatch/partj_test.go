@@ -95,11 +95,21 @@ func runRingProtocol(t *testing.T, seed uint64, amount, cycles int64) *CultSessi
 // ---------------------------------------------------------------------------
 
 func TestPartJDeadlockRegression(t *testing.T) {
+	// amount 取 500（0.8.0 热预算内档）：木单行 2000/元素在引气期新手身体
+	// 上是火候过猛——0.8.0 热负荷应变（B7 环经济学裁决）下土府在首个
+	// 教学窗内即走火（实测 TL~1040 = 感知「灼热」档，稳定 14 tick 内
+	// 崩穿）。本命题变量是「松手均流随轮数单调上升」（被动环流成长），
+	// 与强度无关，故收进热安全档；2000 档的走火本身是 0.8.0 的预期世界
+	// 语义，由 cult 热负荷法则测试覆盖。
 	const (
-		amount       = 2000
+		amount       = 500
 		releaseTicks = 40
 	)
-	rounds := []int64{300, 900, 1800}
+	// 轮数取 100/300/900：amount 收进热预算后成长带前移，300 轮已近饱和
+	//（实测 300/900/1800 → SS 870/1000/1000，两点钳顶失去分辨力，同
+	// §SB「钳 1 失去分辨率」教训）——测量点随之内移，命题（单调上升）
+	// 不变。
+	rounds := []int64{100, 300, 900}
 	means := make([]int64, len(rounds))
 	sustains := make([]int64, len(rounds))
 	for k, n := range rounds {
@@ -200,11 +210,14 @@ func TestPartJTreeDoesNotSelfSustain(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPartJRuntimeIsControlActive(t *testing.T) {
+	// amount 取 500（0.8.0 热预算内档，归因同 TestPartJDeadlockRegression：
+	// 木单行 2000/元素在引气期新手身体上走火，与本命题「受控流不计入
+	// SelfSustain」的口径无关）。
 	const cycles = 150
 	w := SpikeWorld()
 	w.Character.BodyGraph.Acupoints[0].Qi[cult.Wood] = 60000 // 预填丹田
 	s := NewSession(w, 13, nil)
-	p, err := Compile([]byte(partjRingYAML("wood", 2000, cycles)), &s.World.Character.BodyGraph)
+	p, err := Compile([]byte(partjRingYAML("wood", 500, cycles)), &s.World.Character.BodyGraph)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}

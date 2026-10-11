@@ -26,7 +26,7 @@ package main
 //     拓扑下不存在（如实记录：金/水亲和画像因此无轨道可对齐）。
 //   - 身体固定（四角色同一具身体，只换角色亲和向量）：SpikeWorld 真值表
 //     （拓扑/穴位亲和画像/环境/经脉参数逐字保留）+ 「修行有成」结构态
-//     （J6 成长终态：环上开度修满、稳定满格、初载 LR 0.8——2026-09-27
+//     （J6 成长终态口径：环上开度修满、稳定满格、初载 LR 0.6（0.8.0 热预算内修订，见 scWorld 注）——2026-09-27
 //     标定报告 §SB 遗留注记：路线级精细比较以筑基时标为应变量，要求
 //     判定链筑基在预算内可达；新手身体传导天花板使筑基不可达，故取
 //     结构已演化到位的身体，与 P9 同一口径）。
@@ -163,16 +163,22 @@ var scOrbits = []scOrbitDef{
 //     反应炉低滞留画像）/ 开度 1.0 / 稳定 950（脆穴神庭的脆性是 M2 玩家
 //     侧触发面，会以与亲和无关的机械方式压富环轨道，属本对照混淆变量，
 //     故抹平）；主环经脉传导 980（Part J 口径），旁支经脉 900；
-//   - 初载：环上 LR 0.8（Part J 初态口径，免长填充相位；构成均一，不预偏
+//   - 初载：环上 LR 0.6（0.8.0 测量设计修订：0.8 满载共模走火淹没轨道热差异；构成均一，不预偏
 //     任一画像——角色偏性只经行环动力学表达）、旁支 LR 0.5；
 //   - Control 1000（P9 口径）。
+//
 // 角色亲和向量按画像覆盖（本场景的自变量之一）。
 func scWorld(charIdx int) *cult.World {
 	w := ctmatch.SpikeWorld()
 	g := &w.Character.BodyGraph
 	for i := range g.Acupoints {
 		a := &g.Acupoints[i]
-		qi0 := a.Capacity * 4 / 5 / cult.ElementCount // LR 0.8，元素均一
+		// 初载 LR 0.6（0.8.0 测量设计修订，原 0.8）：0.8 满载下行环的
+		// 转化热稳态越过灼热线（实测 TL 0.75~1.2、首个教学块即共模走
+		// 火），轨道热差异被共模烧蚀淹没——初载收进热预算内，让「灼热
+		// 以上」的应变带留给轨道间差异（绕土府环的逆流段热）。初载只
+		// 影响填充相位时长，不改变任何引擎参数。
+		qi0 := a.Capacity * 3 / 5 / cult.ElementCount // LR 0.6，元素均一
 		switch a.Name {
 		case "下丹田":
 			a.Openness = cult.MicroOne
@@ -247,8 +253,13 @@ const scTeachAmount = int64(1500)
 // scOrbitYAML 生成轨道功法协议：吸收（大档）@青关 + 全轨道引导同息并行
 // （parallel 1 → 单槽，1 Tick = 1 周天）。教学流量对四轨道一致（公平性）；
 // validated_range 按经脉给界（控制误差出界余量 +10%，与 scanRouteYAML
-// 同口径）。
-func scOrbitYAML(charIdx, orbitIdx int, g *cult.BodyGraph, cycles int64) string {
+// 同口径）。mult4 是段引导量倍率（四分单位，实际倍率 = mult4/4，0 视为
+// 4 = 教学档；热应力扫频逐段按声明量缩放——逆推轮青关双段的双倍声明量
+// 保持双倍，validated_range 逐经脉取段量×1.1 的最大值）。
+func scOrbitYAML(charIdx, orbitIdx int, g *cult.BodyGraph, cycles int64, mult4 int64) string {
+	if mult4 <= 0 {
+		mult4 = 4
+	}
 	o := &scOrbits[orbitIdx]
 	rmax := map[int]int64{}
 	var b strings.Builder
@@ -266,11 +277,12 @@ func scOrbitYAML(charIdx, orbitIdx int, g *cult.BodyGraph, cycles int64) string 
 			seen[ch] = true
 			order = append(order, ch)
 		}
-		if r := sg[2] * 11 / 10; r > rmax[ch] {
+		amt := sg[2] * mult4 / 4
+		if r := amt * 11 / 10; r > rmax[ch] {
 			rmax[ch] = r // 同经脉双段（如逆推轮青关双段）取较宽界
 		}
 		fmt.Fprintf(&b, "  - guide: {from: %s, to: %s, element: \"\", amount: %d, duration: 1, parallel: 1}\n",
-			g.Acupoints[sg[0]].Name, g.Acupoints[sg[1]].Name, sg[2])
+			g.Acupoints[sg[0]].Name, g.Acupoints[sg[1]].Name, amt)
 	}
 	fmt.Fprintf(&b, "cadence: 1\ncycles: %d\nvalidated_range:\n", cycles)
 	for _, ch := range order {
@@ -330,28 +342,41 @@ type scCRes struct {
 	charIdx, orbitIdx int
 	seed              uint64
 
-	estTick  int64 // 筑基时标（全局 Tick，含 1 tick 观测基准；-1 未达）
-	touched  bool
-	peakSS   int64 // SelfSustain 峰值（千分位）
-	compat   int64 // 教学末段环上穴位 Compatibility 均值（千分位；D2/§16 归因量）
-	minStab  int64 // 教学末段全图最小稳定性均值（千分位）
-	damage   int64 // 新增损伤事件数
+	estTick   int64 // 筑基时标（全局 Tick，含 1 tick 观测基准；-1 未达）
+	touched   bool
+	peakSS    int64 // SelfSustain 峰值（千分位）
+	compat    int64 // 教学末段环上穴位 Compatibility 均值（千分位；D2/§16 归因量）
+	minStab   int64 // 教学末段全图最小稳定性均值（千分位）
+	damage    int64 // 新增损伤事件数
 	anomalies int64
 
 	comp     compVec // 终态丹田构成（千分位占比）
 	danLoad  int64
 	depleted bool
 	refine   int64 // 终态丹田炼化度（D2 导出量，千分位）
+
+	// 热观测（0.8.0 环经济学）：heatQG = 青关 ThermalLoad 晚窗均值；
+	// heatTF = 土府 ThermalLoad 晚窗均值；heatRing = 环上六穴（按轨道
+	// cyclePts）ThermalLoad 之和的晚窗均值；heatPeak = 全程任穴峰值。
+	// 晚窗 = 末 2 个教学块 + 终局教学块（与 compat/minStab 同窗）。
+	// heatEarly = 早期窗（全局 Tick 20~110，行转初期）环上热和均值——
+	// 走火死亡会令晚窗热坍缩（环流停则热散尽），早期窗才是「热积累随
+	// 行转」的干净应变量。firstDmg = 首次损伤的全局 Tick（0 = 全程无
+	// 损伤）——走火风险的时标型应变量，随行转强度单调提前。
+	heatQG, heatTF, heatRing, heatPeak int64
+	heatEarly                          int64
+	firstDmg                           int64
 }
 
 // runScanC 走完一格的真实判定链（ctmatch 会话：Protocol Runtime →
 // FoundationMonitor → 筑基 → 升格移交），相位结构见文件头注。
-func runScanC(charIdx, orbitIdx int, seed uint64, acc *accounting) scCRes {
+// segMult 是段引导量倍率（0 = 1；热应力扫频传入）。
+func runScanC(charIdx, orbitIdx int, seed uint64, acc *accounting, segMult int64) scCRes {
 	w := scWorld(charIdx)
 	w.NoiseSeed = seed
 	g := &w.Character.BodyGraph
 	s := ctmatch.NewSession(w, seed, nil)
-	proto, err := ctmatch.Compile([]byte(scOrbitYAML(charIdx, orbitIdx, g, scCycleBudget)), g)
+	proto, err := ctmatch.Compile([]byte(scOrbitYAML(charIdx, orbitIdx, g, scCycleBudget, segMult)), g)
 	if err != nil {
 		panic(err) // 标定台静态装配错误
 	}
@@ -365,6 +390,10 @@ func runScanC(charIdx, orbitIdx int, seed uint64, acc *accounting) scCRes {
 	res := scCRes{charIdx: charIdx, orbitIdx: orbitIdx, seed: seed, estTick: -1}
 	prevDmg := make([]int64, len(g.Acupoints))
 	var compatSum, compatN, stabSum, stabN int64
+	var hqSum, htfSum, hringSum, heatN int64
+	var hEarlySum, hEarlyN int64
+	tfIdx := idx["土府"]
+	qgIdx := idx["青关"]
 	late := false // 教学末段观测窗（末 2 个教学块 + 终局教学块）
 
 	runTicks := func(n int64, teach bool) {
@@ -382,23 +411,41 @@ func runScanC(charIdx, orbitIdx int, seed uint64, acc *accounting) scCRes {
 			}
 			acc.checkConservation(rep)
 			minStab := int64(cult.One)
+			ringHeat := int64(0)
 			for pi := range rep.Points {
 				p := &rep.Points[pi]
 				if p.Damage > prevDmg[pi] {
 					res.damage++
+					if res.firstDmg == 0 {
+						res.firstDmg = s.World.Tick - 1 // 扣观测基准，与 estTick 同口径
+					}
 				}
 				prevDmg[pi] = p.Damage
 				if p.Stability < minStab {
 					minStab = p.Stability
 				}
+				if p.ThermalLoad > res.heatPeak {
+					res.heatPeak = p.ThermalLoad
+				}
+			}
+			if gt := s.World.Tick; gt >= 21 && gt <= 111 {
+				for _, pi := range cyclePts {
+					hEarlySum += rep.Points[pi].ThermalLoad
+				}
+				hEarlyN += int64(len(cyclePts))
 			}
 			if teach && late {
 				stabSum += minStab
 				stabN++
 				for _, pi := range cyclePts {
 					compatSum += rep.Points[pi].Compatibility
+					ringHeat += rep.Points[pi].ThermalLoad
 				}
 				compatN += int64(len(cyclePts))
+				hqSum += rep.Points[qgIdx].ThermalLoad
+				htfSum += rep.Points[tfIdx].ThermalLoad
+				hringSum += ringHeat
+				heatN++
 			}
 			if ss := s.Foundation.Metrics().SelfSustain; ss > res.peakSS {
 				res.peakSS = ss
@@ -439,6 +486,14 @@ func runScanC(charIdx, orbitIdx int, seed uint64, acc *accounting) scCRes {
 	if stabN > 0 {
 		res.minStab = stabSum / stabN
 	}
+	if heatN > 0 {
+		res.heatQG = hqSum / heatN
+		res.heatTF = htfSum / heatN
+		res.heatRing = hringSum / heatN
+	}
+	if hEarlyN > 0 {
+		res.heatEarly = hEarlySum / hEarlyN
+	}
 	// 终态构成（固定终局 Tick 计量——格间可比）。
 	d := &g.Acupoints[dan]
 	var load int64
@@ -461,11 +516,85 @@ func runScanC(charIdx, orbitIdx int, seed uint64, acc *accounting) scCRes {
 // 矩阵聚合与报告
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 热应力扫频（0.8.0 环经济学，B7 注记 2026-10-07 验收①②的应变量）：
+// 行转强度倍率 × 轨道，测长程热积累、走火（损伤）起点与可持续强度——
+// ①绕土府之环的热积累/失稳风险随行转单调高于全环；②「快（筑基时标）
+// 与稳（可持续强度）」两轴各有所长，无对所有画像无条件最优的单一轨道。
+// ---------------------------------------------------------------------------
+
+// scHeatMult4 是行转强度倍率（四分单位，段引导量 = scSegAmt × m/4；
+// 4 = 教学档）。细粒度阶梯用于分辨各轨道的走火阈值（1×~2× 之间全灭，
+// 2 的步长无分辨力——实测教训）。
+var scHeatMult4 = []int64{3, 4, 5, 6}
+
+// scHeatRes 是一个（轨道 × 强度）格的聚合观测（跨画像中位）。
+type scHeatRes struct {
+	mult4     int64 // 强度档（四分单位；4 = 教学档）
+	heatEarly int64 // 早期窗环上热和均值（中位）——热积累应变量
+	heatPeak  int64 // 全程峰值（中位）
+	firstDmg  int64 // 最早画像的首次损伤 Tick（0 = 无走火）——失稳风险应变量
+	damage    int64 // 新增损伤事件数（走火计数代理；中位）
+	minStab   int64 // 晚窗全图最小稳定（中位）
+	estN      int   // 筑基画像数（4 画像各 1 seed）
+}
+
+// runScanHeat 跑热应力扫频：4 轨道 × 4 强度档 × 4 画像（各 1 seed）。
+func runScanHeat(acc *accounting) [][]scHeatRes {
+	nO := len(scOrbits)
+	out := make([][]scHeatRes, nO)
+	for o := 0; o < nO; o++ {
+		out[o] = make([]scHeatRes, len(scHeatMult4))
+		for mi, m := range scHeatMult4 {
+			var rs []scCRes
+			for c := range scChars {
+				seed := scSeedBase + uint64(c)*100 + uint64(o)*10 + 9 // 与矩阵 seed 布局错开末位
+				rs = append(rs, runScanC(c, o, seed, acc, m))
+			}
+			// 走火时标取最早走火画像的首次损伤（0 = 无任何画像走火）——
+			// 中位会被未走火的画像稀释成 0。
+			firstDmg := int64(0)
+			for _, r := range rs {
+				if r.firstDmg > 0 && (firstDmg == 0 || r.firstDmg < firstDmg) {
+					firstDmg = r.firstDmg
+				}
+			}
+			out[o][mi] = scHeatRes{
+				mult4:     m,
+				heatEarly: medianOf([]int64{rs[0].heatEarly, rs[1].heatEarly, rs[2].heatEarly, rs[3].heatEarly}),
+				heatPeak:  medianOf([]int64{rs[0].heatPeak, rs[1].heatPeak, rs[2].heatPeak, rs[3].heatPeak}),
+				firstDmg:  firstDmg,
+				damage:    medianOf([]int64{rs[0].damage, rs[1].damage, rs[2].damage, rs[3].damage}),
+				minStab:   medianOf([]int64{rs[0].minStab, rs[1].minStab, rs[2].minStab, rs[3].minStab}),
+			}
+			for _, r := range rs {
+				if r.estTick >= 0 {
+					out[o][mi].estN++
+				}
+			}
+		}
+	}
+	return out
+}
+
+// scHeatStableIntensity 返回轨道的最高无走火强度档（中位损伤 = 0 的最大
+// 倍率，四分单位；全部档位都有走火时返回 0）。
+func scHeatStableIntensity(row []scHeatRes) int64 {
+	best := int64(0)
+	for _, r := range row {
+		if r.damage == 0 && r.mult4 > best {
+			best = r.mult4
+		}
+	}
+	return best
+}
+
 // scInput 是 SC 矩阵的聚合输入。cells[c][o] = 该格全部 seed 的观测；
-// cellsSat 是饱和工作点（scCondSat）的对照矩阵。
+// cellsSat 是饱和工作点（scCondSat）的对照矩阵；heat 是热应力扫频。
 type scInput struct {
 	cells    [][]([]scCRes) // [charIdx][orbitIdx][]seed（主工作点）
 	cellsSat [][]([]scCRes) // 饱和工作点对照
+	heat     [][]scHeatRes  // [orbitIdx][multIdx] 热应力扫频
 	acc      *accounting
 }
 
@@ -480,7 +609,7 @@ func runScanCMatrix(acc *accounting) *scInput {
 			for o := range scOrbits {
 				for k := 0; k < scSeeds; k++ {
 					seed := scSeedBase + uint64(c)*100 + uint64(o)*10 + uint64(k)
-					cells[c][o] = append(cells[c][o], runScanC(c, o, seed, acc))
+					cells[c][o] = append(cells[c][o], runScanC(c, o, seed, acc, 0))
 				}
 			}
 		}
@@ -491,6 +620,7 @@ func runScanCMatrix(acc *accounting) *scInput {
 	scRingCond = scCondSat
 	in.cellsSat = runMatrix()
 	scRingCond = scCondMain
+	in.heat = runScanHeat(acc)
 	return in
 }
 
@@ -505,11 +635,16 @@ type scCellAgg struct {
 	minStab  int64
 	damage   int64
 	peakSS   int64
+	heatQG   int64
+	heatTF   int64
+	heatRing int64
+	heatPeak int64
 }
 
 func scAggCell(rs []scCRes) scCellAgg {
 	var ag scCellAgg
 	var refs, stabs, dmgs, sss []int64
+	var hqs, htfs, hrings, hpeaks []int64
 	for _, r := range rs {
 		if r.estTick >= 0 {
 			ag.estN++
@@ -519,6 +654,10 @@ func scAggCell(rs []scCRes) scCellAgg {
 		stabs = append(stabs, r.minStab)
 		dmgs = append(dmgs, r.damage)
 		sss = append(sss, r.peakSS)
+		hqs = append(hqs, r.heatQG)
+		htfs = append(htfs, r.heatTF)
+		hrings = append(hrings, r.heatRing)
+		hpeaks = append(hpeaks, r.heatPeak)
 	}
 	if len(ag.estTicks) > 0 {
 		ag.medTick = medianOf(ag.estTicks)
@@ -541,6 +680,10 @@ func scAggCell(rs []scCRes) scCellAgg {
 	ag.minStab = medianOf(stabs)
 	ag.damage = medianOf(dmgs)
 	ag.peakSS = medianOf(sss)
+	ag.heatQG = medianOf(hqs)
+	ag.heatTF = medianOf(htfs)
+	ag.heatRing = medianOf(hrings)
+	ag.heatPeak = medianOf(hpeaks)
 	return ag
 }
 
@@ -584,7 +727,7 @@ func renderSCReport(in *scInput) string {
 	aggSat := aggOf(in.cellsSat)
 
 	fmt.Fprintf(&b, "\n# SC 角色×轨道矩阵（WP-M2-4 角色差异性正式验证，修订包 P2 角色维度）\n\n")
-	fmt.Fprintf(&b, "- RuleVersion %s；身体=SpikeWorld 真值表 + 修行有成结构态（拓扑/亲和画像/环境/旁支画像逐字保留；环上开度修满、传导 %d、稳定满格、初载 LR0.8、旁支 LR0.5）；亲和画像 4 种（SpikeWorld 角色模板五行轮转：均衡/木偏/火偏/金偏）× 主环轨道 4 条；每格 %d seed，零浮点\n",
+	fmt.Fprintf(&b, "- RuleVersion %s；身体=SpikeWorld 真值表 + 修行有成结构态（拓扑/亲和画像/环境/旁支画像逐字保留；环上开度修满、传导 %d、稳定满格、初载 LR0.6、旁支 LR0.5）；亲和画像 4 种（SpikeWorld 角色模板五行轮转：均衡/木偏/火偏/金偏）× 主环轨道 4 条；每格 %d seed，零浮点\n",
 		cult.RuleVersion, scCondMain, scSeeds)
 	fmt.Fprintf(&b, "- 轨道：O0 全环（主环整环）/ O1 捷径轮（核点逆推+捷径归元，只经丹青）/ O2 逆推轮（全环+核点逆推，青关双段）/ O3 绕土府轮（丹→青逆→中→阳→神→青→丹）。教学 = 吸收大档@青关 + 全轨道引导同息并行（300/元素/段，逐穴进出平衡），每格预算 %d tick（6×(教60+探30) + 6×(教60+探180) + 终局 教60+松320；另有 1 tick 观测基准）\n", scBudgetPerRun)
 	fmt.Fprintf(&b, "- 应变量：筑基时标（判定链筑基 Tick−观测基准；不可筑基记未达），辅以终态丹田构成（千分位）与炼化度（D2 导出量）。后段 180 tick 探针为筑基 capable 窗（门槛持续 30 + 筑基持续 100 tick）；主工作点传导 %d、饱和对照 %d（扫频依据见 cultmc sc.go 头注）\n\n", scCondMain, scCondSat)
@@ -668,6 +811,9 @@ func renderSCReport(in *scInput) string {
 	// 为强口径判定（集合散布 ≥2 且至少一个角色的最优唯一且不同）。
 	prop1 := mainDistinct >= 2
 	// 命题 3：不存在对所有角色都最优的单一轨道（SB 预警的角色版）。
+	// 0.8.0 环经济学起取「快（筑基时标）×稳（可持续强度）」两轴口径：
+	// 一个轨道对全部画像无条件最优，当且仅当它同时在两轴上对全部画像
+	// 占优——B7 裁决的世界语义正是「全环与短环各有所长（稳与快）」。
 	dominantMain := false
 	if ok0, b0 := scBestSet(agg[0]); ok0 {
 		dominantMain = len(b0) == 1
@@ -678,14 +824,46 @@ func renderSCReport(in *scInput) string {
 			}
 		}
 	}
+	// 稳轴：各轨道的最高无走火强度档。全并列为「稳轴无分辨力」。
+	stableOf := make([]int64, nO)
+	for o := 0; o < nO; o++ {
+		stableOf[o] = scHeatStableIntensity(in.heat[o])
+	}
+	maxStable := int64(0)
+	for _, s := range stableOf {
+		if s > maxStable {
+			maxStable = s
+		}
+	}
+	stableAlone := 0
+	for _, s := range stableOf {
+		if s == maxStable {
+			stableAlone++
+		}
+	}
+	// 无条件占优 = 时标轴唯一占优者同时也在稳轴最高档上（并列最高也算
+	// 在档——它没有为「稳」付出任何代价）。
+	uncondDominant := false
+	if dominantMain {
+		_, b0 := scBestSet(agg[0])
+		if stableOf[b0[0]] == maxStable {
+			uncondDominant = true
+		}
+	}
 	fmt.Fprintf(&b, "### 判定\n\n")
 	fmt.Fprintf(&b, "- 命题 1「最优轨道随角色系统变化」：**%s**（主工作点最优轨道集合散布 %d 种）。%s\n",
-		passStr(prop1), mainDistinct, map[bool]string{true: "", false: "四画像的最优轨道同为绕土府轮——轨道身份由环路机械主导（见归因），亲和画像只调制轨道内的成速与炼化匹配。"}[prop1])
-	if dominantMain {
-		fmt.Fprintf(&b, "- 命题 3「不存在对所有角色都最优的单一轨道」：**FAIL——世界语义预警**：绕土府轮对全部画像最优（2026-09-27 标定报告 §SB FAIL 分支同款预警的角色×轨道版）。\n")
+		passStr(prop1), mainDistinct, map[bool]string{true: "", false: "四画像在时标轴上的最优轨道恒同——画像维度的轨道翻转未成立（环经济学改变的是轨道间的经济结构，不是画像间的轨道身份）。"}[prop1])
+	if uncondDominant {
+		fmt.Fprintf(&b, "- 命题 3「不存在对所有画像无条件最优的单一轨道」：**FAIL——世界语义预警**：时标与可持续强度两轴被同一轨道占优。\n")
 	} else {
-		fmt.Fprintf(&b, "- 命题 3「不存在对所有角色都最优的单一轨道」：**PASS**。\n")
+		fmt.Fprintf(&b, "- 命题 3「不存在对所有画像无条件最优的单一轨道」：**PASS（两轴口径）**：快轴（筑基时标）与稳轴（最高无走火强度档）各有所归——环经济学把单一无条件最优拆成了「快与稳」的权衡（B7 裁决语义）。时标轴单口径判定：%s。\n",
+			map[bool]string{true: "单一轨道对全部画像占优", false: "最优集合散布或并列"}[dominantMain])
 	}
+	fmt.Fprintf(&b, "- 稳轴明细：最高无走火强度档（教学档 = 4/4）——")
+	for o := 0; o < nO; o++ {
+		fmt.Fprintf(&b, "O%d=%d/4× ", o, stableOf[o])
+	}
+	fmt.Fprintf(&b, "（热应力扫频见下节）。\n")
 	fmt.Fprintf(&b, "- 饱和对照点（传导 980）：最优轨道集合散布 %d 种（%s）——工作点更饱和时轨道机械差被压缩、时标挤向首个 capable 窗地板；结论对工作点的稳健性以此对照。\n", satDistinct, satSets)
 
 	// ---------------- 归因：机制量（主工作点） ----------------
@@ -697,6 +875,31 @@ func renderSCReport(in *scInput) string {
 			fmt.Fprintf(&b, "| %s | O%d %s | %s | %s | %s | %s | %s |\n",
 				scChars[c].name, o, scOrbits[o].name,
 				fp(ag.compat), fp(ag.refine), fp(ag.minStab), fp(ag.damage), fp(ag.peakSS))
+		}
+	}
+
+	// ---------------- 热经济学量（0.8.0 环经济学） ----------------
+	fmt.Fprintf(&b, "\n### 热经济学量（主工作点，教学晚窗 ThermalLoad 均值/全程峰值，跨 seed 中位）——敛热语义观测：全环经土府（土府段热沉积被高散热画像敛散），短环以逆流段补环（逆流做功热+逆流损耗热沉积于纳气入口青关）\n\n")
+	fmt.Fprintf(&b, "| 角色 | 轨道 | 青关热 | 土府热 | 环上热和 | 全程峰值 |\n|---|---|---|---|---|---|\n")
+	for c := 0; c < nC; c++ {
+		for o := 0; o < nO; o++ {
+			ag := &agg[c][o]
+			fmt.Fprintf(&b, "| %s | O%d %s | %s | %s | %s | %s |\n",
+				scChars[c].name, o, scOrbits[o].name,
+				fp(ag.heatQG), fp(ag.heatTF), fp(ag.heatRing), fp(ag.heatPeak))
+		}
+	}
+
+	// ---------------- 热应力扫频（0.8.0 环经济学验收量） ----------------
+	fmt.Fprintf(&b, "\n### 热应力扫频（4 画像各 1 seed 取中位；段引导量 = 教学档 × m/4）——验收①：绕土府之环的早期热积累与走火时标随行转强度劣于全环；验收②稳轴：最高无走火强度档 =「可持续强度」\n\n")
+	fmt.Fprintf(&b, "| 轨道 | 强度档 | 早期环热 | 全程峰值 | 走火时标 | 走火损伤 | 末段最小稳定 | 筑基画像数 |\n")
+	fmt.Fprintf(&b, "|---|---|---|---|---|---|---|---|\n")
+	for o := 0; o < nO; o++ {
+		for mi := range scHeatMult4 {
+			h := &in.heat[o][mi]
+			fmt.Fprintf(&b, "| O%d %s | %d/4× | %s | %s | %s | %s | %s | %d/4 |\n",
+				o, scOrbits[o].name, h.mult4, fp(h.heatEarly), fp(h.heatPeak), fp(h.firstDmg),
+				fp(h.damage), fp(h.minStab), h.estN)
 		}
 	}
 

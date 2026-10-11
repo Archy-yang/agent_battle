@@ -376,7 +376,8 @@ func obstructionOf(r *AcupointReport) int64 {
 //	PainSignal = 0.35×Strain + 0.35×Damage + 0.20×FlowShock + 0.10×Overload
 //
 // 成因贡献取自 Strain 的逐项拆解（§17 公式重算，报告字段同口径）：
-// 过载项 → 胀痛、冲击项 → 刺痛、转化热 → 灼痛、亲和失配项 → 拉扯痛；
+// 过载项 → 胀痛、冲击项 → 刺痛、转化热 + 热负荷应变（0.8.0，慢通道
+// 长程积热的灼感） → 灼痛、亲和失配项 → 拉扯痛；
 // Damage 单独计隐痛，但需连续 painDullMinTicks Tick 持续才按全权重
 // 参与判型（高频冲击 + 低损伤 → 刺痛而非隐痛）。并列取优先序
 // 胀 > 刺 > 灼 > 隐 > 扯（确定性）。
@@ -396,7 +397,7 @@ func (m *pointMemory) painOf(r *AcupointReport) (int64, painKind) {
 
 	cDist := fpMul(WOverload, fpMul(ov, ov)) + fpMul(100, ov)
 	cSharp := fpMul(WShock, fpMul(shock, shock)) + fpMul(200, shock)
-	cBurn := r.TransformHeat
+	cBurn := r.TransformHeat + r.HeatLoadStrain
 	if r.Damage > 0 {
 		m.damageTicks++
 	} else {

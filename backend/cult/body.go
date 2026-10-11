@@ -55,6 +55,15 @@ type Acupoint struct {
 	// 阶段三标定的画像钩子（如丹田泵效率更高）。
 	DriveEfficiency int64
 
+	// HeatDissipation 是该穴位 ThermalLoad 散热衰减率的画像覆盖（0.8.0，
+	// 修订包 B7 注记 2026-10-07 环经济学裁决）：0 = 未画像，按全局
+	// HeatDissipation 处理；非 0 时本穴热衰减用此值（clamp 到 (0,1000]）。
+	// 与 DriveEfficiency 同一画像钩子模式：特殊性落在参数画像，不设类型
+	// 枚举（宪法 §8/B1）。世界语义：高散热穴 = 敛热之穴——经它行转之环
+	// 的热沉积（它作受端时的传输损耗热）被快速敛散，不长程积累；绕开它
+	// 的环没有这个穴可依，热在环上诸穴（尤其逆流段的受端）长期积聚。
+	HeatDissipation int64
+
 	// Openness 开度，微标度（1.0 = 1e6，§23 成长）。
 	Openness int64
 	// BaseStability 先天稳定性资质（§4 字段；v0.1 公式未使用，仅携带，
@@ -195,6 +204,15 @@ func (a *Acupoint) driveEfficiency() int64 {
 		return One
 	}
 	return fpClamp(a.DriveEfficiency, 1, One)
+}
+
+// heatDissipation 返回散热衰减率 ∈ (0,1000]：未画像（0）按全局
+// HeatDissipation 处理，画像值 clamp 到 (0,1000]（0.8.0 画像钩子）。
+func (a *Acupoint) heatDissipation() int64 {
+	if a.HeatDissipation <= 0 {
+		return HeatDissipation
+	}
+	return fpClamp(a.HeatDissipation, 1, One)
 }
 
 // opennessMilli 返回微标度 Openness 的千分位近似。

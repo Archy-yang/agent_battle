@@ -115,5 +115,14 @@ func SpikeWorld() *cult.World {
 	// 构成 Match）。仅此穴位钉死区间，公式结构与相对性不变。
 	w.Character.BodyGraph.Acupoints[0].RefineMatchMin = 910
 	w.Character.BodyGraph.Acupoints[0].RefineMatchMax = 1080
+	// 土府敛热画像（0.8.0，修订包 B7 注记 2026-10-07 环经济学裁决
+	// [v0.1 参数]（调参起点））：土府立为周天敛热之穴——散热率 0.60
+	//（全局 0.30 的 2 倍）。世界语义：经土府行转之环，土府段的沉积热
+	// （传输损耗热）在此快速敛散，不长程积累；绕开土府的环必须以核点
+	// 逆流段补环，逆流做功热与逆流损耗热全部沉积在共享纳气入口（青关
+	// ——无敛热画像），长程热积累与走火风险随之上升。全环与短环由此
+	// 各有所长（稳与快），无对所有行功方式无条件最优的单一轨道。
+	// 画像层取值，底层零专名（引擎只见「某穴散热率 0.60」，宪法 §8）。
+	w.Character.BodyGraph.Acupoints[3].HeatDissipation = 600
 	return w
 }
