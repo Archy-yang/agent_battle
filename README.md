@@ -58,6 +58,6 @@ docs/reports/2026-09-27-drive-foundation-calibration.md  驱动模型标定报�
 
 ## 状态
 
-`RuleVersion 0.7.1-passive-recv-gate` · M2 进行中（洞府前端已重构；引擎驱动模型与筑基判定定稿三阶段已落地并标定；功法编译端到端、探索僵局对策、角色差异性验证、金丹设计待做）。
+`RuleVersion 0.8.0-heat-load-strain` · M2 已收官（洞府前端重构、功法编译端到端、探索僵局对策、角色差异性验证、引擎驱动模型与筑基判定定稿三阶段落地并标定、金丹设计稿、真实分身收官验证——报告见 docs/reports/）。下一步 M3 规划中。
 
 战斗篇（回合制对战、场景包、Replay）保留于 `backend/engine|match|scenario` 与 docs 战斗文档，作为后续"修真世界的斗法"复用底座。
