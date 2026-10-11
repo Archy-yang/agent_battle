@@ -1571,6 +1571,15 @@ func main() {
 		return
 	}
 
+	// SF 旁支喂养批测（修订包「保留的非环边」注记 2026-10-11 旁支角色
+	// 裁决验证；scfeed.go）。
+	if *only == "scfeed" {
+		acc := &accounting{}
+		fin := runFeedMatrix(feedSeeds, acc)
+		fmt.Print(renderFeedReport(fin))
+		return
+	}
+
 	start := time.Now()
 	acc := &accounting{}
 
