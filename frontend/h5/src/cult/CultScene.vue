@@ -1,17 +1,23 @@
 <script setup lang="ts">
 // src/cult/CultScene.vue —— 身体场景：人体剪影 + 8 穴位（固定坐标）+ 经脉线。
-// 感知隔离律落点：
-//  · 未知穴只渲染模糊小波动（虚线淡圈），无名字、无「?」、不透露未知总数；
-//    已知判定用 state.knownPoints 的前端启发式（feelings 非空或穴名出现过在感知流）。
-//  · 经脉线零静态：平时完全不可见（opacity:0）。仅当 tick 推进后，
-//    对「已知且 flow 非停滞」穴位所邻接的经脉（view.body.channels）
-//    做一次性流动动画（~1.5s），随后余辉渐隐。
+// 感知隔离律落点（渐进感知，specs/2026-10-18-progressive-perception-v1.md §5）：
+//  · 穴位渲染按引擎 tier：无感不渲染；隐约=虚淡圈微亮化（无名）；有感=
+//    实感小圆点（无字无名）；显名=得名字。已知判定全改引擎 tier——旧
+//    knownPoints 启发式已退役（state.ts）。
+//  · 前端虽经 body.points 持有全量真名（拓扑层），渲染严格按档：未显名
+//    处任何位置不得出现真名（DOM 文本、data-name、aria-label 一体），
+//    真名只走意图通道（凝神细察/自此引气的 target）。
+//  · 未显名之穴以方位语（point.region）指称；浮卡对隐约/有感只见感受词
+//    + 凝神细察（inspect），对显名渐全 + 自此引气（absorb）。
+//  · 经脉按档：初显=淡虚线（行气流动动画照旧），熟路=实线；无迹不渲染；
+//    端点未全显名不画（引擎已把 from/to 置空，按非空判断）。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { cult, knownPoints } from './state'
+import { cult, act, isNamed, TIER_NONE, TIER_GLOSS } from './state'
 import type { PointView } from './api'
 
 // 8 穴位固定坐标（抄自 docs/design/yiqi-dongfu-redesign.html 的 SVG 布点，
-// viewBox 250×390，与人体剪影对位）
+// viewBox 250×390，与人体剪影对位）。坐标表键用真名——只作拓扑定位，
+// 不进任何玩家可见文本。
 const POS: Record<string, [number, number]> = {
   神庭: [125, 52],
   青关: [62, 118],
@@ -24,9 +30,6 @@ const POS: Record<string, [number, number]> = {
 }
 
 const points = computed<PointView[]>(() => cult.view?.points ?? [])
-const known = computed<Set<string>>(() =>
-  cult.view ? knownPoints(cult.view) : new Set<string>(),
-)
 
 // 运转中（任一穴气流非停滞）→ 呼吸圈起振
 const moving = computed(() => points.value.some((p) => p.flow !== '停滞'))
@@ -42,24 +45,58 @@ function nodeChar(name: string): string {
   return name === '下丹田' ? '丹' : name.slice(0, 1)
 }
 
-interface NodeItem { name: string; x: number; y: number; p: PointView }
-const nodes = computed<NodeItem[]>(() =>
-  points.value
-    .filter((p) => POS[p.name])
-    .map((p) => ({ name: p.name, x: POS[p.name][0], y: POS[p.name][1], p })),
-)
+interface NodeItem {
+  key: string    // 渲染键（下标）：与 view.points / body.points 对齐
+  target: string // 意图通道用的真名（inspect/absorb 的 target）——绝不渲染
+  label: string  // 节点字：仅显名档非空
+  title: string  // 浮卡标题：显名=真名，未显名=方位语
+  x: number
+  y: number
+  p: PointView
+  named: boolean
+}
 
-// 经脉线：两端坐标都已知的才画；class 由动画状态驱动（零静态）
+// 穴位节点：按档渲染。无感不渲染（渐进感知 §2）；显名判定用引擎 tier
+// （state.isNamed），position 从 body.points 下标取（拓扑层）。
+const nodes = computed<NodeItem[]>(() => {
+  const v = cult.view
+  if (!v) return []
+  const out: NodeItem[] = []
+  v.points.forEach((p, i) => {
+    if (p.tier === TIER_NONE) return
+    const real = v.body.points[i] ?? ''
+    const pos = POS[real]
+    if (!pos) return
+    const named = isNamed(p)
+    out.push({
+      key: String(i),
+      target: real,
+      label: named ? nodeChar(p.name) : '',
+      title: named ? p.name : (p.region || '某处'),
+      x: pos[0], y: pos[1], p, named,
+    })
+  })
+  return out
+})
+
+// 经脉线：按档渲染。无迹不画；端点未全显名不画（引擎已把 from/to 置空）。
 const chans = computed(() => {
   const v = cult.view
   if (!v) return []
-  return v.body.channels
-    .filter((c) => POS[c.from] && POS[c.to])
-    .map((c) => ({ name: c.name, x1: POS[c.from][0], y1: POS[c.from][1], x2: POS[c.to][0], y2: POS[c.to][1] }))
+  const out: { key: string; tier: string; x1: number; y1: number; x2: number; y2: number }[] = []
+  v.body.channels.forEach((c, i) => {
+    if (c.tier === '无迹' || !c.from || !c.to) return
+    const a = POS[c.from]
+    const b = POS[c.to]
+    if (!a || !b) return
+    out.push({ key: String(i), tier: c.tier, x1: a[0], y1: a[1], x2: b[0], y2: b[1] })
+  })
+  return out
 })
 
 // —— 一次性流动动画 ——
-// 只对「两端皆已知穴」的经脉放行：向未知穴画线会泄顶拓扑（感知隔离）。
+// 只对「已画出（初显/熟路且两端已显名）」的经脉放行：未画线不动画
+// （向未显名处画流动轨迹会泄拓扑，感知隔离）。
 const flowChans = ref<Set<string>>(new Set())
 const glowChans = ref<Set<string>>(new Set())
 let animToken = 0
@@ -69,21 +106,21 @@ watch(
     if (t == null || t === old) return
     const v = cult.view
     if (!v) return
-    const kn = known.value
     const active = new Set(
-      v.points.filter((p) => p.flow !== '停滞' && kn.has(p.name)).map((p) => p.name),
+      v.points.filter((p) => p.flow !== '停滞' && isNamed(p)).map((p) => p.name),
     )
     if (!active.size) return
-    const names = v.body.channels
-      .filter((c) => (active.has(c.from) || active.has(c.to)) && kn.has(c.from) && kn.has(c.to))
-      .map((c) => c.name)
-    if (!names.length) return
+    const keys = v.body.channels
+      .map((c, i) => ({ c, key: String(i) }))
+      .filter(({ c }) => c.tier !== '无迹' && c.from && c.to && (active.has(c.from) || active.has(c.to)))
+      .map(({ key }) => key)
+    if (!keys.length) return
     const token = ++animToken
-    flowChans.value = new Set(names)
+    flowChans.value = new Set(keys)
     glowChans.value = new Set()
     window.setTimeout(() => {
       if (token !== animToken) return
-      glowChans.value = new Set(names)
+      glowChans.value = new Set(keys)
       flowChans.value = new Set()
       window.setTimeout(() => {
         if (token === animToken) glowChans.value = new Set()
@@ -92,15 +129,26 @@ watch(
   },
 )
 
-// —— 点穴详情浮卡（仅已知穴）——
+// —— 点穴详情浮卡（按档：隐约/有感=感受词+凝神细察；显名=渐全+自此引气）——
 const picked = ref('')
-const current = computed(() => points.value.find((p) => p.name === picked.value))
+const current = computed(() => nodes.value.find((n) => n.key === picked.value) ?? null)
 const currentFeelings = computed(() =>
-  (current.value?.feelings ?? []).filter((f) => f && f !== '无明显感觉'),
+  (current.value?.p.feelings ?? []).filter((f) => f && f !== '无明显感觉'),
 )
 function tap(n: NodeItem) {
-  if (!known.value.has(n.name)) return // 未知穴：不响应，不提示（保密数量）
-  picked.value = picked.value === n.name ? '' : n.name
+  picked.value = picked.value === n.key ? '' : n.key
+}
+
+// 浮卡动作（复用既有 act 机制与忙碌禁用态）：
+//  · 凝神细察 = inspect（target 走真名——真名只在意图通道）；
+//  · 自此引气 = absorb level small（任意已显名之穴自由引气）。
+function inspectCurrent() {
+  if (!current.value || cult.busy) return
+  void act([{ kind: 'inspect', target: current.value.target }])
+}
+function absorbCurrent() {
+  if (!current.value || cult.busy) return
+  void act([{ kind: 'absorb', target: current.value.target, level: 'small' }])
 }
 
 // —— 弹性高度等比缩放（2026-10-18 改版）：场景区 flex:1 占满剩余高度，
@@ -140,30 +188,51 @@ onBeforeUnmount(() => {
       <div class="breath" :class="{ on: moving }" aria-hidden="true"></div>
       <svg class="chan" viewBox="0 0 250 390" aria-hidden="true">
         <line
-          v-for="c in chans" :key="c.name"
+          v-for="c in chans" :key="c.key"
           :x1="c.x1" :y1="c.y1" :x2="c.x2" :y2="c.y2"
-          :class="{ flow: flowChans.has(c.name), afterglow: glowChans.has(c.name) }"
+          :class="[c.tier === '熟路' ? 'familiar' : 'faintline', { flow: flowChans.has(c.key), afterglow: glowChans.has(c.key) }]"
         />
       </svg>
       <button
-        v-for="n in nodes" :key="n.name"
+        v-for="n in nodes" :key="n.key"
         class="node"
-        :class="known.has(n.name) ? ['known', elemCls(n.p), { picked: picked === n.name }] : 'faint'"
+        :class="n.named
+          ? ['known', elemCls(n.p), { picked: picked === n.key }]
+          : (n.p.tier === '有感' ? ['felt', { picked: picked === n.key }] : ['faint', { picked: picked === n.key }])"
         :style="{ left: n.x + 'px', top: n.y + 'px' }"
-        :data-name="known.has(n.name) ? n.name : undefined"
+        :data-name="n.named ? n.title : undefined"
+        :aria-label="n.title"
         @click="tap(n)"
-      >{{ known.has(n.name) ? nodeChar(n.name) : '' }}</button>
+      >{{ n.label }}</button>
 
       <div class="nodedetail" :class="{ show: current }" v-if="current">
         <button class="x" @click="picked = ''">✕</button>
-        <b>{{ current.name }}</b>
-        <span>
+        <b>{{ current.title }}</b>
+        <!-- 显名档：浮卡渐全（引擎已按档门控，前端照渲染） -->
+        <span v-if="current.named">
           <template v-if="currentFeelings.length">所感：{{ currentFeelings.join('、') }}。</template>
           <template v-else>所感：无甚可辨。</template>
-          气机{{ current.flow }}，开度{{ current.openness }}，{{ current.stability }}，{{ current.damage }}。
-          <template v-if="current.nature.length">气带{{ current.nature.join('、') }}性。</template>
+          气机{{ current.p.flow }}，开度{{ current.p.openness }}，{{ current.p.stability }}，{{ current.p.damage }}。
+          <template v-if="current.p.nature.length">气带{{ current.p.nature.join('、') }}性。</template>
           ——所见皆是感受，其余都藏在这具身体里。
         </span>
+        <!-- 未显名档（隐约/有感）：只见感受词与方位语，不落名不落数 -->
+        <span v-else>
+          <i class="nd-gloss ui">{{ TIER_GLOSS[current.p.tier] ?? '' }}</i>
+          <template v-if="currentFeelings.length">所感：{{ currentFeelings.join('、') }}。</template>
+          <template v-else>所感：似有似无，一时说不上来。</template>
+          那处的名字，还要靠气一遍遍走过才能认出。
+        </span>
+        <div class="nd-btns">
+          <button
+            v-if="!current.named"
+            class="nd-act" :disabled="cult.busy" @click="inspectCurrent"
+          >凝神细察</button>
+          <button
+            v-else
+            class="nd-act" :disabled="cult.busy" @click="absorbCurrent"
+          >自此引气</button>
+        </div>
       </div>
     </div>
     <div class="cu-hint">{{ moving ? '气息在身内流动' : '静下心来，雾气深处隐有浮光' }}</div>

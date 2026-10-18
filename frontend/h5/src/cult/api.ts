@@ -34,8 +34,14 @@ export interface EnvChip {
   activity: string
 }
 
+// 渐进感知（specs/2026-10-18-progressive-perception-v1.md §2/§4）：
+// tier 是感知档（无感/隐约/有感/显名）；name 未至显名者为空串——零泄名，
+// 未显名之穴以 region 方位语指称；openness/stability/damage/nature 属
+// 显名档「浮卡渐全」内容，未至显名者为空。
 export interface PointView {
-  name: string
+  tier: string // 无感 | 隐约 | 有感 | 显名
+  region: string // 方位语（地形描述，不泄身份）
+  name: string // 仅显名档非空
   feelings: string[]
   flow: string
   nature: string[]
@@ -45,10 +51,13 @@ export interface PointView {
   pressure_band: number // 0-5，供色带
 }
 
+// 经脉档（渐进感知 §2）：无迹/初显/熟路。name/from/to 内嵌端点穴名，
+// 端点未全显名者置空（零泄名口径）。
 export interface ChannelView {
   name: string
   from: string
   to: string
+  tier: string // 无迹 | 初显 | 熟路
 }
 
 export interface HypView {

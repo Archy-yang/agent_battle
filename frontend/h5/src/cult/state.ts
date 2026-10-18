@@ -5,7 +5,7 @@ import { reactive } from 'vue'
 import {
   createCultSession, getCultView, tickCult, sendCultIntents,
   sendGuidance, askCult, startCultProtocol,
-  type CultView, type PlayerIntent,
+  type CultView, type PlayerIntent, type PointView,
 } from './api'
 interface CultState {
   view: CultView | null
@@ -96,31 +96,39 @@ export function movingQi(view: CultView | null): boolean {
 }
 
 /**
- * 可纳之穴：已知、且开度非「闭」，取开度最高者（前端启发式，
- * 与 knownPoints 同源的隔离律约定：只对已知穴出建议）。
+ * 可纳之穴：已显名（引擎 tier 给档）、且开度非「闭」，取开度最高者
+ * （只对已得名字的穴出建议——自由引气同样只认真名，引擎按档门控）。
  */
 export function absorbablePoint(
   view: CultView | null,
 ): { name: string; rank: number } | null {
   if (!view) return null
-  const kn = knownPoints(view)
   let best: { name: string; rank: number } | null = null
   for (const p of view.points) {
-    if (!kn.has(p.name)) continue
+    if (!isNamed(p)) continue
     const rank = OPEN_RANK[p.openness] ?? 0
     if (rank > 0 && (!best || rank > best.rank)) best = { name: p.name, rank }
   }
   return best
 }
 
+/**
+ * 丹田是否已显名：自举的消失条件。全无感时没有任何节点可点、探索型
+ * 分身在安静期也不出招——「意守丹田」（inspect 下丹田）是修真体感的
+ * 第一步，也是世界推进的起点；丹田显名后由「自此引气」与常规建议接管。
+ */
+export function dantianNamed(view: CultView | null): boolean {
+  return !!view?.points.some((p) => p.name === '下丹田')
+}
+
 /** 引导语：主屏行动区顶部一行「现在可以：……」，随状态推导。 */
 export function guideLine(view: CultView | null): string {
   if (!view) return ''
   const activeProto = view.active ? view.protocols.find((x) => x.name === view.active) : undefined
-  if (view.tick <= 0) return '现在可以：先静静感受一下身体'
   if (activeProto?.paused) return '现在可以：有功法在等你定夺'
   if (activeProto && activeProto.active && !activeProto.paused) return '现在可以：气息已在流动，可以继续运转或收势'
   if (movingQi(view)) return '现在可以：气息已在流动，可以继续运转或收势'
+  if (!dantianNamed(view)) return '现在可以：先意守丹田，看身体会不会回应'
   if (absorbablePoint(view)) return '现在可以：试试把气息引进来'
   return '现在可以：接着摸索这具身体'
 }
@@ -144,21 +152,28 @@ export function humanizeError(msg: string): string {
     .replace(/HTTP \d+/g, '灵路不通'))
 }
 
-/**
- * 已知穴位判定（前端启发式，等后端将来给正式的"已探明"字段后替换）：
- * 约定——某穴 feelings 有实感（非空且非「无明显感觉」占位词）、或该穴名
- * 曾在感知流文本中出现（已被感知流提及），即视为「已知」，才允许渲染
- * 穴名与定性详情。未知穴在前端只渲染为模糊波动，且**不透露已探明/未探明的数量**。
- */
-export function knownPoints(view: { points: { name: string; feelings: string[] }[]; sense_stream: { text: string }[] }): Set<string> {
-  const s = new Set<string>()
-  for (const p of view.points) {
-    if (p.feelings.some((f) => f && f !== '无明显感觉')) s.add(p.name)
-  }
-  for (const l of view.sense_stream) {
-    for (const p of view.points) if (l.text.includes(p.name)) s.add(p.name)
-  }
-  return s
+// ---------------------------------------------------------------------------
+// 感知档（渐进感知，specs/2026-10-18-progressive-perception-v1.md §2）：
+// 已知判定全改引擎给的 tier——旧 knownPoints 启发式（feelings 非空或
+// 感知流提过名）已退役。渲染只认档位：无感不渲染；隐约/有感无名（以
+// 方位语指称）；显名才得名字与浮卡渐全。熟识度数值引擎绝不外泄，前端
+// 也只见档位词。
+// ---------------------------------------------------------------------------
+
+export const TIER_NONE = '无感'
+export const TIER_VAGUE = '隐约'
+export const TIER_FELT = '有感'
+export const TIER_NAMED = '显名'
+
+/** 未显名档的浮卡措辞（白话转写层：档位词 → 一句体感话，零数字零机器词）。 */
+export const TIER_GLOSS: Record<string, string> = {
+  [TIER_VAGUE]: '似有一点动静，辨不真切',
+  [TIER_FELT]: '那处有了实感，还叫不出它的名字',
+}
+
+/** 已显名（得名字）判定：唯一口径是引擎 tier，前端不再自行推断。 */
+export function isNamed(p: PointView): boolean {
+  return p.tier === TIER_NAMED && !!p.name
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null

@@ -119,9 +119,13 @@
   50% { transform: translate(-50%, -50%) scale(1.05); opacity: .7; }
 }
 
-/* 经脉：零静态——平时完全不可见；flow = 行进中的气流，afterglow = 余辉渐隐 */
+/* 经脉按档（渐进感知 §2）：初显=淡虚线（静态可见），熟路=实线；无迹
+   不渲染（引擎已置空 from/to，前端不画）。flow = 行进中的气流（动画
+   覆盖静态档样式），afterglow = 余辉渐隐。 */
 svg.chan { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 svg.chan line { stroke: rgba(143, 224, 177, .75); stroke-width: 1.5; opacity: 0; transition: .5s; }
+svg.chan line.faintline { opacity: .22; stroke-dasharray: 2 7; stroke-width: 1; }
+svg.chan line.familiar { opacity: .34; }
 svg.chan line.flow {
   opacity: .95; stroke-dasharray: 5 13;
   animation: cu-dash .45s linear infinite;
@@ -130,7 +134,10 @@ svg.chan line.flow {
 @keyframes cu-dash { to { stroke-dashoffset: -18; } }
 svg.chan line.afterglow { opacity: .28; transition: opacity 2.8s ease; animation: none; }
 
-/* 穴位：已知显名，未知 = 模糊小波动（虚线淡圈，无名字无「?」，不提示总数） */
+/* 穴位按档（渐进感知 §2）：无感不渲染（引擎不待见，前端不见）；
+   隐约 = 虚淡圈微亮化（比旧 faint 稍亮，仍无名字）；有感 = 实感小圆点
+   （无字无名）；显名（known）= 得名字。data-name 仅显名档给出——
+   未显名处零真名（含 DOM 属性，感知隔离律）。 */
 .cu-body .node {
   position: absolute; width: 36px; height: 36px; border-radius: 50%;
   transform: translate(-50%, -50%); border: 1px solid rgba(184, 220, 199, .2);
@@ -144,11 +151,17 @@ svg.chan line.afterglow { opacity: .28; transition: opacity 2.8s ease; animation
 }
 .cu-body .node.faint {
   width: 20px; height: 20px; border-style: dashed; background: transparent;
-  opacity: .5; cursor: default; animation: cu-ripple 3.2s ease-in-out infinite;
+  border-color: rgba(184, 220, 199, .38); opacity: .68;
+  animation: cu-ripple 3.2s ease-in-out infinite;
 }
 @keyframes cu-ripple {
-  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: .5; }
-  50% { transform: translate(-50%, -50%) scale(1.25); opacity: .28; }
+  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: .68; }
+  50% { transform: translate(-50%, -50%) scale(1.25); opacity: .4; }
+}
+.cu-body .node.felt {
+  width: 22px; height: 22px; border: 1px solid rgba(143, 224, 177, .5);
+  background: rgba(143, 224, 177, .12);
+  box-shadow: 0 0 10px rgba(143, 224, 177, .18);
 }
 .cu-body .node.known {
   border-color: var(--jade); color: #d9f6e6;
@@ -175,6 +188,21 @@ svg.chan line.afterglow { opacity: .28; transition: opacity 2.8s ease; animation
   position: absolute; right: 8px; top: 6px; border: 0; background: none;
   color: #5c6f64; font-size: 13px; cursor: pointer;
 }
+/* 浮卡：未显名档的档位体感一句（白话转写层 TIER_GLOSS）+ 档位按钮行
+   （凝神细察 / 自此引气，复用忙碌禁用态） */
+.cu-body .nodedetail .nd-gloss {
+  display: block; font-style: normal; font-size: 10px; color: var(--gold);
+  margin-bottom: 2px; letter-spacing: .04em;
+}
+.cu-body .nodedetail .nd-btns { display: flex; gap: 8px; margin-top: 9px; }
+.cu-body .nodedetail .nd-act {
+  flex: 1; text-align: center; font-family: 'Noto Sans SC', sans-serif; font-size: 11px;
+  border-radius: 9px; padding: 8px 0; cursor: pointer;
+  border: 1px solid rgba(143, 224, 177, .45); background: rgba(143, 224, 177, .08);
+  color: #c9ecd7;
+}
+.cu-body .nodedetail .nd-act:hover:not(:disabled) { background: rgba(143, 224, 177, .14); }
+.cu-body .nodedetail .nd-act:disabled { opacity: .45; cursor: default; }
 .cu-hint {
   /* 浮于场景内部底缘（曾挂 bottom:-14px，被场景 overflow 裁且压感知条） */
   position: absolute; bottom: 10px; z-index: 5; left: 50%; transform: translateX(-50%);

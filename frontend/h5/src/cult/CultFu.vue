@@ -9,7 +9,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import {
   cult, act, guide, startProtocol, vernacular, guideLine,
-  movingQi, absorbablePoint, FIVE_GLOSS,
+  movingQi, absorbablePoint, dantianNamed, FIVE_GLOSS,
 } from './state'
 import type { ProtoView } from './api'
 import CultScene from './CultScene.vue'
@@ -107,6 +107,17 @@ const choices = computed<Choice[]>(() => {
   }
   if (movingQi(v)) {
     out.push({ key: 'stop', label: '收势停一停', sub: '让气息慢下来，静养片刻', cls: 'warn', run: () => void act([{ kind: 'stop' }]) })
+  }
+  // 自举卡（意守丹田）：全无感时没有任何节点可点、探索型分身在安静期
+  // 也不出招——意守丹田（inspect）是修真体感的第一步，也是世界推进的
+  // 起点；排在「静静感受一会儿」之前（这一步该做的事）。丹田显名后此卡
+  // 消失，由浮卡「自此引气」与常规建议接管。
+  if (!dantianNamed(v) && !running) {
+    out.push({
+      key: 'dantian', label: '意守丹田', cls: out.length ? '' : 'primary',
+      sub: '静静守着脐下那一点，看身体会不会回应',
+      run: () => void act([{ kind: 'inspect', target: '下丹田' }]),
+    })
   }
   out.push({ key: 'sense', label: '静静感受一会儿', sub: '看看身体现在怎样', cls: out.length ? '' : 'primary', run: () => void act([{ kind: 'sense' }]) })
   return out.slice(0, 2)
