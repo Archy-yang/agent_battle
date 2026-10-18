@@ -36,6 +36,14 @@ package cult
 //
 // 流水线（境界文档 §8/§17）：真值 → PerceptToken（percept.go：趋势、
 // 滞回、痛感分型、炼化档）→ 本文件的确定性模板渲染 → 定性文本。
+//
+// 渐进感知（0.9.0，specs/2026-10-18-progressive-perception-v1.md）：在
+// 滞回记忆同层（w.sensory）为每穴/每经脉段维护熟识度（percept.go：
+// advanceFamiliarity——气机活跃/有气行每息 +1，凝神细察 +3，观察不直接
+// 给分），观察输出按阶梯渐进揭示：穴位 无感→隐约→有感→显名（每息至
+// 多一穴新显名的节奏预算，§3）；经脉 无迹→初显→熟路。未显名之穴以
+// 方位语（§4 表）指称，Name 置空——零泄名机检（progressive_test.go）
+// 锁死：档位低于显名的穴，其名不得出现在任何观察/感知流文本中。
 
 // ---------------------------------------------------------------------------
 // 词表（集中定义；stage_2 §25 类型词 + 设计稿"状态词表"五档）
@@ -124,20 +132,126 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// 渐进感知档位（docs/specs/2026-10-18-progressive-perception-v1.md §0-§4）
+// ---------------------------------------------------------------------------
+
+// 穴位感知档（渐进感知 §0/§2；阈值常量在 params.go）。档位词进
+// Observation 定性字段；熟识度数值本身绝不外泄（感知隔离律）。
+const (
+	FameNone  int = iota // 无感：不渲染
+	FameVague            // 隐约：波动稍亮的虚淡圈，无名
+	FameFelt             // 有感：实感小圆点，无名，点开只见感受词
+	FameNamed            // 显名：得暂记名，浮卡渐全（开度/气带等）
+)
+
+// 经脉感知档（渐进感知 §0/§2）。
+const (
+	ChanTierNone     int = iota // 无迹：不渲染
+	ChanTierFaint               // 初显：淡虚线（两端皆显名才画）
+	ChanTierFamiliar            // 熟路：实线
+)
+
+// fameTierWords / chanTierWords 是档位词表（渐进感知 §2，进 Observation
+// 定性字段）。
+var fameTierWords = [4]string{"无感", "隐约", "有感", "显名"}
+var chanTierWords = [3]string{"无迹", "初显", "熟路"}
+
+// FameTierWord / ChanTierWord 返回档位词（越界回落最低档）。
+func FameTierWord(t int) string {
+	if t < 0 || t >= len(fameTierWords) {
+		return fameTierWords[FameNone]
+	}
+	return fameTierWords[t]
+}
+
+func ChanTierWord(t int) string {
+	if t < 0 || t >= len(chanTierWords) {
+		return chanTierWords[ChanTierNone]
+	}
+	return chanTierWords[t]
+}
+
+// fameTierOf 由熟识度状态折算穴位档。显名须已获当息节奏预算——越阈
+// 而未得预算者仍报「有感」（§3：每息至多一穴新显名，满屏齐出在引擎
+// 层即不可能；熟识度只增不减，显名一经授予不回落）。
+func fameTierOf(f pointFame) int {
+	if f.named && f.fame >= FameNamedThresh {
+		return FameNamed
+	}
+	if f.fame >= FameFeltThresh {
+		return FameFelt
+	}
+	if f.fame >= FameVagueThresh {
+		return FameVague
+	}
+	return FameNone
+}
+
+// chanTierOf 由熟识度折算经脉档。
+func chanTierOf(fame int) int {
+	switch {
+	case fame >= ChanFamiliarThresh:
+		return ChanTierFamiliar
+	case fame >= ChanFaintThresh:
+		return ChanTierFaint
+	default:
+		return ChanTierNone
+	}
+}
+
+// regionPhrases 是未显名穴位的方位语表（渐进感知 §4，照抄文档）。
+// 方位语是地形描述（身体图上位置本就可见），不泄身份：未显名之穴在
+// 感知流与观察中以方位语指称，不落名、不落数。
+var regionPhrases = map[string]string{
+	"神庭":  "额上",
+	"青关":  "左胁",
+	"阳枢":  "右胁",
+	"中庭":  "胸口",
+	"玄泉":  "左腹",
+	"金门":  "右腹",
+	"土府":  "脐旁",
+	"下丹田": "脐下",
+}
+
+// RegionPhrase 返回穴位的方位语；表中未列的穴位回退「某处」（兜底
+// 措辞，同样不落真名——新拓扑入表前不破零泄名口径）。
+func RegionPhrase(name string) string {
+	if p, ok := regionPhrases[name]; ok {
+		return p
+	}
+	return "某处"
+}
+
+// ---------------------------------------------------------------------------
 // 观察契约（M1 计划 §3.1，WP-3 消费，双方不得偏离）
 // ---------------------------------------------------------------------------
 
 // AcupointSense 是一个穴位的定性感知。除 PressureBand（band 序号，供
 // UI 色带）外全部是词——没有任何真值字段。
+//
+// 渐进感知口径（§2/§4）：Tier 是感知档位词；Name 仅显名档给出（未至
+// 显名者置空——零泄名机检锁死），未显名之穴以 Region 方位语指称；
+// Openness/Stability/Damage/Nature 属「浮卡渐全」的显名档内容，未至
+// 显名者置空（未被实验揭示的结构不预 render）。
 type AcupointSense struct {
-	Name         string   // 穴位名
+	Tier         string   // 感知档位词：无感/隐约/有感/显名
+	Region       string   // 方位语（地形描述；未显名之穴在感知流中以它指称）
+	Name         string   // 穴位名——仅显名档非空
 	Feelings     []string // stage_2 §25 sensation 词（温热/胀/痛/阻滞…；[0] 为压力措辞）
 	Flow         string   // stage_2 §25 flow 词（进入/停滞/加速…）
-	Nature       []string // stage_2 §25 nature 词（生发/炽烈…——推断性措辞）
-	Openness     string   // 状态词表五档：闭/微开/半开/大开/洞开
-	Stability    string   // 状态词表五档：稳如磐石/稳固/微澜/不稳/将溃
-	Damage       string   // 状态词表五档：无损/隐伤/作痛/重创/脉裂
+	Nature       []string // stage_2 §25 nature 词（生发/炽烈…——推断性措辞；仅显名档）
+	Openness     string   // 状态词表五档：闭/微开/半开/大开/洞开（仅显名档）
+	Stability    string   // 状态词表五档：稳如磐石/稳固/微澜/不稳/将溃（仅显名档）
+	Damage       string   // 状态词表五档：无损/隐伤/作痛/重创/脉裂（仅显名档）
 	PressureBand int      // §43 压力档 0-5——感知后档（felt，所见即所得；与 Feelings[0] 同档）
+}
+
+// ChannelSense 是一条经脉的定性档位（渐进感知 §2：无迹→初显→熟路）。
+// Name 仅在两端穴位皆显名时给出——经脉名内嵌端点穴名，端点未显名即
+// 属零泄名口径。
+type ChannelSense struct {
+	Name string
+	Tier string
 }
 
 // EnvSense 是环境的逐五行定性感知（微茫→沛然）。
@@ -147,11 +261,14 @@ type EnvSense struct {
 }
 
 // Observation 是一次感知的全部输出。序列化后除 Tick 与 PressureBand
-// （序号）外不含任何数字——感知隔离律（M1 计划 §0 铁律 1）。
+// （序号）外不含任何数字——感知隔离律（M1 计划 §0 铁律 1）；渐进感知
+// 零泄名口径（§4）：档位低于显名的穴，其名不得出现在本结构的任何
+// 字段（含 Channels 的 Name——经脉名内嵌端点穴名，端点未显名即置空）。
 type Observation struct {
-	Tick   int64
-	Env    EnvSense
-	Points []AcupointSense
+	Tick     int64
+	Env      EnvSense
+	Points   []AcupointSense
+	Channels []ChannelSense
 }
 
 // Observe 把 World 真值翻译成定性感知。
@@ -184,15 +301,37 @@ func Observe(w *World, acuity int) *Observation {
 
 	for i := range w.Character.BodyGraph.Acupoints {
 		a := &w.Character.BodyGraph.Acupoints[i]
-		obs.Points = append(obs.Points, observePoint(w, a, i, tier, fam, perception, &tokens[i]))
+		fame := FameNone
+		if i < len(w.sensory.famPts) {
+			fame = fameTierOf(w.sensory.famPts[i])
+		}
+		obs.Points = append(obs.Points, observePoint(w, a, i, tier, fam, perception, &tokens[i], fame))
+	}
+
+	// 经脉档位（渐进感知 §2）：无迹→初显→熟路。经脉名内嵌端点穴名，
+	// 端点未显名即置空（零泄名口径，§4）。
+	for ci := range w.Character.BodyGraph.Channels {
+		c := &w.Character.BodyGraph.Channels[ci]
+		cs := ChannelSense{Tier: ChanTierWord(ChanTierNone)}
+		if ci < len(w.sensory.famChan) {
+			cs.Tier = ChanTierWord(chanTierOf(w.sensory.famChan[ci]))
+		}
+		fromNamed := c.From >= 0 && c.From < len(obs.Points) && obs.Points[c.From].Tier == FameTierWord(FameNamed)
+		toNamed := c.To >= 0 && c.To < len(obs.Points) && obs.Points[c.To].Tier == FameTierWord(FameNamed)
+		if fromNamed && toNamed {
+			cs.Name = c.Name
+		}
+		obs.Channels = append(obs.Channels, cs)
 	}
 	return obs
 }
 
 // observePoint 把一个穴位的 PerceptToken 渲染成定性感知（§18 模板：
 // 压感措辞 → 身体感觉 → 流动情况 → 疼痛/危险 → 趋势；单穴单条流，
-// 不碎片化）。
-func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64, tok *pointToken) AcupointSense {
+// 不碎片化）。fame 是该穴的感知档（FameNone..FameNamed）：未至显名者
+// Name 置空（方位语见 Region），Openness/Stability/Damage/Nature 等
+// 「浮卡渐全」内容一并置空（渐进感知 §2/§4——点开只见感受词）。
+func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64, tok *pointToken, fame int) AcupointSense {
 	// §47 口径的即时压感：吸收后负载比的平方。世界未推进时（无报告）
 	// 用现场负载计算——同一公式（§14），同一标度。
 	pressure := int64(0)
@@ -215,10 +354,14 @@ func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64, t
 	}
 
 	sense := AcupointSense{
-		Name:         a.Name,
+		Tier:         FameTierWord(fame),
+		Region:       RegionPhrase(a.Name),
 		PressureBand: felt,
 		Feelings:     []string{pressureWords[felt][tier]},
 		Flow:         "停滞",
+	}
+	if fame >= FameNamed {
+		sense.Name = a.Name
 	}
 
 	// 温度感只来自热负荷（§9/§7.2：热来自 ThermalLoad 的滞回档，不看
@@ -276,17 +419,21 @@ func observePoint(w *World, a *Acupoint, idx, tier int, fam, perception int64, t
 
 	// §24 Recognition：神识不足时只有 Detection，辨不出五行倾向
 	//（token 的 nature 签名由信号层判定，这里只过神识门槛）。
-	if acuityOf(tier) >= natureAcuity && tok.Nature >= 0 {
-		if acuityOf(tier) >= 3 {
-			sense.Nature = []string{natureTentative[tok.Nature]}
-		} else {
-			sense.Nature = []string{natureVague[tok.Nature]}
+	// 渐进感知 §2：nature 与开度/稳固/损伤同属「浮卡渐全」的显名档内容，
+	// 未至显名者不预 render。
+	if fame >= FameNamed {
+		if acuityOf(tier) >= natureAcuity && tok.Nature >= 0 {
+			if acuityOf(tier) >= 3 {
+				sense.Nature = []string{natureTentative[tok.Nature]}
+			} else {
+				sense.Nature = []string{natureVague[tok.Nature]}
+			}
 		}
-	}
 
-	sense.Openness = opennessWord(a.opennessMilli())
-	sense.Stability = stabilityWord(a.Stability)
-	sense.Damage = damageWord(a.Damage)
+		sense.Openness = opennessWord(a.opennessMilli())
+		sense.Stability = stabilityWord(a.Stability)
+		sense.Damage = damageWord(a.Damage)
+	}
 	return sense
 }
 

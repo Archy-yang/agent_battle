@@ -60,16 +60,16 @@ validated_range:
 // loopPilot 是 script 分身。两种画像（会话 mode 决定）：
 //   - tutorial：每次被征询都交出同一组朴素吐纳意图（吸收+引流，粗档位
 //     可达的稳定路径）——演示/测试用的预置走法；
-//   - normal（探索型）：驱动层策略，不读世界真值、不预设答案——交替
-//     静观 / 在不同可感之处小量纳气 / 偶尔在已知穴位之间试引导，成败
-//     全凭回执反应（允许"此路不通"）。本尊止息后不再出招。
+//   - normal（探索型）：驱动层策略，不读世界真值、不预设答案——先对
+//     未显名之处逐息凝神细察（渐进感知的探索面），有穴显名后恢复朴素
+//     吐纳：轮换纳气 / 轮换试引导，成败全凭回执反应（允许"此路不通"）。
+//     本尊止息后不再出招。
 type loopPilot struct {
 	intents []Intent // tutorial 画像的固定意图组
 	explore bool     // true = normal 会话的探索型策略
 	stopped bool
 
-	points []string // 探索型：观察到的可感穴位名（来自定性观察，非世界真值）
-	step   int      // 探索型：被征询的次数（决定策略轮换）
+	step int // 探索型：被征询的次数（决定策略轮换）
 }
 
 func (p *loopPilot) Decide(obs *Observation) []Intent {
@@ -84,39 +84,52 @@ func (p *loopPilot) Decide(obs *Observation) []Intent {
 	return out
 }
 
-// exploreDecide 是探索型策略：静观 / 轮换纳气 / 轮换试引导三班倒。
-// 一切输入只来自定性观察（穴位名是观察词，非世界真值）；引导走没走通
-// 由下一息的回执告知，这里不预判。
+// exploreDecide 是探索型策略（渐进感知改版，specs/2026-10-18-progressive-
+// perception-v1.md §1/§5）：旧"有实感即有名"的启发式已退役（引擎给档），
+// 探索的第一手是凝神细察——对观察中每个未显名之处（以方位语指称，
+// §4）交出 inspect 意图，熟识度渐积、显名逐息而出（引擎的节奏预算）；
+// 有穴显名后恢复朴素吐纳：轮换纳气 / 轮换试引导。一切输入只来自定性
+// 观察（显名用真名，未显名用方位语——非世界真值）；引导走没走通由
+// 下一息的回执告知，这里不预判。
 func (p *loopPilot) exploreDecide(obs *Observation) []Intent {
+	var named, unnamed []string
 	if obs != nil {
 		for _, pt := range obs.Points {
-			known := false
-			for _, n := range p.points {
-				if n == pt.Name {
-					known = true
-					break
-				}
+			label := pt.Name
+			tier := pt.Tier == cult.FameTierWord(cult.FameNamed)
+			if !tier || label == "" {
+				label = pt.Region
 			}
-			if !known {
-				p.points = append(p.points, pt.Name)
+			if label == "" {
+				continue
+			}
+			if tier {
+				named = append(named, label)
+			} else {
+				unnamed = append(unnamed, label)
 			}
 		}
 	}
-	p.step++
-	round := p.step % 3
-	switch {
-	case round == 1 && len(p.points) > 0:
-		// 在不同可感之处小量纳气（轮换）。
-		tgt := p.points[(p.step/3)%len(p.points)]
-		return []Intent{{Kind: IntentAbsorb, Acupoint: tgt, Level: LevelSmall}}
-	case round == 2 && len(p.points) >= 2:
-		// 偶尔在已知穴位之间试引导（轮换相邻对，小量，允许失败回执）。
-		i := (p.step / 3) % len(p.points)
-		j := (i + 1) % len(p.points)
-		return []Intent{{Kind: IntentGuide, From: p.points[i], To: p.points[j], Element: -1, Level: LevelSmall}}
-	default:
-		return []Intent{{Kind: IntentSense}}
+	var out []Intent
+	// 凝神细察：未显名之处逐息遍历（看一眼不会熟，但凝神之功会积累）。
+	for _, label := range unnamed {
+		out = append(out, Intent{Kind: IntentInspect, Acupoint: label})
 	}
+	if len(named) > 0 {
+		i := p.step % len(named)
+		// 在不同已显名之处小量纳气（轮换）。
+		out = append(out, Intent{Kind: IntentAbsorb, Acupoint: named[i], Level: LevelSmall})
+		if len(named) >= 2 {
+			// 偶尔在已显名穴位之间试引导（轮换相邻对，小量，允许失败回执）。
+			j := (i + 1) % len(named)
+			out = append(out, Intent{Kind: IntentGuide, From: named[i], To: named[j], Element: -1, Level: LevelSmall})
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, Intent{Kind: IntentSense})
+	}
+	p.step++
+	return out
 }
 
 // scriptIntents 是 tutorial 分身的默认画像：主纳穴少量吸收 + 混合大量引流。
@@ -188,7 +201,13 @@ type EnvChip struct {
 }
 
 // PointView 是一个穴位的定性视图（全部来自 cult.Observe 的 Observation）。
+// 渐进感知口径（specs/2026-10-18-progressive-perception-v1.md §2/§4）：
+// Tier 是感知档（无感/隐约/有感/显名）；Name 未至显名者为空——零泄名；
+// 未显名之穴以 Region 方位语指称；Openness/Stability/Damage/Nature 属
+// 显名档「浮卡渐全」内容，未至显名者为空。
 type PointView struct {
+	Tier         string   `json:"tier"`
+	Region       string   `json:"region"`
 	Name         string   `json:"name"`
 	Feelings     []string `json:"feelings"`
 	Flow         string   `json:"flow"`
@@ -199,11 +218,15 @@ type PointView struct {
 	PressureBand int      `json:"pressure_band"` // 0-5 档序号（供 UI 色带）
 }
 
-// ChannelView 是一条经脉的结构视图（拓扑，非真值）。
+// ChannelView 是一条经脉的结构视图（拓扑，非真值）+ 定性档位（渐进
+// 感知 §2：无迹/初显/熟路）。Name/From/To 内嵌端点穴名——端点未显名
+// 者置空（零泄名口径）；画线用的拓扑连接由 Body.Channels 供（下标对
+// 齐），本视图只载状态。
 type ChannelView struct {
 	Name string `json:"name"`
 	From string `json:"from"`
 	To   string `json:"to"`
+	Tier string `json:"tier"` // 无迹/初显/熟路
 }
 
 // BodyView 是身体图（8 穴位 + 经脉拓扑）。
@@ -462,8 +485,9 @@ func (h *cultHandle) absorbPilotDecisions(t int64) {
 func (h *cultHandle) appendTickLines(res *TickResult) {
 	t := h.sess.World.Tick
 	g := &h.sess.World.Character.BodyGraph
+	named := h.namedPoints()
 	for _, ev := range res.Events {
-		h.stream = append(h.stream, StreamLine{Tick: t, Kind: "event", Text: eventText(ev, g)})
+		h.stream = append(h.stream, StreamLine{Tick: t, Kind: "event", Text: eventText(ev, g, named)})
 		if card := requestCardFor(ev); card != nil {
 			h.reqSeq++
 			card.ID = fmt.Sprintf("req-%d", h.reqSeq)
@@ -493,14 +517,35 @@ func (h *cultHandle) appendTickLines(res *TickResult) {
 	}
 }
 
-// senseLine 由定性观察合成一行感知文（零数字）。
+// senseLine 由定性观察合成一行感知文（零数字）。渐进感知口径
+// （specs/2026-10-18-progressive-perception-v1.md §2/§4）：
+//   - 显名之穴：真名指称，动静照旧入流；
+//   - 隐约/有感之穴：以方位语指称（不落名），有任何动静或压感才入流；
+//   - 无感之穴：不渲染。
 func senseLine(obs *Observation) string {
 	if obs == nil {
 		return ""
 	}
+	namedTier := cult.FameTierWord(cult.FameNamed)
 	var parts []string
 	for _, p := range obs.Points {
-		hot := p.PressureBand >= 2 || p.Damage != "无损" || p.Flow != "停滞" || len(p.Feelings) > 1
+		label := p.Region
+		if p.Tier == namedTier && p.Name != "" {
+			label = p.Name
+		}
+		if label == "" {
+			label = cult.RegionPhrase(p.Name)
+		}
+		var hot bool
+		switch p.Tier {
+		case namedTier:
+			hot = p.PressureBand >= 2 || (p.Damage != "" && p.Damage != "无损") ||
+				p.Flow != "停滞" || len(p.Feelings) > 1
+		case cult.FameTierWord(cult.FameVague), cult.FameTierWord(cult.FameFelt):
+			hot = p.PressureBand >= 1 || p.Flow != "停滞" || len(p.Feelings) > 1
+		default:
+			hot = false // 无感：不渲染（渐进感知 §2）
+		}
 		if !hot {
 			continue
 		}
@@ -508,7 +553,7 @@ func senseLine(obs *Observation) string {
 		if feel == "" {
 			feel = "无明显感觉"
 		}
-		parts = append(parts, fmt.Sprintf("%s：%s，气机%s", p.Name, feel, p.Flow))
+		parts = append(parts, fmt.Sprintf("%s：%s，气机%s", label, feel, p.Flow))
 	}
 	if len(parts) == 0 {
 		return "周身平静，气机沉寂。"
@@ -516,9 +561,32 @@ func senseLine(obs *Observation) string {
 	return strings.Join(parts, "；") + "。"
 }
 
+// namedPoints 返回当前显名穴位的下标集（渐进感知 §4：感知流中未显名
+// 之穴一律以方位语指称——事件行同口径）。观察 memo 同息复用，开销
+// 可忽略；无观察钩子的桥接场景不门控（保持旧貌）。
+func (h *cultHandle) namedPoints() []bool {
+	g := &h.sess.World.Character.BodyGraph
+	named := make([]bool, len(g.Acupoints))
+	if h.sess.Observe == nil {
+		for i := range named {
+			named[i] = true
+		}
+		return named
+	}
+	if obs := h.sess.Observe(h.sess.World); obs != nil {
+		for i := range obs.Points {
+			if i < len(named) {
+				named[i] = obs.Points[i].Tier == cult.FameTierWord(cult.FameNamed)
+			}
+		}
+	}
+	return named
+}
+
 // eventText 把会话事件翻译成定性界面文（Event.Reason 含真值数字，
-// 一律不外泄——铁律 1）。
-func eventText(e Event, g *cult.BodyGraph) string {
+// 一律不外泄——铁律 1）。named 是显名下标集：世界主动叙述里未显名
+// 之穴以方位语指称（渐进感知 §4 零泄名口径）。
+func eventText(e Event, g *cult.BodyGraph, named []bool) string {
 	switch e.Kind {
 	case EventGuardAdjusted:
 		if strings.HasPrefix(e.Reason, "guard stop") {
@@ -530,7 +598,13 @@ func eventText(e Event, g *cult.BodyGraph) string {
 	case EventUnknownAnomaly:
 		name := "某穴"
 		if i, ok := e.Detail["acupoint"]; ok && g != nil {
-			name = pointName(int(i), g)
+			idx := int(i)
+			switch {
+			case idx >= 0 && idx < len(named) && named[idx]:
+				name = pointName(idx, g)
+			case idx >= 0 && idx < len(g.Acupoints):
+				name = cult.RegionPhrase(g.Acupoints[idx].Name)
+			}
 		}
 		return "异象：" + name + "似生新伤，其故难明，已停功请示"
 	case EventProtocolStarted:
@@ -738,27 +812,41 @@ func (h *cultHandle) view() *SessionView {
 	}
 
 	// 定性观察（现场重算：纯函数，确定性）。
+	var obs *Observation
 	if s.Observe != nil {
-		if obs := s.Observe(s.World); obs != nil {
-			v.Env = envChips(obs.Env)
-			for _, p := range obs.Points {
-				v.Points = append(v.Points, PointView{
-					Name: p.Name, Feelings: p.Feelings, Flow: p.Flow,
-					Nature: p.Nature, Openness: p.Openness,
-					Stability: p.Stability, Damage: p.Damage,
-					PressureBand: p.PressureBand,
-				})
-			}
+		obs = s.Observe(s.World)
+	}
+	if obs != nil {
+		v.Env = envChips(obs.Env)
+		for _, p := range obs.Points {
+			v.Points = append(v.Points, PointView{
+				Tier: p.Tier, Region: p.Region, Name: p.Name,
+				Feelings: p.Feelings, Flow: p.Flow,
+				Nature: p.Nature, Openness: p.Openness,
+				Stability: p.Stability, Damage: p.Damage,
+				PressureBand: p.PressureBand,
+			})
 		}
 	}
 
-	// 身体图拓扑。
+	// 身体图拓扑。穴位名全量随拓扑给出（下标对齐 Points——前端按档
+	// 渲染名字：仅显名档得字，渐进感知 §5）；经脉视图的称谓按端点档
+	// 门控（端点未显名者置空——经脉名内嵌端点穴名，零泄名口径 §4）。
 	g := &s.World.Character.BodyGraph
 	v.Body.Points = make([]string, len(g.Acupoints))
 	for i, a := range g.Acupoints {
 		v.Body.Points[i] = a.Name
 	}
-	for _, c := range g.Channels {
+	named := make([]bool, len(g.Acupoints))
+	if obs != nil {
+		for i := range obs.Points {
+			if i < len(named) {
+				named[i] = obs.Points[i].Tier == cult.FameTierWord(cult.FameNamed)
+			}
+		}
+	}
+	for i := range g.Channels {
+		c := &g.Channels[i]
 		from, to := "", ""
 		if c.From >= 0 && c.From < len(g.Acupoints) {
 			from = g.Acupoints[c.From].Name
@@ -766,7 +854,22 @@ func (h *cultHandle) view() *SessionView {
 		if c.To >= 0 && c.To < len(g.Acupoints) {
 			to = g.Acupoints[c.To].Name
 		}
-		v.Body.Channels = append(v.Body.Channels, ChannelView{Name: c.Name, From: from, To: to})
+		cv := ChannelView{Name: c.Name, From: from, To: to}
+		if obs != nil && i < len(obs.Channels) {
+			cv.Tier = obs.Channels[i].Tier
+			fromNamed := c.From >= 0 && c.From < len(named) && named[c.From]
+			toNamed := c.To >= 0 && c.To < len(named) && named[c.To]
+			if !fromNamed {
+				cv.From = ""
+			}
+			if !toNamed {
+				cv.To = ""
+			}
+			if !fromNamed || !toNamed {
+				cv.Name = ""
+			}
+		}
+		v.Body.Channels = append(v.Body.Channels, cv)
 	}
 
 	// 感知流/回执/玩家志/请示：新置顶（倒序拷贝）。

@@ -663,11 +663,28 @@ func (s *CultSession) settleReceipts(intents []Intent, plans []intentPlan, res *
 	out := make([]IntentReceipt, 0, len(intents))
 	for i, it := range intents {
 		switch it.Kind {
-		case IntentSense, IntentInspect:
+		case IntentSense:
 			out = append(out, IntentReceipt{
 				Tick: s.World.Tick, Kind: it.Kind,
 				Summary: intentSummary(it), Outcome: WordApplied,
 			})
+			continue
+		case IntentInspect:
+			// 凝神细察（渐进感知修订包 §1，specs/2026-10-18-progressive-
+			// perception-v1.md）：熟识度 +3（cult.InspectFame）；凝神无感
+			// 之穴 → 回执「无从察起」（凝神之功仍在——熟识度照涨，次息
+			// 方见）。称谓解析：显名之穴用真名，未显名之穴以方位语指称
+			//（§4）——两套称谓都可落地。
+			rc := IntentReceipt{
+				Tick: s.World.Tick, Kind: it.Kind,
+				Summary: intentSummary(it), Outcome: WordApplied,
+			}
+			if idx, ok := resolvePointLabel(&s.World.Character.BodyGraph, it.Acupoint); ok {
+				if cult.InspectFame(s.World, idx) == cult.FameNone {
+					rc.Detail = WordNothingToSense
+				}
+			}
+			out = append(out, rc)
 			continue
 		case IntentStop:
 			out = append(out, IntentReceipt{
@@ -751,6 +768,26 @@ func (s *CultSession) settleReceipts(intents []Intent, plans []intentPlan, res *
 		}
 	}
 	return out
+}
+
+// resolvePointLabel 把意图里的穴位称谓解析为下标：显名之穴用真名，
+// 未显名之穴以方位语指称（渐进感知修订包 §4）——两套称谓都可落地，
+// 方位语是地形描述，不泄身份。解析不出返回 false（称谓无处落地）。
+func resolvePointLabel(g *cult.BodyGraph, label string) (int, bool) {
+	if strings.TrimSpace(label) == "" {
+		return -1, false
+	}
+	for i := range g.Acupoints {
+		if g.Acupoints[i].Name == label {
+			return i, true
+		}
+	}
+	for i := range g.Acupoints {
+		if cult.RegionPhrase(g.Acupoints[i].Name) == label {
+			return i, true
+		}
+	}
+	return -1, false
 }
 
 // recordEvidence 把动作意图的回执记入证据账本（SPIKE 结论二：账本是

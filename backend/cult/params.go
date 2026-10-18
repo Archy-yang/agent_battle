@@ -449,6 +449,33 @@ const (
 	//（感知隔离律）。
 	FeedSenseBand = 500 // 0.5 [v0.1 参数]
 
+	// ---------------------------------------------------------------------------
+	// 渐进感知（docs/specs/2026-10-18-progressive-perception-v1.md §1-3）
+	// ---------------------------------------------------------------------------
+
+	// FameVagueThresh 是穴位「隐约」档阈（渐进感知 §2）：熟识度 ≥1 即
+	// 隐约——虚淡圈，无名。
+	FameVagueThresh = 1
+
+	// FameFeltThresh 是穴位「有感」档阈（§2）：熟识度 ≥3 即有感——
+	// 实感小圆点，无名，点开只见感受词。
+	FameFeltThresh = 3
+
+	// FameNamedThresh 是穴位「显名」档阈（§2）：熟识度 ≥6 方可显名，
+	// 且另受每息节奏预算约束（§3：每息至多一穴新显名，取当息气机最
+	// 活跃者，并列取先——满屏齐出在引擎层即不可能）。
+	FameNamedThresh = 6
+
+	// FameInspectBonus 是凝神细察一次的熟识度加速（§1，初值批测可调）：
+	// 复用既有 inspect 意图，不新增原语。
+	FameInspectBonus = 3
+
+	// ChanFaintThresh 是经脉「初显」档阈（§2）：有气行的息数 ≥1——
+	// 淡虚线（两端皆显名才画）。
+	ChanFaintThresh = 1
+
+	// ChanFamiliarThresh 是经脉「熟路」档阈（§2）：≥4——实线。
+	ChanFamiliarThresh = 4
 )
 
 // RuleVersion 是底层规则版本标识（宪法 §18 Rule Versioning）。
@@ -513,8 +540,20 @@ const (
 // （B1 参数画像禁类型枚举同款）。经济结构：绕开敛热穴的环必须以逆流段
 // 补环，逆流做功热+逆流损耗热全部沉积在无敛热画像的共享纳气入口——
 // 长程热积累与失稳风险高于全环（Rule Semantic Change）。
+// 0.8.0 → 0.9.0（2026-10-18 渐进感知修订包 v1，定稿
+// specs/2026-10-18-progressive-perception-v1.md）：感知层新增熟识度私有
+// 状态（w.sensory，percept.go——与滞回记忆同层）：穴位按「气机活跃」
+// 每息 +1、经脉段按「有气行」每息 +1（静观/被观察不直接给分——看一眼
+// 不会熟，气到了才算数），凝神细察（inspect）一次 +3；观察输出按阶梯
+// 渐进揭示（穴：无感→隐约→有感→显名；脉：无迹→初显→熟路），显名受
+// 每息至多一穴的节奏预算约束（取当息气机最活跃者，并列取先）；未显名
+// 之穴以方位语指称（§4 零泄名：未至显名者 Observation 的 Name 置空，
+// 熟识度数值与阈值绝不外泄）。世界物理零改动——熟识度积累只读
+// TickReport 与 PerceptToken（挂在感知状态推进处，不引入新物理量）；
+// 但观察契约扩档位字段、未显名者 Name 置空，属接口语义变化——Rule
+// Semantic Change。
 // 同 World 状态 + 同 Ops + 同 RuleVersion + 同 Seed ⇒ 逐位一致重演。
-const RuleVersion = "0.8.0-heat-load-strain"
+const RuleVersion = "0.9.0-progressive-perception"
 
 // ---------------------------------------------------------------------------
 // 定点算术

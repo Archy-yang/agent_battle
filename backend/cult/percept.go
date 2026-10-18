@@ -206,10 +206,22 @@ type pointMemory struct {
 	tokens pointToken
 }
 
-// sensoryState 是全部穴位的感知记忆 + 本 Tick 的 token 备忘。
+// pointFame 是一个穴位的熟识度私有状态（渐进感知修订包 §1，
+// specs/2026-10-18-progressive-perception-v1.md）：气机活跃的息数累计
+// （+ 凝神细察加速）。熟识度只增不减；named 标记该穴是否已获过显名
+// 节奏预算（§3——越阈而未得预算者仍报「有感」，满屏齐出在引擎层即
+// 不可能；一经显名不回落）。
+type pointFame struct {
+	fame  int
+	named bool
+}
+
+// sensoryState 是全部穴位的感知记忆 + 熟识度 + 本 Tick 的 token 备忘。
 type sensoryState struct {
-	tick   int64
-	points []pointMemory
+	tick    int64
+	points  []pointMemory
+	famPts  []pointFame // 穴位熟识度（渐进感知 §1）
+	famChan []int       // 经脉段熟识度：有气行的息数（渐进感知 §1）
 }
 
 // hystStep 是滞回状态机：raw 升破 enter 跳档（一次可跨多档），跌破
@@ -276,7 +288,127 @@ func sensoryTokens(w *World) []pointToken {
 	for i := range st.points {
 		tokens[i] = st.points[i].tokens
 	}
+	advanceFamiliarity(w, st, tokens)
 	return tokens
+}
+
+// ---------------------------------------------------------------------------
+// 熟识度（渐进感知修订包 §1/§3；感知状态推进处——只读 TickReport 与
+// PerceptToken，不引入新物理量，不改物理计算本身）
+// ---------------------------------------------------------------------------
+
+// advanceFamiliarity 推进一息的熟识度积累并执行显名节奏预算：
+//   - 穴位：本息「气机活跃」（非停滞或有压感信号，§1）+1；静观/被观察
+//     不直接给分——看一眼不会熟，气到了才算数；
+//   - 经脉段：本息有气行（传输明细的实际流量越过停滞阈，§1）+1；
+//   - 显名节奏预算（§3）：每息至多一穴新越「显名」阈，取当息气机最
+//     活跃者，并列取下标先。
+//
+// 与滞回记忆同一推进节律：每 Tick 备忘一次（同一 Tick 反复观察不二次
+// 积累），同 seed 重放逐位一致。
+func advanceFamiliarity(w *World, st *sensoryState, tokens []pointToken) {
+	n := len(w.Character.BodyGraph.Acupoints)
+	if len(st.famPts) != n {
+		st.famPts = make([]pointFame, n)
+	}
+	for i := range st.famPts {
+		if pointActive(w, i, &tokens[i]) {
+			st.famPts[i].fame++
+		}
+	}
+
+	nc := len(w.Character.BodyGraph.Channels)
+	if len(st.famChan) != nc {
+		st.famChan = make([]int, nc)
+	}
+	if w.Last != nil {
+		flows := make([]int64, nc)
+		for ti := range w.Last.Transfers {
+			tr := &w.Last.Transfers[ti]
+			if tr.Channel < 0 || tr.Channel >= nc {
+				continue
+			}
+			for e := 0; e < ElementCount; e++ {
+				flows[tr.Channel] += tr.Actual[e]
+			}
+		}
+		for c := 0; c < nc; c++ {
+			if flows[c] > flowEps {
+				st.famChan[c]++
+			}
+		}
+	}
+
+	// 显名节奏预算（§3）：候选 = 已越「显名」阈而未得预算者；择优口径
+	// = 当息气机活跃度（意识纳入 + 经脉总流量），并列取下标先（严格
+	// 大于比较，首见者保位）。
+	best, bestAct := -1, int64(-1)
+	for i := range st.famPts {
+		f := &st.famPts[i]
+		if f.named || f.fame < FameNamedThresh {
+			continue
+		}
+		if act := tickActivity(w, i); act > bestAct {
+			best, bestAct = i, act
+		}
+	}
+	if best >= 0 {
+		st.famPts[best].named = true
+	}
+}
+
+// pointActive 报告一个穴位本息是否「气机活跃」（渐进感知 §1：非停滞
+// 或有压感信号）。非停滞沿用 flowWord 的口径（意识驱动纳入 / 经脉总
+// 流量越过停滞阈）；压感信号取胀/痛滞回档入档。
+func pointActive(w *World, idx int, tok *pointToken) bool {
+	if tok.Distension.level >= 1 || tok.Pain.level >= 1 {
+		return true
+	}
+	if w.Last == nil || idx >= len(w.Last.Points) {
+		return false
+	}
+	r := &w.Last.Points[idx]
+	intake := int64(0)
+	for e := 0; e < ElementCount; e++ {
+		intake += r.Intake[e]
+	}
+	return intake > flowEps || r.CurrentFlow > flowEps
+}
+
+// tickActivity 返回一个穴位本息的气机活跃度（显名预算的择优口径）：
+// 意识驱动纳入 + 经脉总流量（千分位量）。
+func tickActivity(w *World, idx int) int64 {
+	if w.Last == nil || idx >= len(w.Last.Points) {
+		return 0
+	}
+	r := &w.Last.Points[idx]
+	act := r.CurrentFlow
+	for e := 0; e < ElementCount; e++ {
+		act += r.Intake[e]
+	}
+	return act
+}
+
+// InspectFame 凝神细察（渐进感知 §1）：对 idx 穴位熟识度 +3（复用既有
+// inspect 意图，不新增原语；加速值 FameInspectBonus 批测可调）。返回
+// 凝神前该穴的感知档（FameNone..FameNamed），供回执措辞——凝神无感之
+// 穴 → 回执「无从察起」（凝神之功仍在：熟识度照涨，次息方见）。显名
+// 节奏预算仍由每息的感知推进执行，本函数不直接授予显名。
+func InspectFame(w *World, idx int) int {
+	if w.sensory == nil {
+		w.sensory = &sensoryState{}
+	}
+	st := w.sensory
+	n := len(w.Character.BodyGraph.Acupoints)
+	if len(st.famPts) != n {
+		st.famPts = make([]pointFame, n)
+	}
+	if idx < 0 || idx >= n {
+		return FameNone
+	}
+	pre := fameTierOf(st.famPts[idx])
+	st.famPts[idx].fame += FameInspectBonus
+	return pre
 }
 
 // update 派生一个穴位本 Tick 的全部信号并推进滞回状态。

@@ -126,7 +126,8 @@ func TestCultAPIScriptSessionFlow(t *testing.T) {
 	if !foundReceipt {
 		t.Fatalf("no applied receipt in view: %+v", v.Receipts)
 	}
-	// 定性观察：开度/稳固/损伤全部是词表词。
+	// 定性观察：显名之穴的开度/稳固/损伤全部是词表词；未至显名者
+	//（渐进感知）Name 与浮卡内容置空、档位词在列。
 	wordIn := func(w string, words []string) bool {
 		for _, x := range words {
 			if w == x {
@@ -138,7 +139,20 @@ func TestCultAPIScriptSessionFlow(t *testing.T) {
 	openWords := []string{"闭", "微开", "半开", "大开", "洞开"}
 	stabWords := []string{"稳如磐石", "稳固", "微澜", "不稳", "将溃"}
 	dmgWords := []string{"无损", "隐伤", "作痛", "重创", "脉裂"}
+	tierWords := []string{"无感", "隐约", "有感", "显名"}
 	for _, p := range v.Points {
+		if !wordIn(p.Tier, tierWords) {
+			t.Fatalf("point tier off vocabulary: %q", p.Tier)
+		}
+		if p.Tier != "显名" {
+			if p.Name != "" || p.Openness != "" || p.Stability != "" || p.Damage != "" {
+				t.Fatalf("unnamed point %q leaks card fields: %+v", p.Tier, p)
+			}
+			continue
+		}
+		if p.Name == "" {
+			t.Fatalf("named point lacks name: %+v", p)
+		}
 		if !wordIn(p.Openness, openWords) || !wordIn(p.Stability, stabWords) || !wordIn(p.Damage, dmgWords) {
 			t.Fatalf("point %s off vocabulary: %s/%s/%s", p.Name, p.Openness, p.Stability, p.Damage)
 		}

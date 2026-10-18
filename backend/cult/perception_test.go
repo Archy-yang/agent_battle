@@ -95,6 +95,11 @@ func TestPressureWords_Tier1IsStage43(t *testing.T) {
 func TestAcuityGranularity(t *testing.T) {
 	// lr=837 → 压力 = 0.837² ≈ 0.701（band 3）。
 	w := senseWorld(837, 1000) // Perception=1.0：隔离神识以外的变量
+	// 渐进感知：nature 属「浮卡渐全」的显名档内容——先把该穴凝神到显名
+	//（两次凝神 + 每息气机活跃 +1 → 越显名阈并得预算），隔离神识粒度
+	// 与档位两个变量。
+	InspectFame(w, 0)
+	InspectFame(w, 0)
 
 	low := Observe(w, 1)
 	if got := low.Points[0].Feelings[0]; got != "似有微涨" {
