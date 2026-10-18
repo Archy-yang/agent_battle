@@ -105,7 +105,7 @@ func intentSummary(it Intent) string {
 	case IntentStop:
 		return "收功止念"
 	case IntentInspect:
-		return "内视" + it.Acupoint
+		return inspectSummary(it.Acupoint)
 	case IntentAbsorb:
 		return "于" + it.Acupoint + "纳气" + levelWord(it.Level)
 	case IntentGuide:
@@ -118,6 +118,13 @@ func intentSummary(it Intent) string {
 		return "请起功「" + it.Text + "」"
 	}
 	return "一份不明的心意"
+}
+
+// inspectSummary 是凝神细察（inspect）的回执摘要。称谓由调用方按档
+// 选定（渐进感知 §4 零泄名口径）：未至显名之穴一律以方位语指称，显名
+// 后方用真名——玩家即以真名凝神未显名之穴，感知流亦不得落真名。
+func inspectSummary(label string) string {
+	return "内视" + label
 }
 
 func levelWord(l Level) string {

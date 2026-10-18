@@ -17,13 +17,15 @@ import (
 	"strings"
 
 	"agentbattle/backend/ctmatch"
+	"agentbattle/backend/cult"
 	"agentbattle/backend/engine"
 	"agentbattle/backend/match"
 	"agentbattle/backend/profile"
 	"agentbattle/backend/web"
 )
 
-const version = "v0.8.0"
+// version 随底层规则版本走（不再手写，避免与 RuleVersion 脱节）。
+var version = "v" + cult.RuleVersion
 
 // loadEnvFile reads KEY=VALUE lines and sets any not already present
 // in the environment (server-side LLM config; the key never reaches

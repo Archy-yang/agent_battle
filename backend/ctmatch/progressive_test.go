@@ -44,6 +44,15 @@ func TestInspectReceipt_NothingToSense(t *testing.T) {
 	if !receiptAt(v, v.Tick, "无从察起") {
 		t.Fatalf("方位语凝神应可落地并回执无从察起: %+v", v.Receipts)
 	}
+	// 分身以方位语凝神（其观察口径即方位语）：回执应保持正确方位语，
+	// 不因称谓按档收口而退化为「某处」（方位语二次映射回归）。
+	v = tick(t, mux, id, 1, []map[string]any{{"kind": "inspect", "target": "额上"}})
+	if !receiptAt(v, v.Tick, "内视额上") {
+		t.Fatalf("方位语凝神的回执应保持方位语称谓: %+v", v.Receipts)
+	}
+	if receiptAt(v, v.Tick, "内视某处") {
+		t.Fatalf("方位语凝神回执不得退化为「某处」: %+v", v.Receipts)
+	}
 	// 金门再凝神：熟识度已积（有感），回执不再是「无从察起」。
 	v = tick(t, mux, id, 1, []map[string]any{{"kind": "inspect", "target": "金门"}})
 	if receiptAt(v, v.Tick, "无从察起") {
@@ -51,6 +60,24 @@ func TestInspectReceipt_NothingToSense(t *testing.T) {
 	}
 	if !receiptAt(v, v.Tick, "已生效") {
 		t.Fatalf("凝神回执缺失: %+v", v.Receipts)
+	}
+
+	// 玩家以真名凝神未显名之穴，回执亦不落真名（§4 零泄名口径）：
+	// 摘要以方位语「右腹」指称，全文（回执+感知流+观察）无「金门」。
+	id2, _ := createSession(t, mux, "script", "")
+	v = tick(t, mux, id2, 1, []map[string]any{{"kind": "inspect", "target": "金门"}})
+	if !receiptAt(v, v.Tick, "内视右腹") {
+		t.Fatalf("未显名之穴的真名凝神，回执应以方位语指称: %+v", v.Receipts)
+	}
+	for _, r := range v.Receipts {
+		if r.Tick == v.Tick && strings.Contains(r.Text, "金门") {
+			t.Fatalf("未显名之穴的真名泄入回执: %+v", r)
+		}
+	}
+	for _, l := range v.SenseStream {
+		if strings.Contains(l.Text, "金门") {
+			t.Fatalf("未显名之穴的真名泄入感知流: %+v", l)
+		}
 	}
 }
 

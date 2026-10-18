@@ -674,17 +674,35 @@ func (s *CultSession) settleReceipts(intents []Intent, plans []intentPlan, res *
 			// perception-v1.md）：熟识度 +3（cult.InspectFame）；凝神无感
 			// 之穴 → 回执「无从察起」（凝神之功仍在——熟识度照涨，次息
 			// 方见）。称谓解析：显名之穴用真名，未显名之穴以方位语指称
-			//（§4）——两套称谓都可落地。
-			rc := IntentReceipt{
-				Tick: s.World.Tick, Kind: it.Kind,
-				Summary: intentSummary(it), Outcome: WordApplied,
-			}
+			//（§4 零泄名口径）——玩家即以真名凝神未显名之穴，回执亦不落
+			// 真名；称谓取凝神前档位（本息越显名阈者，其名由下息的显名
+			// 预算授予，本息仍以方位语称）。
+			label := it.Acupoint
 			if idx, ok := resolvePointLabel(&s.World.Character.BodyGraph, it.Acupoint); ok {
-				if cult.InspectFame(s.World, idx) == cult.FameNone {
+				pre := cult.InspectFame(s.World, idx)
+				// 称谓从穴位真名出发按档选定：意图里的 target 可能本身
+				// 就是方位语（分身的观察口径），不能直接再过方位语映射
+				//（否则退化成「内视某处」）。
+				name := s.World.Character.BodyGraph.Acupoints[idx].Name
+				if pre < cult.FameNamed {
+					label = cult.RegionPhrase(name)
+				} else {
+					label = name
+				}
+				rc := IntentReceipt{
+					Tick: s.World.Tick, Kind: it.Kind,
+					Summary: inspectSummary(label), Outcome: WordApplied,
+				}
+				if pre == cult.FameNone {
 					rc.Detail = WordNothingToSense
 				}
+				out = append(out, rc)
+				continue
 			}
-			out = append(out, rc)
+			out = append(out, IntentReceipt{
+				Tick: s.World.Tick, Kind: it.Kind,
+				Summary: inspectSummary(label), Outcome: WordApplied,
+			})
 			continue
 		case IntentStop:
 			out = append(out, IntentReceipt{
