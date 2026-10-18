@@ -1,6 +1,8 @@
-/* src/cult/cult.css —— 单页洞府视觉。逐字采用 docs/design/yiqi-dongfu-redesign.html
-   的 token 与形制：墨夜为底，青玉为气，鎏金为引。类名统一加 cu- 前缀防全局泄漏
-   （本文件被 App.vue 全局引入）。 */
+/* src/cult/cult.css —— 洞府行动台视觉（2026-10-18 一屏化改版）。
+   形制承 docs/design/yiqi-dongfu-redesign.html 的 token：墨夜为底，青玉为气，
+   鎏金为引。类名统一加 cu- 前缀防全局泄漏（本文件被 App.vue 全局引入）。
+   骨架：五段 flex 纵排（顶栏 / 场景弹性 / 感知条 / 行动区 / 底部行），
+   总高恒等于视口，整页零滚动。 */
 @import url('https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&display=swap');
 
 .cult-root {
@@ -22,7 +24,7 @@
   font-size: 15px;
   line-height: 1.7;
   -webkit-font-smoothing: antialiased;
-  /* 手机/桌面通吃：固定定位精确接管整个视口，只有 .cu-scroll 内滚，
+  /* 手机/桌面通吃：固定定位精确接管整个视口，五段各守其高，
      外层永不滚动——轮询刷新不再引起整页跳动 */
   position: fixed;
   inset: 0;
@@ -34,44 +36,53 @@
   overscroll-behavior: contain;
 }
 .cult-root button, .cult-root input, .cult-root textarea { font: inherit; color: inherit; }
+.cult-root button { -webkit-tap-highlight-color: transparent; }
+/* App.vue 的全局 button:hover 底色不入洞府：各控件 hover 归位 */
+.cult-root button:hover:not(:disabled) { background: none; }
+.cult-root .choice:hover:not(:disabled) { background: rgba(255, 255, 255, .018); }
+.cult-root .choice.primary:hover:not(:disabled) { background: rgba(143, 224, 177, .06); }
+.cult-root .choice.warn:hover:not(:disabled) { background: rgba(232, 154, 114, .05); }
+.cult-root .cu-intent button:hover:not(:disabled) { background: rgba(143, 224, 177, .16); }
+.cult-root .cu-sensebar:hover:not(:disabled) { background: rgba(255, 255, 255, .02); }
+.cult-root .cu-bottomrow .entry:hover:not(:disabled) { background: rgba(255, 255, 255, .02); }
+.cult-root .cu-top .tour:hover:not(:disabled) { background: none; color: #c9ecd7; }
 .cult-root .kai { font-family: 'Ma Shan Zheng', cursive; font-weight: 400; }
 .cult-root .ui { font-family: 'Noto Sans SC', sans-serif; }
 
-/* —— 顶栏 —— */
+/* —— 段一：顶栏（收矮）—— */
 .cu-top {
   flex: none; z-index: 20;
-  padding: calc(10px + env(safe-area-inset-top)) 16px 8px;
-  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  padding: calc(8px + env(safe-area-inset-top)) 14px 6px;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
   background: linear-gradient(180deg, rgba(4, 8, 5, .92), rgba(4, 8, 5, 0));
 }
 .cu-top h1 {
-  margin: 0; font: 600 15px/1 var(--serif);
+  margin: 0; font: 600 14px/1 var(--serif);
   letter-spacing: .14em; color: #dcefe4;
 }
 .cu-top .realm { font-size: 11px; color: var(--muted); flex: 1; text-align: center; }
 .cu-top .realm b { color: var(--gold); font-weight: 600; }
-.cu-top .exit {
+.cu-top .tour, .cu-top .exit {
   background: none; border: 1px solid var(--line); border-radius: 999px;
   color: var(--muted); font-family: 'Noto Sans SC', sans-serif; font-size: 10px;
-  padding: 3px 10px; cursor: pointer;
+  padding: 3px 10px; cursor: pointer; flex: none;
 }
+.cu-top .tour { font-size: 13px; line-height: 1; padding: 2px 9px 4px; color: #9db3a6; }
 .cu-err {
   flex: none; color: var(--warm); font-family: 'Noto Sans SC', sans-serif;
   font-size: 10.5px; padding: 0 16px 4px;
 }
 .cu-loading { padding: 40px 16px; text-align: center; color: var(--muted); font-size: 12px; }
 
-/* —— 滚动体 —— */
-.cu-scroll {
-  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-  padding: calc(20px + env(safe-area-inset-top)) 0 96px;
-}
-.cu-page { min-height: 100%; }
+/* —— 五段容器：零滚动（各段 min-height:0，场景弹性占余）—— */
+.cu-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cu-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-/* —— 身体场景 —— */
+/* —— 段二：身体场景（弹性占据剩余高度）—— */
 .cu-scene {
-  height: 50vh; min-height: 380px; position: relative;
+  flex: 1 1 0; min-height: 0; position: relative;
   display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
 }
 .mist { position: absolute; inset: 0; }
 .mist i {
@@ -89,7 +100,8 @@
   50% { transform: translateY(-10px) scale(1.15); }
 }
 
-.cu-body { position: relative; width: 250px; height: 390px; }
+/* 身体画布：固定 250×390 坐标系，随容器整体等比 scale（组件内联注入） */
+.cu-body { position: relative; width: 250px; height: 390px; flex: none; transform-origin: 50% 50%; }
 .cu-body .sil {
   position: absolute; left: 50%; transform: translateX(-50%); top: 6px;
   width: 118px; height: 372px; border-radius: 50% 50% 44% 44% / 20% 20% 80% 80%;
@@ -164,37 +176,144 @@ svg.chan line.afterglow { opacity: .28; transition: opacity 2.8s ease; animation
   color: #5c6f64; font-size: 13px; cursor: pointer;
 }
 .cu-hint {
-  position: absolute; bottom: -14px; left: 50%; transform: translateX(-50%);
+  /* 浮于场景内部底缘（曾挂 bottom:-14px，被场景 overflow 裁且压感知条） */
+  position: absolute; bottom: 10px; z-index: 5; left: 50%; transform: translateX(-50%);
   font-size: 10px; color: #8ca094; background: rgba(5, 9, 6, .62); padding: 6px 11px;
   border-radius: 999px; border: 1px solid rgba(184, 220, 199, .1); white-space: nowrap;
 }
 
-/* —— 叙事面板 —— */
-.cu-panel {
-  position: relative; margin-top: 14px; border-radius: 22px 22px 0 0;
-  background: linear-gradient(180deg, rgba(10, 19, 14, .97), #060e09);
-  border-top: 1px solid var(--line); padding: 16px 16px 20px;
+/* —— 段三：感知条（单行最新，渐隐入场，点开心声浮层）—— */
+.cu-sensebar {
+  flex: none; display: flex; align-items: center; gap: 9px;
+  margin: 6px 14px 0; padding: 9px 12px; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .02);
+  text-align: left; min-width: 0;
 }
-.sec {
-  font: 600 10px/1 var(--serif); letter-spacing: .28em; color: #71857a; margin: 20px 0 9px;
+.cu-sensebar.sensed { border-color: rgba(143, 224, 177, .25); }
+.cu-sensebar .sb-k {
+  flex: none; font-size: 9px; letter-spacing: .2em; color: #71857a;
 }
-.sec.row { display: flex; justify-content: space-between; align-items: center; }
-.sec .tgl {
-  border: 0; background: none; color: #7f9387; font-size: 10px;
-  letter-spacing: .1em; cursor: pointer; padding: 2px 4px;
+.cu-sensebar .sb-t {
+  flex: 1; min-width: 0; font-size: 12px; line-height: 1.5; color: #dcebe2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  animation: cu-fadein .8s ease both;
+}
+@keyframes cu-fadein { from { opacity: 0; } to { opacity: 1; } }
+.cu-sensebar .sb-more { flex: none; font-size: 10px; color: #7f9387; }
+
+/* —— 段四：行动区（引导语 + 心念卡≤2 + 传念行）—— */
+.cu-actions {
+  flex: none; display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 14px 2px;
+}
+.cu-guideline { font-size: 12px; line-height: 1.5; color: var(--gold); letter-spacing: .02em; }
+.cu-choices { display: grid; gap: 7px; }
+.cu-choices.duo { grid-template-columns: 1fr 1fr; }
+.choice {
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .018); color: #ddeae2;
+  border-radius: 12px; padding: 9px 11px; text-align: left; font-size: 12px;
+  line-height: 1.45; cursor: pointer; font-family: var(--serif); min-width: 0;
+}
+.choice.primary { border-color: rgba(143, 224, 177, .4); background: rgba(143, 224, 177, .06); }
+.choice.warn { border-color: rgba(232, 154, 114, .35); background: rgba(232, 154, 114, .05); }
+.choice:disabled { opacity: .5; cursor: default; }
+.choice small {
+  display: block; color: #7f9387; font-size: 10px; margin-top: 3px;
+  line-height: 1.5; font-family: 'Noto Sans SC', sans-serif;
+}
+.cu-intent { display: flex; gap: 7px; }
+.cu-intent input {
+  flex: 1; min-width: 0; border-radius: 12px; border: 1px solid var(--line);
+  background: #08120d; color: #ddeae2; padding: 10px 12px; outline: none; font-size: 12px;
+}
+.cu-intent input::placeholder { color: #5c6f64; }
+.cu-intent button {
+  border: 0; border-radius: 12px; background: rgba(143, 224, 177, .16); color: #c4ecd3;
+  padding: 0 14px; font-weight: 600; cursor: pointer; flex: none;
+}
+.cu-intent button:disabled { opacity: .45; cursor: default; }
+
+/* —— 段五：底部行（浮层入口 + 忙碌态指示）—— */
+.cu-bottomrow {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(4, 8, 5, 0), rgba(4, 8, 5, .9));
+}
+.cu-bottomrow .entry {
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .02);
+  color: #a9bcb0; border-radius: 999px; padding: 7px 14px; font-size: 11.5px; cursor: pointer;
+}
+.cu-bottomrow .entry:active { background: rgba(143, 224, 177, .08); }
+.cu-bottomrow .busy { flex: 1; text-align: right; font-size: 10px; color: var(--jade); min-width: 0; }
+
+/* —— 犹豫卡（模态置顶强提示）—— */
+.cu-reqmodal {
+  position: absolute; inset: 0; z-index: 55; display: flex;
+  align-items: flex-start; justify-content: center;
+  padding: calc(64px + env(safe-area-inset-top)) 18px 0;
+  background: rgba(2, 6, 4, .62); backdrop-filter: blur(2px);
+}
+.cu-reqmodal .req-card {
+  width: min(360px, 100%); padding: 14px 15px; border-radius: 15px;
+  border: 1px solid rgba(226, 201, 140, .55); background: rgba(10, 18, 12, .97);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .55), 0 0 0 4px rgba(226, 201, 140, .06);
+  animation: cu-fadein .35s ease both;
+}
+.cu-reqmodal .rt {
+  font-size: 9.5px; color: var(--gold); letter-spacing: 2px; margin-bottom: 5px;
+}
+.cu-reqmodal .rr { font-size: 13px; line-height: 1.6; color: #f0e9d6; margin-bottom: 4px; }
+.cu-reqmodal .rx { font-size: 12px; line-height: 1.7; color: #cfc9b4; }
+.cu-reqmodal .btns { display: flex; gap: 8px; margin-top: 11px; }
+.cu-reqmodal .go, .cu-reqmodal .halt {
+  flex: 1; text-align: center; font-family: 'Noto Sans SC', sans-serif; font-size: 11.5px;
+  border-radius: 9px; padding: 8px 0; cursor: pointer; background: none;
+}
+.cu-reqmodal .go { border: 1px solid rgba(143, 224, 177, .45); color: #c9ecd7; }
+.cu-reqmodal .halt { border: 1px solid rgba(232, 154, 114, .5); color: var(--warm); }
+.cu-reqmodal button:disabled { opacity: .45; cursor: default; }
+
+/* —— 底部滑出浮层（心声 / 身体记事 / 修行进度 共用）—— */
+.cu-sheet {
+  position: absolute; inset: 0; z-index: 60; visibility: hidden;
+  transition: visibility 0s linear .3s;
+}
+.cu-sheet.show { visibility: visible; transition-delay: 0s; }
+.cu-sheet .mask {
+  position: absolute; inset: 0; background: rgba(2, 6, 4, .6);
+  opacity: 0; transition: opacity .3s ease;
+}
+.cu-sheet.show .mask { opacity: 1; }
+.cu-sheet .panel {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  max-height: 74%; display: flex; flex-direction: column;
+  border-radius: 18px 18px 0 0; border: 1px solid var(--line); border-bottom: none;
+  background: linear-gradient(180deg, rgba(10, 19, 14, .99), #060e09);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, .5);
+  transform: translateY(104%); transition: transform .3s cubic-bezier(.32, .72, .35, 1);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.cu-sheet.show .panel { transform: none; }
+.cu-sheet .grab {
+  flex: none; width: 36px; height: 4px; border-radius: 999px; margin: 9px auto 0;
+  background: rgba(184, 220, 199, .22);
+}
+.cu-sheet .head {
+  flex: none; display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 16px 8px;
+}
+.cu-sheet .head b { font: 600 12px/1 var(--serif); letter-spacing: .24em; color: #b9cfc2; }
+.cu-sheet .head button {
+  border: 0; background: none; color: #7f9387; font-size: 11px; cursor: pointer; padding: 2px 4px;
+}
+.cu-sheet .sbody {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 2px 16px 18px;
 }
 
-/* 感知流：折起 ~两行只露最新（flex-end + 顶部渐隐），展开限高内滚 */
+/* 感知流（心声浮层内容）：对话式正序 */
 .cu-stream { display: flex; flex-direction: column; gap: 7px; }
-.cu-stream.fold {
-  max-height: 3.9em; overflow: hidden; justify-content: flex-end;
-  -webkit-mask-image: linear-gradient(0deg, #000 55%, transparent);
-  mask-image: linear-gradient(0deg, #000 55%, transparent);
-}
-.cu-stream.open {
-  max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
-  -webkit-mask-image: none; mask-image: none;
-}
 .ln { font-size: 12.5px; line-height: 1.75; color: #dcebe2; }
 .ln.rc {
   color: #b9cfc2; border-left: 2px solid rgba(143, 224, 177, .35); padding-left: 9px;
@@ -208,51 +327,7 @@ svg.chan line.afterglow { opacity: .28; transition: opacity 2.8s ease; animation
 }
 .ln.ev { color: var(--gold); font-size: 11.5px; }
 
-/* 犹豫卡（置顶） */
-.cu-request {
-  margin-top: 10px; padding: 11px 13px; border-radius: 13px;
-  border: 1px solid rgba(226, 201, 140, .4); background: rgba(226, 201, 140, .05);
-}
-.cu-request .rt {
-  font-family: 'Noto Sans SC', sans-serif; font-size: 9.5px; color: var(--gold);
-  letter-spacing: 2px; margin-bottom: 4px;
-}
-.cu-request .rx { font-size: 12px; line-height: 1.7; color: #e9e2cf; }
-.cu-request .btns { display: flex; gap: 8px; margin-top: 9px; }
-.cu-request .go, .cu-request .halt {
-  flex: 1; text-align: center; font-family: 'Noto Sans SC', sans-serif; font-size: 11px;
-  border-radius: 8px; padding: 6px 0; cursor: pointer; background: none;
-}
-.cu-request .go { border: 1px solid rgba(143, 224, 177, .45); color: #c9ecd7; }
-.cu-request .halt { border: 1px solid rgba(232, 154, 114, .5); color: var(--warm); }
-.cu-request button:disabled { opacity: .45; cursor: default; }
-
-/* 心念卡 */
-.cu-choices { display: grid; gap: 8px; }
-.choice {
-  border: 1px solid var(--line); background: rgba(255, 255, 255, .018); color: #ddeae2;
-  border-radius: 13px; padding: 12px 14px; text-align: left; font-size: 12.5px;
-  line-height: 1.55; cursor: pointer; font-family: var(--serif);
-}
-.choice.primary { border-color: rgba(143, 224, 177, .4); background: rgba(143, 224, 177, .06); }
-.choice.warn { border-color: rgba(232, 154, 114, .35); background: rgba(232, 154, 114, .05); }
-.choice:disabled { opacity: .5; cursor: default; }
-.choice small { display: block; color: #7f9387; font-size: 10px; margin-top: 4px; font-family: 'Noto Sans SC', sans-serif; }
-
-/* 传念 */
-.cu-intent { display: flex; gap: 7px; margin-top: 12px; }
-.cu-intent input {
-  flex: 1; min-width: 0; border-radius: 12px; border: 1px solid var(--line);
-  background: #08120d; color: #ddeae2; padding: 11px 12px; outline: none; font-size: 12px;
-}
-.cu-intent input::placeholder { color: #5c6f64; }
-.cu-intent button {
-  border: 0; border-radius: 12px; background: rgba(143, 224, 177, .16); color: #c4ecd3;
-  padding: 0 14px; font-weight: 600; cursor: pointer;
-}
-.cu-intent button:disabled { opacity: .45; cursor: default; }
-
-/* 逐渐被确认的东西 */
+/* 身体记事内容 */
 .cu-know-empty { font-size: 11px; color: #6d8175; line-height: 1.8; }
 .cu-knowledge { display: flex; flex-direction: column; gap: 6px; }
 .kn {
@@ -269,7 +344,9 @@ svg.chan line.afterglow { opacity: .28; transition: opacity 2.8s ease; animation
 .cu-art p { font: 400 11px/1.8 var(--serif); color: #9fb4a7; margin: 7px 0 0; }
 .cu-art p.meta { font-family: 'Noto Sans SC', sans-serif; font-size: 10px; color: #7f9387; }
 
-/* 筑基迹象：五点档点阵 + 档位词（band 数字绝不渲染） */
+/* 修行进度内容：五点档点阵（band 只用于画点）+ 档位白话解释 */
+.cu-stage { font-size: 11px; color: #93a79b; margin-bottom: 12px; }
+.cu-stage b { color: #cfe4d6; font-weight: 600; }
 .cu-five { display: flex; flex-direction: column; gap: 8px; }
 .frow {
   display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 9px;
@@ -281,37 +358,53 @@ svg.chan line.afterglow { opacity: .28; transition: opacity 2.8s ease; animation
 .frow .dots i.f { background: var(--jade); border-color: var(--jade); box-shadow: 0 0 6px rgba(143, 224, 177, .5); }
 .frow .word { color: #6d8175; font-size: 10px; font-family: 'Noto Sans SC', sans-serif; }
 .frow.g .word { color: var(--gold); }
-
-/* 底部阶段行 */
-.cu-footer {
-  position: absolute; z-index: 20; left: 0; right: 0; bottom: 0;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, rgba(4, 8, 5, 0), rgba(4, 8, 5, .96) 30%);
-  display: flex; justify-content: space-between; align-items: flex-end; gap: 10px;
-  /* 渐隐底幕不拦点击：心念卡可滚到幕布之下仍可按 */
-  pointer-events: none;
-}
-.cu-footer .hold { pointer-events: auto; }
-.cu-footer .modeText { font-size: 10px; line-height: 1.6; color: #71857a; font-family: 'Noto Sans SC', sans-serif; }
-.cu-footer .modeText b { color: #a9bcb0; font-weight: 600; }
-.cu-footer .hold {
-  border: 1px solid rgba(143, 224, 177, .35); background: rgba(143, 224, 177, .07);
-  color: #d8f5e3; border-radius: 999px; padding: 11px 18px; font-size: 12px;
-  letter-spacing: .2em; cursor: pointer; user-select: none; -webkit-user-select: none;
-  font-family: var(--serif); flex: none;
-}
-.cu-footer .hold:active { background: rgba(143, 224, 177, .16); }
-.cu-footer .hold:disabled { opacity: .45; cursor: default; }
+.fgloss { font-size: 10px; color: #5f7268; margin: -4px 0 2px 43px; }
 
 /* 提示浮层 */
 .cu-toast {
-  position: absolute; z-index: 40; left: 50%; top: 64px; transform: translateX(-50%);
+  position: absolute; z-index: 65; left: 50%; top: 64px; transform: translateX(-50%);
   width: min(390px, calc(100% - 32px)); padding: 10px 13px;
   border: 1px solid rgba(184, 220, 199, .18); border-radius: 12px;
   background: rgba(8, 15, 11, .96); font-size: 11px; line-height: 1.6; color: #ddeae2;
   opacity: 0; pointer-events: none; transition: .25s;
 }
 .cu-toast.show { opacity: 1; }
+
+/* —— 新手引导（CultTour）—— */
+.cu-tour { position: absolute; inset: 0; z-index: 70; }
+.cu-tour .tmask {
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at center, rgba(2, 6, 4, .2), rgba(2, 6, 4, .78));
+}
+.cu-tour .tspot {
+  position: absolute; border-radius: 14px; pointer-events: none;
+  box-shadow: 0 0 0 2px rgba(143, 224, 177, .55), 0 0 0 9999px rgba(2, 6, 4, .78);
+  transition: all .3s ease;
+}
+.cu-tour .tcard {
+  position: absolute; padding: 13px 14px; border-radius: 14px;
+  border: 1px solid rgba(143, 224, 177, .4); background: rgba(7, 15, 10, .97);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .5);
+  animation: cu-fadein .35s ease both;
+}
+.cu-tour .tcard.center {
+  left: 50%; top: 42%; transform: translate(-50%, -50%); width: min(320px, calc(100% - 40px));
+}
+.cu-tour .tcard.above { transform: translateY(-100%); }
+.cu-tour .tcard p { margin: 0; font-size: 12.5px; line-height: 1.75; color: #e2efe7; }
+.cu-tour .trow { display: flex; align-items: center; gap: 8px; margin-top: 11px; }
+.cu-tour .trow .skip {
+  border: 0; background: none; color: #6d8175; font-size: 10.5px; cursor: pointer; padding: 2px 0;
+}
+.cu-tour .trow .dots { flex: 1; display: flex; justify-content: center; gap: 5px; }
+.cu-tour .trow .dots i {
+  width: 6px; height: 6px; border-radius: 50%; border: 1px solid rgba(143, 224, 177, .35);
+}
+.cu-tour .trow .dots i.on { background: var(--jade); border-color: var(--jade); }
+.cu-tour .trow .next {
+  border: 1px solid rgba(143, 224, 177, .45); background: rgba(143, 224, 177, .08);
+  color: #d8f5e3; border-radius: 999px; padding: 6px 14px; font-size: 11.5px; cursor: pointer;
+}
 
 /* 筑基仪式浮层 */
 .cu-ritual {
@@ -384,5 +477,6 @@ svg.chan line.afterglow { opacity: .28; transition: opacity 2.8s ease; animation
 /* 动效克减 */
 @media (prefers-reduced-motion: reduce) {
   .mist i, .cu-body .node.faint, .cu-body .breath.on,
-  svg.chan line.flow, .cu-ritual .ring { animation: none !important; }
+  svg.chan line.flow, .cu-ritual .ring, .cu-sensebar .sb-t,
+  .cu-reqmodal .req-card, .cu-tour .tcard, .cu-tour .tspot { animation: none !important; transition: none !important; }
 }

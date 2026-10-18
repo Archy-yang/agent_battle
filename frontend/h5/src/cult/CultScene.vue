@@ -6,7 +6,7 @@
 //  · 经脉线零静态：平时完全不可见（opacity:0）。仅当 tick 推进后，
 //    对「已知且 flow 非停滞」穴位所邻接的经脉（view.body.channels）
 //    做一次性流动动画（~1.5s），随后余辉渐隐。
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { cult, knownPoints } from './state'
 import type { PointView } from './api'
 
@@ -102,17 +102,40 @@ function tap(n: NodeItem) {
   if (!known.value.has(n.name)) return // 未知穴：不响应，不提示（保密数量）
   picked.value = picked.value === n.name ? '' : n.name
 }
+
+// —— 弹性高度等比缩放（2026-10-18 改版）：场景区 flex:1 占满剩余高度，
+// 身体画布固定 250×390 坐标系，整体按容器等比 transform:scale 适配；
+// 点位/经脉/浮卡机制一律不动。 ——
+const sceneEl = ref<HTMLElement | null>(null)
+const scale = ref(1)
+let ro: ResizeObserver | null = null
+function fit(): void {
+  const el = sceneEl.value
+  if (!el || !el.clientWidth || !el.clientHeight) return
+  const s = Math.min(el.clientWidth / 250, el.clientHeight / 390)
+  scale.value = Math.max(0.5, Math.min(s, 1.6))
+}
+onMounted(() => {
+  fit()
+  if (typeof ResizeObserver === 'undefined') return
+  ro = new ResizeObserver(fit)
+  if (sceneEl.value) ro.observe(sceneEl.value)
+})
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  ro = null
+})
 </script>
 
 <template>
-  <section class="cu-scene" :class="{ sensed: moving }">
+  <section ref="sceneEl" class="cu-scene" :class="{ sensed: moving }">
     <div class="mist" aria-hidden="true">
       <i style="left: 16%; top: 22%"></i>
       <i class="m2" style="right: 15%; top: 30%"></i>
       <i class="m3" style="left: 28%; bottom: 20%"></i>
       <i style="right: 26%; bottom: 30%"></i>
     </div>
-    <div class="cu-body">
+    <div class="cu-body" :style="{ transform: `scale(${scale})` }">
       <div class="sil" aria-hidden="true"></div>
       <div class="breath" :class="{ on: moving }" aria-hidden="true"></div>
       <svg class="chan" viewBox="0 0 250 390" aria-hidden="true">
@@ -143,6 +166,6 @@ function tap(n: NodeItem) {
         </span>
       </div>
     </div>
-    <div class="cu-hint">{{ moving ? '气息在身内流动' : '凝神以探，雾气深处隐有浮光' }}</div>
+    <div class="cu-hint">{{ moving ? '气息在身内流动' : '静下心来，雾气深处隐有浮光' }}</div>
   </section>
 </template>

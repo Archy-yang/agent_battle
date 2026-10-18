@@ -1,10 +1,13 @@
 <script setup lang="ts">
-// src/cult/CultApp.vue —— 修炼模式外壳：开局仪式 + 单页洞府（顶栏 / 身体场景 /
-// 感知流 / 心念卡 / 传念 / 知识台账 / 底部阶段行）。设计稿：docs/design/yiqi-dongfu-redesign.html。
+// src/cult/CultApp.vue —— 修炼模式外壳：开局仪式 + 行动台式一屏
+// （顶栏 / 身体场景 / 感知条 / 行动区 / 底部行，整页零滚动）。
+// 设计稿：docs/specs/2026-10-18-dongfu-action-desk-redesign.md。
 // 修炼模式接管整个视口（手机全屏），通过「战斗」按钮退出（App.vue 的 mode 机制零改动）。
-import { computed, ref } from 'vue'
-import { cult, act, awaken } from './state'
+// 顶栏 ⟲ = 玩法说明入口：重看新手引导（含玩法总述）；首次入定后自动弹一次。
+import { computed, nextTick, ref, watch } from 'vue'
+import { cult, awaken } from './state'
 import CultFu from './CultFu.vue'
+import CultTour from './CultTour.vue'
 
 const emit = defineEmits<{ exit: [] }>()
 
@@ -19,18 +22,21 @@ function doAwaken() {
 
 const realm = computed(() => cult.view?.realm ?? '')
 
-// 底部阶段行：定性描述当前所在阶段（零数字、零机器词）
-const modeText = computed(() => {
-  const v = cult.view
-  if (!v) return { cur: '初醒', sub: '静室之中，你对此身尚感陌生' }
-  if (v.active) return { cur: '周天运转', sub: `依《${v.active}》行功，异常方唤心神` }
-  if (v.points.some((p) => p.flow !== '停滞')) return { cur: '吐纳中', sub: '气息在身内流动，随时可止' }
-  return { cur: '暗中摸索', sub: '你在暗中辨认周身可承气之处' }
-})
-
-function doHold() {
-  void act([{ kind: 'sense' }])
+// —— 新手引导 ——
+const tourOpen = ref(false)
+function openTour() {
+  tourOpen.value = true
 }
+// 首次入定后：未完成过引导则自动弹一次；localStorage 不可用（私有
+// 浏览态）时按已看过处理——静默不弹，不报错。
+watch(gated, (g, old) => {
+  if (g || old === false) return
+  let done = true
+  try { done = localStorage.getItem('cult_tour_done') === '1' } catch { /* 静默降级 */ }
+  if (!done) {
+    void nextTick(() => { window.setTimeout(() => { tourOpen.value = true }, 500) })
+  }
+})
 </script>
 
 <template>
@@ -55,24 +61,23 @@ function doHold() {
       <p class="err ui" v-if="cult.error">{{ cult.error }}</p>
     </div>
 
-    <!-- 入定后：单页洞府 -->
+    <!-- 入定后：行动台式一屏（五段 flex，总高恒等于视口，零滚动） -->
     <template v-else>
       <div class="cu-top">
         <h1>一炁周天</h1>
         <span class="realm"><b>{{ realm }}</b></span>
+        <button class="tour ui" aria-label="玩法说明" @click="openTour">⟲</button>
         <button class="exit" @click="emit('exit')">‹ 战斗</button>
       </div>
       <div class="cu-err" v-if="cult.error">{{ cult.error }}</div>
 
-      <div class="cu-scroll">
+      <div class="cu-main">
         <div v-if="!cult.view" class="cu-loading">正在静室中入定……</div>
         <CultFu v-else />
       </div>
 
-      <div class="cu-footer">
-        <div class="modeText">当前：<b>{{ modeText.cur }}</b><br />{{ modeText.sub }}</div>
-        <button class="hold" :disabled="cult.busy" @click="doHold">凝神</button>
-      </div>
+      <!-- 新手引导：首次入定自动弹，⟲ 随时重看 -->
+      <CultTour :open="tourOpen" @close="tourOpen = false" />
     </template>
   </div>
 </template>
